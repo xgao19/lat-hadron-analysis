@@ -1,0 +1,14 @@
+analysis_name: pion_two_point
+
+input:
+  format: npy
+  path: data/raw/pion_correlator.npy
+
+analysis:
+  time_min: 2
+  time_max: 16
+  resampling: jackknife
+
+output:
+  directory: data/processed
+
