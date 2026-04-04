@@ -33,7 +33,7 @@ processed data.
 python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
-pytest
+python -m unittest discover
 ```
 
 ## Next Steps
@@ -43,3 +43,99 @@ pytest
 3. Add project-specific configs under `configs/`.
 4. Create a GitHub repository and add it as `origin`.
 
+## SS 2pt TGEVP Driver
+
+You can run the current SS two-point TGEVP extractor with:
+
+```bash
+lqcd-analysis ss-2pt-tgevp input_k0_SS.txt --seed 123
+```
+
+or:
+
+```bash
+python scripts/ss_2pt_tgevp_extract.py ss-2pt-tgevp input_k0_SS.txt --seed 123
+```
+
+If `--results-dir` is not provided, outputs are written to `results/` next to the input file.
+
+Expected input file format:
+
+```text
+l64c64a076_m140_SS_k0_pz* 64 64 0.076
+c2pt /path/to/c2pt_5_5_k0_pz*_real.csv
+pzlist 0 1 2
+fold_t periodic
+tsrange 0 20
+```
+
+The analysis writes:
+
+- `results/<title>_tgevp_summary.txt`
+- `results/<title>_tgevp_correlation.txt`
+- `results/samples/<title>_tgevp_samples.txt`
+
+## Bootstrap N-State 2pt Fit
+
+Traditional multi-exponential fits are available as a separate workflow:
+
+```bash
+python scripts/fit_2pt_nstate.py 2pt-nstate-fit configs/example_nstate_fit.txt
+```
+
+Expected extra input keys:
+
+```text
+model symmetric
+nstates 1 2 3
+fold_t periodic
+tmax auto
+binsize 1
+bootstrap_samples auto
+bootstrap_size auto
+seed 2026
+plot true
+```
+
+`fold_t` options:
+
+- `fold_t false`
+- `fold_t none`
+- `fold_t true`
+- `fold_t periodic`
+- `fold_t antiperiodic`
+
+Meaning:
+
+- `false` or `none`: do not fold
+- `true` or `periodic`: use symmetric folding with `t` and `Nt-t`
+- `antiperiodic`: use antisymmetric folding with `t` and `Nt-t`
+
+Notes on the workflow:
+
+- `tmax auto` is chosen as the first time slice where the effective-mass relative error reaches 50%, or `Nt/2 - 4`, whichever is smaller.
+- The 2-state fit is initialized from the suggested 1-state plateau.
+- The 3-state fit is initialized from the suggested 2-state plateau.
+- Plateau suggestion looks for the longest contiguous `tmin` window where adjacent ground-state energies are statistically consistent and the fits remain reasonably well behaved.
+- If `matplotlib` is unavailable, the code writes a small text note instead of a plot file.
+- Plotting is now handled by a reusable module in `src/lqcd_analysis/plotting_2pt.py`.
+- After each 2pt fit run, an editable notebook is written to a sibling `notebook_plots/` directory next to the results directory. The notebook calls the reusable plotting module so you can tweak paths, styles, and which state to draw.
+
+## Workflows
+
+Both workflows are supported:
+
+- Input-file workflow:
+  use plain-text input files plus the existing CLI/scripts
+- Notebook-template workflow:
+  copy a notebook from `templates/`, edit the user-input cell, validate it, and run the same backend interactively
+
+Current notebook templates:
+
+- `templates/tgevp_template.ipynb`
+- `templates/nstate_fit_template.ipynb`
+- `templates/plot_2pt_template.ipynb`
+
+Notebook templates are thin wrappers around the existing analysis code. They are intended for clarity and interactive use, while the plain-text input-file workflow remains the stable batch-style interface.
+
+The helper bridge for notebooks lives in `src/lqcd_analysis/notebook_workflows.py`. It renders notebook configs into the same or nearly the same text fields used by the existing input-file parsers, and then calls the same backend runners.

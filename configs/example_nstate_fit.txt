@@ -1,0 +1,13 @@
+l64c64a076_m140_fit_k0_pz* 64 64 0.076
+c2pt /path/to/c2pt_5_5_k0_pz*_real.csv
+pzlist 0 1 2
+fold_t periodic
+tsrange 0 24
+model symmetric
+nstates 1 2 3
+tmax auto
+binsize 1
+bootstrap_samples auto
+bootstrap_size auto
+seed 2026
+plot true
