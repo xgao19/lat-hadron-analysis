@@ -28,3 +28,9 @@ data/processed/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
 
+# Example/template run products
+examples/outputs/*
+!examples/outputs/.gitkeep
+templates/input_files/results*/
+templates/input_files/notebook_plots/
+templates/input_files/*.log

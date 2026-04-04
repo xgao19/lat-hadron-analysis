@@ -6,6 +6,8 @@ from lqcd_analysis.notebook_workflows import (
     render_nstate_fit_input_text,
     render_tgevp_input_text,
 )
+from lqcd_analysis.nstate_fit import parse_nstate_fit_input
+from lqcd_analysis.tgevp import parse_tgevp_input
 
 
 class NotebookWorkflowTests(unittest.TestCase):
@@ -56,6 +58,21 @@ class NotebookWorkflowTests(unittest.TestCase):
             notebook = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual(notebook["nbformat"], 4)
             self.assertTrue(notebook["cells"])
+
+    def test_example_input_files_parse(self) -> None:
+        tgevp_input = Path("templates/input_files/tgevp_example_realdata.txt")
+        nstate_input = Path("templates/input_files/nstate_fit_example_realdata.txt")
+        self.assertTrue(tgevp_input.exists())
+        self.assertTrue(nstate_input.exists())
+        parsed_tgevp = parse_tgevp_input(tgevp_input)
+        parsed_nstate = parse_nstate_fit_input(nstate_input)
+        self.assertEqual(parsed_tgevp.pzlist, (0,))
+        self.assertEqual(parsed_nstate.pzlist, (0,))
+
+    def test_example_data_files_exist(self) -> None:
+        base = Path("examples/data/l64c64a076_m140/comb_c2pt_csv")
+        files = sorted(base.glob("c2pt_5_5_k0_pz*_real.csv"))
+        self.assertGreaterEqual(len(files), 4)
 
 
 if __name__ == "__main__":

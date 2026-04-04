@@ -1,0 +1,5 @@
+l64c64a076_m140_SS_k0_pz* 64 64 0.076
+c2pt examples/data/l64c64a076_m140/comb_c2pt_csv/c2pt_5_5_k0_pz*_real.csv
+pzlist 0
+fold_t periodic
+tsrange 0 20

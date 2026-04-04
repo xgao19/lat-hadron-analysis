@@ -16,15 +16,15 @@ processed data.
 
 ```text
 .
-├── configs/           Example configuration files
-├── data/
-│   ├── processed/     Derived data products
-│   └── raw/           Raw input data (kept out of git)
-├── docs/              Notes and methodology docs
-├── notebooks/         Exploratory notebooks
-├── scripts/           Reproducible batch scripts
-├── src/lqcd_analysis/ Python source package
-└── tests/             Unit tests
+├── configs/              Example configuration files
+├── docs/                 Notes and methodology docs
+├── examples/
+│   ├── data/             Tracked example correlator CSV files
+│   └── outputs/          Ignored example run products
+├── scripts/              Reproducible command-line entry points
+├── src/lqcd_analysis/    Python source package
+├── templates/            Notebook and input-file templates
+└── tests/                Unit tests
 ```
 
 ## Quick Start
@@ -38,10 +38,10 @@ python -m unittest discover
 
 ## Next Steps
 
-1. Add your first correlator dataset loader in `src/lqcd_analysis/io.py`.
-2. Extend `src/lqcd_analysis/correlators.py` with fit and resampling routines.
-3. Add project-specific configs under `configs/`.
-4. Create a GitHub repository and add it as `origin`.
+1. Add project-specific analysis routines under `src/lqcd_analysis/`.
+2. Add or extend templates under `templates/`.
+3. Add more tracked example datasets under `examples/data/` if useful.
+4. Keep run products under ignored output directories such as `examples/outputs/`.
 
 ## SS 2pt TGEVP Driver
 
@@ -139,3 +139,23 @@ Current notebook templates:
 Notebook templates are thin wrappers around the existing analysis code. They are intended for clarity and interactive use, while the plain-text input-file workflow remains the stable batch-style interface.
 
 The helper bridge for notebooks lives in `src/lqcd_analysis/notebook_workflows.py`. It renders notebook configs into the same or nearly the same text fields used by the existing input-file parsers, and then calls the same backend runners.
+
+## Runnable Examples
+
+The repository now includes tracked example correlator data under:
+
+- `examples/data/l64c64a076_m140/comb_c2pt_csv/`
+
+and plain-text example inputs under:
+
+- `templates/input_files/tgevp_example_realdata.txt`
+- `templates/input_files/nstate_fit_example_realdata.txt`
+- `templates/input_files/plot_2pt_example_command.txt`
+
+These examples use repository-relative paths, so they can be run directly from the repository root.
+
+Example outputs are intentionally ignored by git and should go under:
+
+- `examples/outputs/`
+
+This lets the repository keep realistic data and templates tracked, while avoiding noisy result folders, plots, logs, and notebooks in version control.
