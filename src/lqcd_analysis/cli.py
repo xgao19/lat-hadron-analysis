@@ -16,7 +16,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run SS two-point TGEVP analysis from a text input file.",
     )
     tgevp_parser.add_argument("input_file", help="Input control file, e.g. input_k0_SS.txt")
-    tgevp_parser.add_argument("--binsize", type=int, default=1, help="Bin size before bootstrap")
+    tgevp_parser.add_argument(
+        "--binsize",
+        type=int,
+        default=None,
+        help="Bin size before bootstrap; defaults to the input file value or 1",
+    )
     tgevp_parser.add_argument(
         "--bootstrap-samples",
         type=int,
@@ -29,7 +34,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Bootstrap draw size; defaults to the number of binned configurations",
     )
-    tgevp_parser.add_argument("--seed", type=int, default=2026, help="Random seed for bootstrap")
+    tgevp_parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Random seed for bootstrap; defaults to the input file value or 2026",
+    )
     tgevp_parser.add_argument(
         "--results-dir",
         default=None,

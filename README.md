@@ -119,7 +119,7 @@ Notes on the workflow:
 - Plateau suggestion looks for the longest contiguous `tmin` window where adjacent ground-state energies are statistically consistent and the fits remain reasonably well behaved.
 - If `matplotlib` is unavailable, the code writes a small text note instead of a plot file.
 - Plotting is now handled by a reusable module in `src/lqcd_analysis/plotting_2pt.py`.
-- After each 2pt fit run, an editable notebook is written to a sibling `notebook_plots/` directory next to the results directory. The notebook calls the reusable plotting module so you can tweak paths, styles, and which state to draw.
+- After each 2pt fit run, an editable notebook is written under `results_dir/notebook_plots/`. The notebook calls the reusable plotting module so you can tweak paths, styles, and which state to draw.
 
 ## Workflows
 
@@ -137,8 +137,11 @@ Current notebook templates:
 - `templates/plot_2pt_template.ipynb`
 
 Notebook templates are thin wrappers around the existing analysis code. They are intended for clarity and interactive use, while the plain-text input-file workflow remains the stable batch-style interface.
+Each template now uses the same notebook-facing pattern: edit a single `workflow_config` object, validate it, and then call one `run_*_from_notebook(...)` function.
+Each notebook template also includes an `Option Guide` markdown cell right after the user-input cell, describing the main options, their expected choices, and their practical effect.
 
 The helper bridge for notebooks lives in `src/lqcd_analysis/notebook_workflows.py`. It renders notebook configs into the same or nearly the same text fields used by the existing input-file parsers, and then calls the same backend runners.
+The two workflows use different default output locations by design: notebook workflows default to the current working directory, while plain-text input-file workflows default to a results directory next to the input file.
 
 ## Runnable Examples
 
@@ -151,8 +154,11 @@ and plain-text example inputs under:
 - `templates/input_files/tgevp_example_realdata.txt`
 - `templates/input_files/nstate_fit_example_realdata.txt`
 - `templates/input_files/plot_2pt_example_command.txt`
+- `templates/input_files/tgevp_example_realdata_annotated.txt`
+- `templates/input_files/nstate_fit_example_realdata_annotated.txt`
 
 These examples use repository-relative paths, so they can be run directly from the repository root.
+The `_annotated.txt` variants include inline comments describing each option and are meant to mirror the notebook `Option Guide` cells in plain-text form.
 
 Example outputs are intentionally ignored by git and should go under:
 

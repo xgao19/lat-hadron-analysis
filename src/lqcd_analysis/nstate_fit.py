@@ -124,9 +124,11 @@ def parse_nstate_fit_input(path: str | Path, results_dir: str | Path | None = No
         bootstrap_size=parse_optional_int(entries.get("bootstrap_size", ["auto"])[0]),
         seed=int(entries.get("seed", ["2026"])[0]),
         make_plots=parse_bool(entries.get("plot", ["true"])[0]),
-        results_dir=(input_path.parent / "results_nstate_fit")
-        if results_dir is None
-        else Path(results_dir),
+        results_dir=(
+            Path(entries["results_dir"][0])
+            if "results_dir" in entries and results_dir is None
+            else ((input_path.parent / "results_nstate_fit") if results_dir is None else Path(results_dir))
+        ),
     )
 
 
@@ -559,6 +561,73 @@ def write_plateau_note(path: Path) -> None:
     path.write_text(recommended_plateau_note(), encoding="utf-8")
 
 
+def _state_output_paths(
+    spec: NStateFitInput,
+    title: str,
+    nstates: int,
+    tmax: int,
+) -> tuple[Path, Path]:
+    dataset_dir = spec.results_dir / title
+    fit_path = dataset_dir / "tables" / f"{title}_{spec.model}_{nstates}state_tmax{tmax}_fits.txt"
+    sample_path = dataset_dir / "samples" / f"{title}_{spec.model}_{nstates}state_tmax{tmax}_samples.txt"
+    return fit_path, sample_path
+
+
+def _weighted_average(values: np.ndarray, errors: np.ndarray) -> float:
+    safe_errors = np.clip(np.asarray(errors, dtype=float), 1e-12, None)
+    weights = 1.0 / safe_errors**2
+    return float(np.sum(weights * values) / np.sum(weights))
+
+
+def _plateau_from_fit_table(table: np.ndarray, nstates: int) -> PlateauWindow | None:
+    if table.size == 0:
+        return None
+
+    rows = np.atleast_2d(np.asarray(table, dtype=float))
+    plateau_rows = rows[np.isclose(rows[:, 8], 1.0)]
+    if len(plateau_rows) == 0:
+        return None
+
+    tmins = plateau_rows[:, 0].astype(int)
+    amplitude_values = plateau_rows[:, 9]
+    amplitude_errors = plateau_rows[:, 9 + nstates]
+    energy_values = plateau_rows[:, 9 + 2 * nstates]
+    energy_errors = plateau_rows[:, 9 + 3 * nstates]
+
+    representative_tmin = int(tmins[len(tmins) // 2])
+    return PlateauWindow(
+        start_tmin=int(tmins[0]),
+        end_tmin=int(tmins[-1]),
+        representative_tmin=representative_tmin,
+        energy_mean=_weighted_average(energy_values, energy_errors),
+        amplitude_mean=_weighted_average(amplitude_values, amplitude_errors),
+    )
+
+
+def _try_load_previous_plateau(
+    spec: NStateFitInput,
+    title: str,
+    nstates: int,
+    tmax: int,
+) -> PlateauWindow | None:
+    if nstates <= 1:
+        return None
+
+    previous_state = nstates - 1
+    fit_path, sample_path = _state_output_paths(spec, title, previous_state, tmax)
+    if not fit_path.exists() or not sample_path.exists():
+        return None
+    if fit_path.stat().st_size == 0 or sample_path.stat().st_size == 0:
+        return None
+
+    try:
+        table = np.loadtxt(fit_path, ndmin=2)
+    except Exception:
+        return None
+
+    return _plateau_from_fit_table(table, previous_state)
+
+
 def run_single_dataset(spec: NStateFitInput, pz: int) -> list[Path]:
     title = spec.title_pattern.replace("*", str(pz))
     csv_path = spec.correlator_path_pattern.replace("*", str(pz))
@@ -624,13 +693,40 @@ def run_single_dataset(spec: NStateFitInput, pz: int) -> list[Path]:
     representative_rows: dict[int, FitSummaryRow] = {}
     plateau_cache: dict[int, PlateauWindow] = {}
     fit_tables: dict[int, Path] = {}
-    for nstates in spec.nstates:
+    written_states: set[int] = set()
+    state_sources: dict[int, str] = {}
+
+    def compute_state(nstates: int) -> None:
+        nonlocal current_guess
+        if nstates in written_states:
+            return
+
         if nstates == 1:
             tmin_start = 2
+            initial_guess = current_guess
         else:
-            previous_plateau = plateau_cache[nstates - 1]
+            previous_plateau = plateau_cache.get(nstates - 1)
+            if previous_plateau is None:
+                cached_plateau = _try_load_previous_plateau(spec, title, nstates, tmax)
+                if cached_plateau is not None:
+                    plateau_cache[nstates - 1] = cached_plateau
+                    state_sources.setdefault(nstates - 1, "cache_reused")
+                    previous_plateau = cached_plateau
+                    print(
+                        f"[nstate-fit] Reusing cached {nstates - 1}-state plateau for "
+                        f"{title} at tmax={tmax}."
+                    )
+                else:
+                    print(
+                        f"[nstate-fit] No cached {nstates - 1}-state plateau found for "
+                        f"{title} at tmax={tmax}; computing it now."
+                    )
+                    compute_state(nstates - 1)
+                    previous_plateau = plateau_cache[nstates - 1]
+
             tmin_start = min(previous_plateau.start_tmin + 2, tmax - 2)
-            current_guess = build_initial_guess_from_plateau(previous_plateau, nstates)
+            initial_guess = build_initial_guess_from_plateau(previous_plateau, nstates)
+            current_guess = initial_guess
 
         tmin_values = range(tmin_start, tmax - 1)
         rows, sample_tables, _ = run_sliding_fits(
@@ -641,8 +737,8 @@ def run_single_dataset(spec: NStateFitInput, pz: int) -> list[Path]:
             nstates,
             tmin_values,
             tmax,
-            current_guess[0],
-            current_guess[1],
+            initial_guess[0],
+            initial_guess[1],
         )
         plateau = suggest_plateau(rows, energy_index=0)
         plateau_cache[nstates] = plateau
@@ -650,13 +746,12 @@ def run_single_dataset(spec: NStateFitInput, pz: int) -> list[Path]:
         representative = next(row for row in rows if row.tmin == plateau.representative_tmin)
         representative_rows[nstates] = representative
 
-        table_path = tables_dir / f"{title}_{spec.model}_{nstates}state_tmax{tmax}_fits.txt"
+        table_path, sample_path = _state_output_paths(spec, title, nstates, tmax)
         table = serialize_fit_rows(rows)
         np.savetxt(table_path, table, header=header_for_fit_rows(nstates), fmt="%.10e")
         outputs.append(table_path)
         fit_tables[nstates] = table_path
 
-        sample_path = samples_dir / f"{title}_{spec.model}_{nstates}state_tmax{tmax}_samples.txt"
         sample_blocks = []
         for tmin in sorted(sample_tables):
             sample_blocks.append(sample_tables[tmin])
@@ -669,15 +764,22 @@ def run_single_dataset(spec: NStateFitInput, pz: int) -> list[Path]:
             fmt="%.10e",
         )
         outputs.append(sample_path)
+        written_states.add(nstates)
+        state_sources[nstates] = "computed_fresh"
+
+    for nstates in spec.nstates:
+        compute_state(nstates)
 
     summary_path = dataset_dir / f"{title}_{spec.model}_summary.txt"
     with summary_path.open("w", encoding="utf-8") as handle:
         handle.write(f"title {title}\n")
         handle.write(f"model {spec.model}\n")
         handle.write(f"tmax {tmax}\n")
-        for nstates in spec.nstates:
+        for nstates in sorted(representative_rows):
             plateau = plateau_cache[nstates]
             representative = representative_rows[nstates]
+            state_source = state_sources.get(nstates, "computed_fresh")
+            handle.write(f"{nstates}state source {state_source}\n")
             handle.write(
                 f"{nstates}state plateau_tmin {plateau.start_tmin} {plateau.end_tmin} "
                 f"representative_tmin {plateau.representative_tmin}\n"
@@ -706,7 +808,7 @@ def run_single_dataset(spec: NStateFitInput, pz: int) -> list[Path]:
                 )
             )
 
-    notebook_root = spec.results_dir.parent / "notebook_plots" / title
+    notebook_root = spec.results_dir / "notebook_plots" / title
     notebook_generated = notebook_root / "generated_plots"
     notebook_path = notebook_root / f"{title}_{spec.model}_nstate_plots.ipynb"
     outputs.append(

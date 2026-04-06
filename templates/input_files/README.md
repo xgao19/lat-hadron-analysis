@@ -1,6 +1,7 @@
 # Input-File Templates
 
 These plain-text templates mirror the original CLI workflow and use repository-relative example data.
+Both compact runnable examples and comment-rich annotated examples are provided.
 
 Run them from the repository root.
 
@@ -8,18 +9,26 @@ Run them from the repository root.
 
 ```bash
 python scripts/ss_2pt_tgevp_extract.py ss-2pt-tgevp \
-  templates/input_files/tgevp_example_realdata.txt \
-  --bootstrap-samples 16 \
-  --bootstrap-size 16 \
-  --results-dir examples/outputs/tgevp_realdata
+  templates/input_files/tgevp_example_realdata.txt
+```
+
+Annotated version:
+
+```text
+templates/input_files/tgevp_example_realdata_annotated.txt
 ```
 
 ## N-State Fit Example
 
 ```bash
 python scripts/fit_2pt_nstate.py 2pt-nstate-fit \
-  templates/input_files/nstate_fit_example_realdata.txt \
-  --results-dir examples/outputs/nstate_fit_realdata
+  templates/input_files/nstate_fit_example_realdata.txt
+```
+
+Annotated version:
+
+```text
+templates/input_files/nstate_fit_example_realdata_annotated.txt
 ```
 
 ## Plot Example

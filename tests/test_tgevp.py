@@ -29,6 +29,11 @@ class TGEVPTests(unittest.TestCase):
                         "pzlist 0 2",
                         "fold_t true",
                         "tsrange 0 20",
+                        "binsize 2",
+                        "bootstrap_samples 32",
+                        "bootstrap_size 24",
+                        "seed 2026",
+                        "results_dir /tmp/tgevp_results",
                     ]
                 ),
                 encoding="utf-8",
@@ -39,6 +44,11 @@ class TGEVPTests(unittest.TestCase):
         self.assertEqual(parsed.pzlist, (0, 2))
         self.assertEqual(parsed.fold_t, "periodic")
         self.assertEqual(parsed.tsrange, (0, 20))
+        self.assertEqual(parsed.binsize, 2)
+        self.assertEqual(parsed.bootstrap_samples, 32)
+        self.assertEqual(parsed.bootstrap_size, 24)
+        self.assertEqual(parsed.seed, 2026)
+        self.assertEqual(parsed.results_dir, Path("/tmp/tgevp_results"))
 
     def test_antiperiodic_fold(self) -> None:
         data = np.array([[10.0, 7.0, 5.0, 4.0, 2.0, 1.0]])

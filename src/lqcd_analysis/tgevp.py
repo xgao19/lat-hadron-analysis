@@ -29,6 +29,11 @@ class TGEVPInput:
     pzlist: tuple[int, ...]
     fold_t: str
     tsrange: tuple[int, int]
+    binsize: int
+    bootstrap_samples: int | None
+    bootstrap_size: int | None
+    seed: int
+    results_dir: Path
 
 
 @dataclass(frozen=True)
@@ -54,6 +59,12 @@ class SingleTSResult:
     corr_e0_e1: float
     n_accepted: int
     n_samples: int
+
+
+def parse_optional_int(value: str) -> int | None:
+    if value.lower() == "auto":
+        return None
+    return int(value)
 
 
 def parse_tgevp_input(path: str | Path) -> TGEVPInput:
@@ -101,6 +112,15 @@ def parse_tgevp_input(path: str | Path) -> TGEVPInput:
         pzlist=tuple(int(item) for item in entries["pzlist"]),
         fold_t=fold_t,
         tsrange=tsrange,
+        binsize=int(entries.get("binsize", ["1"])[0]),
+        bootstrap_samples=parse_optional_int(entries.get("bootstrap_samples", ["auto"])[0]),
+        bootstrap_size=parse_optional_int(entries.get("bootstrap_size", ["auto"])[0]),
+        seed=int(entries.get("seed", ["2026"])[0]),
+        results_dir=(
+            Path(entries["results_dir"][0])
+            if "results_dir" in entries
+            else file_path.resolve().parent / "results"
+        ),
     )
 def build_tgevp_matrices(correlator: np.ndarray, ts: int) -> tuple[np.ndarray, np.ndarray]:
     values = np.asarray(correlator, dtype=float)
@@ -310,11 +330,11 @@ def run_ss_2pt_tgevp(
     input_path = Path(input_file).resolve()
     spec = parse_tgevp_input(input_path)
     options = AnalysisOptions(
-        binsize=binsize,
-        bootstrap_samples=bootstrap_samples,
-        bootstrap_size=bootstrap_size,
-        seed=seed,
-        results_dir=(input_path.parent / "results") if results_dir is None else Path(results_dir),
+        binsize=spec.binsize if binsize is None else binsize,
+        bootstrap_samples=spec.bootstrap_samples if bootstrap_samples is None else bootstrap_samples,
+        bootstrap_size=spec.bootstrap_size if bootstrap_size is None else bootstrap_size,
+        seed=spec.seed if seed is None else seed,
+        results_dir=spec.results_dir if results_dir is None else Path(results_dir),
     )
     output_files: list[Path] = []
 

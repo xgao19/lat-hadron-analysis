@@ -1,0 +1,54 @@
+# Example 2pt N-state fit input file
+# Edit the values below, then run:
+#   python scripts/fit_2pt_nstate.py 2pt-nstate-fit templates/input_files/nstate_fit_example_realdata_annotated.txt
+#
+# First line format:
+#   title_pattern Ns Nt lattice_spacing_fm
+l64c64a076_m140_fit_k0_pz* 64 64 0.076
+
+# Path or wildcard pattern for correlator CSV files.
+c2pt examples/data/l64c64a076_m140/comb_c2pt_csv/c2pt_5_5_k0_pz*_real.csv
+
+# Momentum indices to analyze.
+pzlist 0
+
+# Time-folding mode before fitting.
+# Choices:
+#   none / false
+#   periodic / true
+#   antiperiodic
+fold_t none
+
+# Raw correlator time window [t_start, t_end].
+tsrange 0 24
+
+# Fit model choices:
+#   normal
+#   symmetric
+#   antisymmetric
+model normal
+
+# Allowed fit-state choices are subsets of: 1 2 3
+# Examples:
+#   nstates 1
+#   nstates 1 2
+#   nstates 1 2 3
+nstates 1 2
+
+# Fit upper bound. Use an integer or the word auto.
+tmax 12
+
+# Bootstrap and run controls.
+# Use auto for bootstrap_samples / bootstrap_size to let the backend choose.
+binsize 1
+bootstrap_samples 16
+bootstrap_size 16
+seed 2026
+
+# Whether to generate plots automatically.
+# Choices: true / false
+plot true
+
+# Output directory.
+# If omitted, outputs go to a `results_nstate_fit/` directory next to this input file.
+results_dir examples/outputs/nstate_fit_realdata

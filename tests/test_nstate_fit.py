@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 
 from lqcd_analysis.nstate_fit import (
+    _try_load_previous_plateau,
     effective_mass_single,
     evaluate_model,
     parse_nstate_fit_input,
@@ -43,6 +44,7 @@ class NStateFitTests(unittest.TestCase):
                         "tsrange 0 24",
                         "model symmetric",
                         "nstates 1 2 3",
+                        "results_dir /tmp/nstate_results",
                     ]
                 ),
                 encoding="utf-8",
@@ -51,6 +53,7 @@ class NStateFitTests(unittest.TestCase):
         self.assertEqual(parsed.model, "symmetric")
         self.assertEqual(parsed.nstates, (1, 2, 3))
         self.assertEqual(parsed.fold_t, "antiperiodic")
+        self.assertEqual(parsed.results_dir, Path("/tmp/nstate_results"))
 
     def test_end_to_end_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -99,11 +102,12 @@ class NStateFitTests(unittest.TestCase):
             self.assertTrue(outputs)
             summary = tmp / "results_nstate_fit" / "demo_pz0" / "demo_pz0_normal_summary.txt"
             self.assertTrue(summary.exists())
+            self.assertIn("1state source computed_fresh", summary.read_text(encoding="utf-8"))
             one_state = (
                 tmp / "results_nstate_fit" / "demo_pz0" / "tables" / "demo_pz0_normal_1state_tmax8_fits.txt"
             )
             self.assertTrue(one_state.exists())
-            notebook = tmp / "notebook_plots" / "demo_pz0" / "demo_pz0_normal_nstate_plots.ipynb"
+            notebook = tmp / "results_nstate_fit" / "notebook_plots" / "demo_pz0" / "demo_pz0_normal_nstate_plots.ipynb"
             self.assertTrue(notebook.exists())
 
     def test_notebook_writer(self) -> None:
@@ -122,6 +126,70 @@ class NStateFitTests(unittest.TestCase):
             self.assertTrue(notebook.exists())
             text = notebook.read_text(encoding="utf-8")
             self.assertIn("plot_nstate_outputs", text)
+
+    def test_try_load_previous_plateau(self) -> None:
+        spec = parse_nstate_fit_input("templates/input_files/nstate_fit_example_realdata.txt")
+        spec = type(spec)(**{**spec.__dict__, "results_dir": Path("examples/outputs/nstate_fit_realdata")})
+        plateau = _try_load_previous_plateau(spec, "l64c64a076_m140_fit_k0_pz0", 2, 12)
+        self.assertIsNotNone(plateau)
+        assert plateau is not None
+        self.assertEqual(plateau.start_tmin, 2)
+        self.assertGreater(plateau.end_tmin, plateau.start_tmin)
+        self.assertTrue(np.isfinite(plateau.energy_mean))
+
+    def test_two_state_only_run_bootstraps_missing_lower_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            csv_path = tmp / "c2pt_5_5_k0_pz0_real.csv"
+            input_path = tmp / "input_nstate.txt"
+
+            times = np.arange(18)
+            base = 3.0 * np.exp(-0.35 * times) + 0.8 * np.exp(-0.8 * times)
+            configs = []
+            for cfg in range(24):
+                noise = 0.01 * np.sin(times + cfg)
+                configs.append(base * (1.0 + noise))
+            data = np.array(configs).T
+
+            with csv_path.open("w", encoding="utf-8") as handle:
+                handle.write("t," + ",".join(f"cfg_{idx}" for idx in range(data.shape[1])) + "\n")
+                for t in range(len(times)):
+                    handle.write(
+                        str(t)
+                        + ","
+                        + ",".join(f"{value:.12e}" for value in data[t])
+                        + "\n"
+                    )
+
+            input_path.write_text(
+                "\n".join(
+                    [
+                        "demo_pz* 16 18 0.076",
+                        f"c2pt {csv_path.as_posix().replace('pz0', 'pz*')}",
+                        "pzlist 0",
+                        "fold_t none",
+                        "tsrange 0 12",
+                        "model normal",
+                        "nstates 2",
+                        "tmax 8",
+                        "bootstrap_samples 12",
+                        "bootstrap_size 12",
+                        "plot false",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            outputs = run_nstate_fit(input_path)
+            self.assertTrue(outputs)
+            one_state = (
+                tmp / "results_nstate_fit" / "demo_pz0" / "tables" / "demo_pz0_normal_1state_tmax8_fits.txt"
+            )
+            two_state = (
+                tmp / "results_nstate_fit" / "demo_pz0" / "tables" / "demo_pz0_normal_2state_tmax8_fits.txt"
+            )
+            self.assertTrue(one_state.exists())
+            self.assertTrue(two_state.exists())
 
 
 if __name__ == "__main__":

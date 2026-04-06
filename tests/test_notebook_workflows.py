@@ -5,6 +5,7 @@ from pathlib import Path
 from lqcd_analysis.notebook_workflows import (
     render_nstate_fit_input_text,
     render_tgevp_input_text,
+    validate_plot_2pt_notebook_config,
 )
 from lqcd_analysis.nstate_fit import parse_nstate_fit_input
 from lqcd_analysis.tgevp import parse_tgevp_input
@@ -22,10 +23,14 @@ class NotebookWorkflowTests(unittest.TestCase):
                 "pzlist": [0, 1],
                 "fold_t": "periodic",
                 "tsrange": [0, 20],
+                "binsize": 2,
+                "seed": 2026,
             }
         )
         self.assertIn("fold_t periodic", text)
         self.assertIn("pzlist 0 1", text)
+        self.assertIn("binsize 2", text)
+        self.assertIn("seed 2026", text)
 
     def test_render_nstate_text(self) -> None:
         text = render_nstate_fit_input_text(
@@ -42,10 +47,28 @@ class NotebookWorkflowTests(unittest.TestCase):
                 "nstates": [1, 2],
                 "tmax": "auto",
                 "plot": True,
+                "results_dir": "examples/outputs/demo",
             }
         )
         self.assertIn("model normal", text)
         self.assertIn("nstates 1 2", text)
+        self.assertIn("results_dir examples/outputs/demo", text)
+
+    def test_validate_plot_config(self) -> None:
+        config = {
+            "output_dir": "examples/outputs/plot_2pt_notebook",
+            "correlator_table": "corr.txt",
+            "meff_table": "meff.txt",
+            "fit_table": "fits.txt",
+            "nstates": 2,
+            "model": "normal",
+            "title": "demo",
+            "nt": 64,
+            "ignored": "extra",
+        }
+        validated = validate_plot_2pt_notebook_config(config)
+        self.assertNotIn("ignored", validated)
+        self.assertEqual(validated["nstates"], 2)
 
     def test_template_notebooks_exist_and_are_valid_json(self) -> None:
         for relative in (

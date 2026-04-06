@@ -11,3 +11,4 @@ bootstrap_samples 16
 bootstrap_size 16
 seed 2026
 plot true
+results_dir examples/outputs/nstate_fit_realdata

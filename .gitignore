@@ -34,3 +34,11 @@ examples/outputs/*
 templates/input_files/results*/
 templates/input_files/notebook_plots/
 templates/input_files/*.log
+
+# Repository-root analysis run products
+/notebook_plots/
+/*/tables/
+/*/samples/
+/*/plots/
+/*/plateau_recommendation.txt
+/*/*_summary.txt
