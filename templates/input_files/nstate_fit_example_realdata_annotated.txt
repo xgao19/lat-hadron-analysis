@@ -43,6 +43,13 @@ fit_mode uncorrelated
 #   nstates 1 2 3
 nstates 1 2
 
+# Optional: pz=0 ground-state energy in lattice units.
+# If provided, the 1-state plateau search uses the target
+#   E_target(pz) = sqrt(E0_pz0^2 + (2*pi*pz/Ns)^2)
+# to pre-filter plateau candidates before the usual ranking.
+# This affects only the 1-state plateau selection, not the fit model itself.
+# pz0_ground_energy 0.42
+
 # Fit upper bound. Use an integer or the word auto.
 tmax 12
 

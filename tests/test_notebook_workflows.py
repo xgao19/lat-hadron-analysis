@@ -13,8 +13,8 @@ from lqcd_analysis.notebook_workflows import (
     run_tgevp_from_notebook,
     validate_plot_2pt_notebook_config,
 )
-from lqcd_analysis.nstate_fit import parse_nstate_fit_input
-from lqcd_analysis.tgevp import parse_tgevp_input
+from lqcd_analysis.two_point.fit_nstate import parse_nstate_fit_input
+from lqcd_analysis.two_point.tgevp import parse_tgevp_input
 
 
 class NotebookWorkflowTests(unittest.TestCase):
@@ -76,6 +76,7 @@ class NotebookWorkflowTests(unittest.TestCase):
                 "tsrange": [0, 24],
                 "model": "normal",
                 "fit_mode": "correlated",
+                "pz0_ground_energy": 0.42,
                 "nstates": [1, 2],
                 "tmax": "auto",
                 "lambda_prior": 0.5,
@@ -85,6 +86,7 @@ class NotebookWorkflowTests(unittest.TestCase):
         )
         self.assertIn("model normal", text)
         self.assertIn("fit_mode correlated", text)
+        self.assertIn("pz0_ground_energy 0.42", text)
         self.assertIn("nstates 1 2", text)
         self.assertIn("lambda_prior 0.5", text)
         self.assertIn("results_dir examples/outputs/demo", text)

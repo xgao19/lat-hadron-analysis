@@ -4,8 +4,8 @@ from pathlib import Path
 
 import numpy as np
 
-from lqcd_analysis.tgevp import parse_tgevp_input, run_ss_2pt_tgevp, solve_tgevp
-from lqcd_analysis.utils import apply_antiperiodic_fold
+from lqcd_analysis.two_point.tgevp import parse_tgevp_input, run_ss_2pt_tgevp, solve_tgevp
+from lqcd_analysis.common.utils import apply_antiperiodic_fold
 
 
 class TGEVPTests(unittest.TestCase):

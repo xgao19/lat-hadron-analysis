@@ -8,7 +8,7 @@ from scipy.linalg import LinAlgError, eigh
 from scipy.stats import gaussian_kde
 
 from .io import load_correlator_csv
-from .utils import (
+from ..common.utils import (
     apply_fold_t,
     bin_correlators,
     bootstrap_correlator_means,

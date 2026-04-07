@@ -7,6 +7,8 @@ from pathlib import Path
 
 import numpy as np
 
+from ..common.fit_tables import parse_fit_table_scan
+
 PLOT_SUFFIX = ".pdf"
 HBAR_C_MEV_FM = 197.3269804
 
@@ -61,6 +63,7 @@ def plot_parameter_scan(
     errors: np.ndarray,
     prefix: str,
     ylabel: str,
+    state_indices: np.ndarray | None = None,
     plateau_tmin_range: tuple[int, int] | None = None,
     plateau_values: np.ndarray | None = None,
     plateau_errors: np.ndarray | None = None,
@@ -72,6 +75,10 @@ def plot_parameter_scan(
 
     fig, ax = plt.subplots(figsize=(6, 4))
     nstates = values.shape[1]
+    if state_indices is None:
+        state_indices = np.arange(nstates, dtype=int)
+    else:
+        state_indices = np.asarray(state_indices, dtype=int)
     for state in range(nstates):
         color = f"C{state}"
         ax.errorbar(
@@ -81,7 +88,7 @@ def plot_parameter_scan(
             fmt="o",
             ms=4,
             color=color,
-            label=f"{prefix}{state}",
+            label=f"{prefix}{state_indices[state]}",
         )
         if (
             plateau_tmin_range is not None
@@ -111,6 +118,12 @@ def plot_parameter_scan(
     fig.savefig(output_path)
     plt.close(fig)
     return output_path
+
+
+def select_scan_state_indices(nstates: int) -> np.ndarray:
+    if nstates <= 1:
+        return np.array([0], dtype=int)
+    return np.array([nstates - 1], dtype=int)
 
 
 def plot_best_fit_reconstruction(
@@ -207,6 +220,7 @@ def plot_nstate_outputs(
     correlator_table: str | Path,
     meff_table: str | Path,
     fit_table: str | Path,
+    plateau_table: str | Path | None,
     nstates: int,
     model: str,
     title: str,
@@ -227,33 +241,36 @@ def plot_nstate_outputs(
     meff_mean = lattice_energy_to_mev(meff[:, 1], lattice_spacing_fm)
     meff_err = lattice_energy_to_mev(meff[:, 2], lattice_spacing_fm)
     meff_mask = meff_times >= 2
-    tmax = int(fit[0, 1])
-    tmins = fit[:, 0]
+    fit_scan = parse_fit_table_scan(fit, nstates)
+    tmax = fit_scan.tmax
+    tmins = fit_scan.tmins
+    amplitude_values = fit_scan.amplitude_values
+    amplitude_errs = fit_scan.amplitude_errs
+    energy_values = lattice_energy_to_mev(fit_scan.energy_values, lattice_spacing_fm)
+    energy_errs = lattice_energy_to_mev(fit_scan.energy_errs, lattice_spacing_fm)
+    plateau_tmin_range = fit_scan.plateau_tmin_range
+    plateau_start_tmin = fit_scan.plateau_start_tmin
+    amplitudes = np.asarray(fit_scan.fallback_params_mean[:nstates], dtype=float)
+    amplitude_band_errs = np.asarray(fit_scan.fallback_params_err[:nstates], dtype=float)
+    energies = np.asarray(fit_scan.fallback_params_mean[nstates : 2 * nstates], dtype=float)
+    energy_band_errs = np.asarray(fit_scan.fallback_params_err[nstates : 2 * nstates], dtype=float)
+    if plateau_table is not None and Path(plateau_table).exists():
+        plateau_summary = load_table(plateau_table)[0]
+        amplitudes = plateau_summary[:nstates]
+        energies = plateau_summary[nstates : 2 * nstates]
+        amplitude_band_errs = plateau_summary[2 * nstates : 3 * nstates]
+        energy_band_errs = plateau_summary[3 * nstates : 4 * nstates]
+    scan_state_indices = select_scan_state_indices(nstates)
+    plotted_amplitude_values = amplitude_values[:, scan_state_indices]
+    plotted_amplitude_errs = amplitude_errs[:, scan_state_indices]
+    plotted_energy_values = energy_values[:, scan_state_indices]
+    plotted_energy_errs = energy_errs[:, scan_state_indices]
+    plotted_amplitudes = amplitudes[scan_state_indices]
+    plotted_amplitude_band_errs = amplitude_band_errs[scan_state_indices]
+    plotted_energies = energies[scan_state_indices]
+    plotted_energy_band_errs = energy_band_errs[scan_state_indices]
 
-    has_fallback_column = fit.shape[1] >= 10 + 4 * nstates
-    plateau_flag_column = 9 if has_fallback_column else 8
-    amp_start = plateau_flag_column + 1
-    energy_start = amp_start + nstates * 2
-    amplitude_values = fit[:, amp_start : amp_start + nstates]
-    amplitude_errs = fit[:, amp_start + nstates : amp_start + 2 * nstates]
-    energy_values = lattice_energy_to_mev(fit[:, energy_start : energy_start + nstates], lattice_spacing_fm)
-    energy_errs = lattice_energy_to_mev(
-        fit[:, energy_start + nstates : energy_start + 2 * nstates],
-        lattice_spacing_fm,
-    )
-    plateau_rows = fit[fit[:, plateau_flag_column] > 0.5]
-    representative = plateau_rows[len(plateau_rows) // 2] if len(plateau_rows) else fit[len(fit) // 2]
-    plateau_tmin_range = (
-        int(plateau_rows[0, 0]) if len(plateau_rows) else int(representative[0]),
-        int(plateau_rows[-1, 0]) if len(plateau_rows) else int(representative[0]),
-    )
-    representative_tmin = int(representative[0])
-    amplitudes = representative[amp_start : amp_start + nstates]
-    amplitude_band_errs = representative[amp_start + nstates : amp_start + 2 * nstates]
-    energies = representative[energy_start : energy_start + nstates]
-    energy_band_errs = representative[energy_start + nstates : energy_start + 2 * nstates]
-
-    fit_times = np.arange(representative_tmin, tmax + 1)
+    fit_times = np.arange(plateau_start_tmin, tmax + 1)
     fit_curve, fit_band_low, fit_band_high = build_reconstruction_band(
         fit_times,
         amplitudes,
@@ -276,32 +293,34 @@ def plot_nstate_outputs(
         plot_parameter_scan(
             output_path / f"{title}_{model}_{nstates}state_energies_tmax{tmax}{PLOT_SUFFIX}",
             tmins,
-            energy_values,
-            energy_errs,
+            plotted_energy_values,
+            plotted_energy_errs,
             prefix="E",
             ylabel="Energy [MeV]",
+            state_indices=scan_state_indices,
             plateau_tmin_range=plateau_tmin_range,
-            plateau_values=lattice_energy_to_mev(energies, lattice_spacing_fm),
-            plateau_errors=lattice_energy_to_mev(energy_band_errs, lattice_spacing_fm),
+            plateau_values=lattice_energy_to_mev(plotted_energies, lattice_spacing_fm),
+            plateau_errors=lattice_energy_to_mev(plotted_energy_band_errs, lattice_spacing_fm),
             title=f"{title}: {nstates}-state energies",
         ),
         plot_parameter_scan(
             output_path / f"{title}_{model}_{nstates}state_amplitudes_tmax{tmax}{PLOT_SUFFIX}",
             tmins,
-            amplitude_values,
-            amplitude_errs,
+            plotted_amplitude_values,
+            plotted_amplitude_errs,
             prefix="A",
             ylabel="Amplitude",
+            state_indices=scan_state_indices,
             plateau_tmin_range=plateau_tmin_range,
-            plateau_values=amplitudes,
-            plateau_errors=amplitude_band_errs,
+            plateau_values=plotted_amplitudes,
+            plateau_errors=plotted_amplitude_band_errs,
             title=f"{title}: {nstates}-state amplitudes",
         ),
         plot_best_fit_reconstruction(
             output_path / f"{title}_{model}_{nstates}state_reconstruction_tmax{tmax}{PLOT_SUFFIX}",
             fit_times,
-            corr_mean[representative_tmin : tmax + 1],
-            corr_err[representative_tmin : tmax + 1],
+            corr_mean[plateau_start_tmin : tmax + 1],
+            corr_err[plateau_start_tmin : tmax + 1],
             fit_curve,
             fit_band_low,
             fit_band_high,
@@ -336,6 +355,7 @@ def write_nstate_plot_notebook(
     correlator_table: str | Path,
     meff_table: str | Path,
     fit_tables: dict[int, str | Path],
+    plateau_tables: dict[int, str | Path],
     model: str,
     title: str,
     nt: int,
@@ -344,6 +364,7 @@ def write_nstate_plot_notebook(
     notebook_path = Path(notebook_path)
     notebook_output_dir = Path(notebook_output_dir)
     fit_tables_repr = {str(key): str(Path(value)) for key, value in fit_tables.items()}
+    plateau_tables_repr = {str(key): str(Path(value)) for key, value in plateau_tables.items()}
     repo_src = Path(__file__).resolve().parents[1]
     notebook = {
         "cells": [
@@ -365,7 +386,7 @@ def write_nstate_plot_notebook(
                     "from pathlib import Path\n",
                     "import sys\n",
                     f"sys.path.insert(0, {str(repo_src)!r})\n",
-                    "from lqcd_analysis.plotting_2pt import plot_nstate_outputs\n",
+                    "from lqcd_analysis.two_point.plotting import plot_nstate_outputs\n",
                 ],
             },
             {
@@ -382,6 +403,7 @@ def write_nstate_plot_notebook(
                     f"nt = {nt}\n",
                     f"lattice_spacing_fm = {lattice_spacing_fm}\n",
                     f"fit_tables = {json.dumps(fit_tables_repr, indent=2)}\n",
+                    f"plateau_tables = {json.dumps(plateau_tables_repr, indent=2)}\n",
                     "available_nstates = sorted(int(key) for key in fit_tables)\n",
                     "chosen_nstate = max(available_nstates)\n",
                     "output_dir.mkdir(parents=True, exist_ok=True)\n",
@@ -418,6 +440,7 @@ def write_nstate_plot_notebook(
                     "    correlator_table=correlator_table,\n",
                     "    meff_table=meff_table,\n",
                     "    fit_table=Path(fit_tables[str(chosen_nstate)]),\n",
+                    "    plateau_table=Path(plateau_tables[str(chosen_nstate)]),\n",
                     "    nstates=chosen_nstate,\n",
                     "    model=model,\n",
                     "    title=title,\n",

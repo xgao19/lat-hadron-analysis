@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from lqcd_analysis.correlators import effective_mass, jackknife_mean, jackknife_samples
+from lqcd_analysis.common.correlators import effective_mass, jackknife_mean, jackknife_samples
 
 
 class CorrelatorTests(unittest.TestCase):

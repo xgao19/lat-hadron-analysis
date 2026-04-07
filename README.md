@@ -23,6 +23,10 @@ processed data.
 │   └── outputs/          Ignored example run products
 ├── scripts/              Reproducible command-line entry points
 ├── src/lqcd_analysis/    Python source package
+│   ├── common/           Shared reusable helpers and infrastructure
+│   ├── two_point/        Two-point analysis workflows
+│   ├── three_point/      Three-point analysis scaffolding
+│   └── tmdwf/            TMDWF analysis scaffolding
 ├── templates/            Notebook and input-file templates
 └── tests/                Unit tests
 ```
@@ -38,7 +42,7 @@ python -m unittest discover
 
 ## Next Steps
 
-1. Add project-specific analysis routines under `src/lqcd_analysis/`.
+1. Add project-specific analysis routines under the appropriate domain package in `src/lqcd_analysis/`.
 2. Add or extend templates under `templates/`.
 3. Add more tracked example datasets under `examples/data/` if useful.
 4. Keep run products under ignored output directories such as `examples/outputs/`.
@@ -97,6 +101,11 @@ seed 2026
 plot true
 ```
 
+Optional input:
+
+- `pz0_ground_energy <value>`:
+  provide the pz=0 ground-state energy in lattice units. When present, the 1-state plateau search uses the lattice dispersion target `sqrt(E0_pz0^2 + (2*pi*pz/Ns)^2)` to pre-filter plateau candidates before the usual plateau ranking. This affects only plateau selection, not the nonlinear fit model.
+
 `fold_t` options:
 
 - `fold_t false`
@@ -113,12 +122,12 @@ Meaning:
 
 Notes on the workflow:
 
-- `tmax auto` is chosen as the first time slice where the effective-mass relative error reaches 50%, or `Nt/2 - 4`, whichever is smaller.
+- `tmax auto` is chosen as the first time slice where the effective-mass relative error reaches 50%, or `Nt/2 - 7`, whichever is smaller.
 - The 2-state fit is initialized from the suggested 1-state plateau.
 - The 3-state fit is initialized from the suggested 2-state plateau.
 - Plateau suggestion looks for the longest contiguous `tmin` window where adjacent ground-state energies are statistically consistent and the fits remain reasonably well behaved.
 - If `matplotlib` is unavailable, the code writes a small text note instead of a plot file.
-- Plotting is now handled by a reusable module in `src/lqcd_analysis/plotting_2pt.py`.
+- Plotting is now handled by a reusable module in `src/lqcd_analysis/two_point/plotting.py`.
 - Plot outputs convert fitted energies and effective masses from lattice units `E*a` into physical units in MeV using the provided lattice spacing.
 - After each 2pt fit run, an editable notebook is written under `results_dir/notebook_plots/`. The notebook calls the reusable plotting module so you can tweak paths, styles, and which state to draw.
 
@@ -141,7 +150,7 @@ Notebook templates are thin wrappers around the existing analysis code. They are
 Each template now uses the same notebook-facing pattern: edit a single `workflow_config` object, validate it, and then call one `run_*_from_notebook(...)` function.
 Each notebook template also includes an `Option Guide` markdown cell right after the user-input cell, describing the main options, their expected choices, and their practical effect.
 
-The helper bridge for notebooks lives in `src/lqcd_analysis/notebook_workflows.py`. It renders notebook configs into the same or nearly the same text fields used by the existing input-file parsers, and then calls the same backend runners.
+The helper bridge for notebooks lives in `src/lqcd_analysis/notebook_workflows.py`. It renders notebook configs into the same or nearly the same text fields used by the existing input-file parsers, and then calls the same backend runners in the `two_point` package.
 The two workflows use different default output locations by design: notebook workflows default to the current working directory, while plain-text input-file workflows default to a results directory next to the input file.
 For `nstatefit`, the user-facing `fit_mode` option supports both `uncorrelated` and `correlated` fits. In correlated mode the code builds one shared covariance matrix from the full bootstrap ensemble and reuses it across the mean fit and bootstrap fits; if a correlated sample/window fit fails, it falls back to a diagonal fit using only the covariance diagonal.
 The N-state fit outputs also track this fallback usage: fit tables include a `fallback_uncorrelated_successes` column for each `tmin` window, and summaries report the representative window's fallback count.
@@ -168,3 +177,9 @@ Example outputs are intentionally ignored by git and should go under:
 - `examples/outputs/`
 
 This lets the repository keep realistic data and templates tracked, while avoiding noisy result folders, plots, logs, and notebooks in version control.
+
+## Package Organization
+
+- `lqcd_analysis.common` contains genuinely shared infrastructure such as bootstrap helpers, folding utilities, generic correlator helpers, and fit-table schema parsing.
+- `lqcd_analysis.two_point` contains the current two-point analysis implementations, including N-state fitting, plotting, TGEVP, and two-point-specific CSV loading.
+- `lqcd_analysis.three_point` and `lqcd_analysis.tmdwf` are scaffold subpackages reserved for future domain-specific workflows.

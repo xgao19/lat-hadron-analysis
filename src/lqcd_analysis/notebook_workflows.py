@@ -5,9 +5,9 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from .nstate_fit import parse_nstate_fit_input, run_nstate_fit
-from .plotting_2pt import plot_nstate_outputs
-from .tgevp import parse_tgevp_input, run_ss_2pt_tgevp
+from .two_point.fit_nstate import parse_nstate_fit_input, run_nstate_fit
+from .two_point.plotting import plot_nstate_outputs
+from .two_point.tgevp import parse_tgevp_input, run_ss_2pt_tgevp
 
 TGEVP_INPUT_KEYS = {
     "title_pattern",
@@ -42,6 +42,7 @@ NSTATE_INPUT_KEYS = {
     "tsrange",
     "model",
     "fit_mode",
+    "pz0_ground_energy",
     "nstates",
     "tmax",
     "binsize",
@@ -64,6 +65,7 @@ PLOT_REQUIRED_KEYS = {
     "nt",
     "lattice_spacing_fm",
 }
+PLOT_OPTIONAL_KEYS = {"plateau_table"}
 
 
 def _as_scalar_string(value: Any) -> str:
@@ -138,6 +140,7 @@ def render_nstate_fit_input_text(config: dict[str, Any]) -> str:
     ]
 
     for optional_key in (
+        "pz0_ground_energy",
         "tmax",
         "binsize",
         "bootstrap_samples",
@@ -234,7 +237,8 @@ def validate_plot_2pt_notebook_config(config: dict[str, Any]) -> dict[str, Any]:
     missing = PLOT_REQUIRED_KEYS - set(config)
     if missing:
         raise ValueError(f"missing plot notebook config keys: {sorted(missing)}")
-    return {key: config[key] for key in sorted(PLOT_REQUIRED_KEYS)}
+    allowed = PLOT_REQUIRED_KEYS | PLOT_OPTIONAL_KEYS
+    return {key: config[key] for key in sorted(allowed) if key in config}
 
 
 def run_plot_2pt_from_notebook(config: dict[str, Any]) -> list[Path]:
@@ -244,6 +248,7 @@ def run_plot_2pt_from_notebook(config: dict[str, Any]) -> list[Path]:
         correlator_table=validated["correlator_table"],
         meff_table=validated["meff_table"],
         fit_table=validated["fit_table"],
+        plateau_table=validated.get("plateau_table"),
         nstates=int(validated["nstates"]),
         model=str(validated["model"]),
         title=str(validated["title"]),

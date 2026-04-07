@@ -9,7 +9,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from lqcd_analysis.plotting_2pt import plot_nstate_outputs
+from lqcd_analysis.two_point.plotting import plot_nstate_outputs
 
 
 def main() -> None:
@@ -18,6 +18,7 @@ def main() -> None:
     parser.add_argument("correlator_table")
     parser.add_argument("meff_table")
     parser.add_argument("fit_table")
+    parser.add_argument("--plateau-table")
     parser.add_argument("--nstates", type=int, required=True)
     parser.add_argument("--model", required=True)
     parser.add_argument("--title", required=True)
@@ -29,6 +30,7 @@ def main() -> None:
         correlator_table=args.correlator_table,
         meff_table=args.meff_table,
         fit_table=args.fit_table,
+        plateau_table=args.plateau_table,
         nstates=args.nstates,
         model=args.model,
         title=args.title,

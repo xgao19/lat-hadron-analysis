@@ -3,8 +3,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from .nstate_fit import run_nstate_fit
-from .tgevp import run_ss_2pt_tgevp
+from .two_point.fit_nstate import run_nstate_fit
+from .two_point.tgevp import run_ss_2pt_tgevp
 
 
 def build_parser() -> argparse.ArgumentParser:
