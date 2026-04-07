@@ -41,12 +41,14 @@ NSTATE_INPUT_KEYS = {
     "fold_t",
     "tsrange",
     "model",
+    "fit_mode",
     "nstates",
     "tmax",
     "binsize",
     "bootstrap_samples",
     "bootstrap_size",
     "seed",
+    "lambda_prior",
     "plot",
     "results_dir",
 }
@@ -60,6 +62,7 @@ PLOT_REQUIRED_KEYS = {
     "model",
     "title",
     "nt",
+    "lattice_spacing_fm",
 }
 
 
@@ -116,6 +119,7 @@ def render_nstate_fit_input_text(config: dict[str, Any]) -> str:
         "fold_t",
         "tsrange",
         "model",
+        "fit_mode",
         "nstates",
     ]
     missing = [key for key in required if key not in config]
@@ -129,6 +133,7 @@ def render_nstate_fit_input_text(config: dict[str, Any]) -> str:
         f"fold_t {_as_scalar_string(config['fold_t'])}",
         f"tsrange {_as_scalar_string(config['tsrange'])}",
         f"model {_as_scalar_string(config['model'])}",
+        f"fit_mode {_as_scalar_string(config.get('fit_mode', 'uncorrelated'))}",
         f"nstates {_as_scalar_string(config['nstates'])}",
     ]
 
@@ -138,6 +143,7 @@ def render_nstate_fit_input_text(config: dict[str, Any]) -> str:
         "bootstrap_samples",
         "bootstrap_size",
         "seed",
+        "lambda_prior",
         "plot",
         "results_dir",
     ):
@@ -151,6 +157,28 @@ def _materialize_input_text(text: str, suffix: str) -> Path:
     path = tmpdir / suffix
     path.write_text(text, encoding="utf-8")
     return path
+
+
+def _guess_notebook_dir() -> Path:
+    """Prefer the actual VS Code notebook location over Path.cwd().
+
+    In VS Code Jupyter sessions, Path.cwd() may point to a temporary working
+    directory rather than the .ipynb file's directory. When available, use the
+    injected __vsc_ipynb_file__ variable from the live IPython user namespace.
+    """
+    try:
+        from IPython import get_ipython
+    except ImportError:
+        return Path.cwd().resolve()
+
+    shell = get_ipython()
+    if shell is None:
+        return Path.cwd().resolve()
+
+    notebook_path = shell.user_ns.get("__vsc_ipynb_file__")
+    if notebook_path:
+        return Path(notebook_path).resolve().parent
+    return Path.cwd().resolve()
 
 
 def validate_tgevp_notebook_config(config: dict[str, Any]):
@@ -178,9 +206,7 @@ def run_tgevp_from_notebook(
     run_config.update(_subset_config(config, TGEVP_RUN_KEYS))
     run_config.update({key: value for key, value in overrides.items() if value is not None})
     if run_config["results_dir"] is None:
-        # In notebooks, default to the notebook's working directory so outputs
-        # appear alongside the notebook unless the user overrides the path.
-        run_config["results_dir"] = Path.cwd()
+        run_config["results_dir"] = _guess_notebook_dir()
     return run_ss_2pt_tgevp(
         input_path,
         binsize=run_config["binsize"],
@@ -200,9 +226,7 @@ def run_nstate_fit_from_notebook(
     run_config.update(_subset_config(config, NSTATE_RUN_KEYS))
     run_config.update({key: value for key, value in overrides.items() if value is not None})
     if run_config["results_dir"] is None:
-        # Match the TGEVP notebook workflow: default to the notebook's working
-        # directory when no explicit output directory is provided.
-        run_config["results_dir"] = Path.cwd()
+        run_config["results_dir"] = _guess_notebook_dir()
     return run_nstate_fit(input_path, results_dir=run_config["results_dir"])
 
 
@@ -224,6 +248,7 @@ def run_plot_2pt_from_notebook(config: dict[str, Any]) -> list[Path]:
         model=str(validated["model"]),
         title=str(validated["title"]),
         nt=int(validated["nt"]),
+        lattice_spacing_fm=float(validated["lattice_spacing_fm"]),
     )
 
 

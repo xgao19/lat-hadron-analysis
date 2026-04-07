@@ -4,6 +4,7 @@ pzlist 0
 fold_t none
 tsrange 0 24
 model normal
+fit_mode uncorrelated
 nstates 1 2
 tmax 12
 binsize 1

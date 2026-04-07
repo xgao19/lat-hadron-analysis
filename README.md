@@ -119,6 +119,7 @@ Notes on the workflow:
 - Plateau suggestion looks for the longest contiguous `tmin` window where adjacent ground-state energies are statistically consistent and the fits remain reasonably well behaved.
 - If `matplotlib` is unavailable, the code writes a small text note instead of a plot file.
 - Plotting is now handled by a reusable module in `src/lqcd_analysis/plotting_2pt.py`.
+- Plot outputs convert fitted energies and effective masses from lattice units `E*a` into physical units in MeV using the provided lattice spacing.
 - After each 2pt fit run, an editable notebook is written under `results_dir/notebook_plots/`. The notebook calls the reusable plotting module so you can tweak paths, styles, and which state to draw.
 
 ## Workflows
@@ -142,6 +143,8 @@ Each notebook template also includes an `Option Guide` markdown cell right after
 
 The helper bridge for notebooks lives in `src/lqcd_analysis/notebook_workflows.py`. It renders notebook configs into the same or nearly the same text fields used by the existing input-file parsers, and then calls the same backend runners.
 The two workflows use different default output locations by design: notebook workflows default to the current working directory, while plain-text input-file workflows default to a results directory next to the input file.
+For `nstatefit`, the user-facing `fit_mode` option supports both `uncorrelated` and `correlated` fits. In correlated mode the code builds one shared covariance matrix from the full bootstrap ensemble and reuses it across the mean fit and bootstrap fits; if a correlated sample/window fit fails, it falls back to a diagonal fit using only the covariance diagonal.
+The N-state fit outputs also track this fallback usage: fit tables include a `fallback_uncorrelated_successes` column for each `tmin` window, and summaries report the representative window's fallback count.
 
 ## Runnable Examples
 

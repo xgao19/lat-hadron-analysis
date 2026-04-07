@@ -28,6 +28,14 @@ tsrange 0 24
 #   antisymmetric
 model normal
 
+# Fit error model:
+#   uncorrelated = diagonal fit using per-time-slice bootstrap standard deviations
+#   correlated   = full time-time covariance fit using one shared covariance matrix
+#                  built from the full bootstrap ensemble and reused for all fits
+#                  if a correlated fit fails, the code falls back to a diagonal
+#                  fit using only the covariance diagonal for that sample/window
+fit_mode uncorrelated
+
 # Allowed fit-state choices are subsets of: 1 2 3
 # Examples:
 #   nstates 1
@@ -45,9 +53,24 @@ bootstrap_samples 16
 bootstrap_size 16
 seed 2026
 
+# Soft-prior strength for higher-state fits.
+# The prior enters the least-squares residual as
+#   sqrt(lambda_prior) * (E - E_prior) / sigma_prior
+# Default is 1.0.
+# 1-state has no lower-state prior.
+# 2-state gets a prior on E0 from the 1-state plateau result.
+# 3-state gets priors on E0 and E1 from the 2-state result.
+lambda_prior 1.0
+
 # Whether to generate plots automatically.
 # Choices: true / false
 plot true
+
+# Output note:
+#   Fit tables include `fallback_uncorrelated_successes`, the number of bootstrap
+#   samples in that tmin window that succeeded only after falling back from the
+#   correlated fit to a diagonal fit.
+#   The summary also reports this count for the representative window.
 
 # Output directory.
 # If omitted, outputs go to a `results_nstate_fit/` directory next to this input file.

@@ -124,7 +124,6 @@ def robust_mean_and_error(samples: np.ndarray) -> tuple[float, float]:
         return np.nan, np.nan
 
     p16, p84 = np.percentile(values, [16.0, 84.0])
-    central = values[(values >= p16) & (values <= p84)]
-    mean = float(np.mean(central if central.size else values))
+    mean = float(0.5 * (p16 + p84))
     err = float(0.5 * (p84 - p16))
     return mean, err
