@@ -1199,7 +1199,7 @@ class NStateFitTests(unittest.TestCase):
             self.assertEqual(notebook_fit_table_keys, [1, 2])
 
     def test_load_previous_state_artifacts(self) -> None:
-        spec = parse_nstate_fit_input("templates/input_files/nstate_fit_example_realdata.txt")
+        spec = parse_nstate_fit_input("templates/input_files/two_point/nstate_fit_example_realdata.txt")
         spec = type(spec)(**{**spec.__dict__, "results_dir": Path("examples/outputs/nstate_fit_realdata")})
         artifact = _load_previous_state_artifacts(spec, "l64c64a076_m140_fit_k0_pz0", 2, 12)
         self.assertIsNotNone(artifact)
@@ -1238,7 +1238,7 @@ class NStateFitTests(unittest.TestCase):
             np.savetxt(table_dir / f"{title}_normal_1state_tmax10_fits.txt", fit_table)
             np.savetxt(sample_dir / f"{title}_normal_1state_tmax10_samples.txt", sample_table)
 
-            spec = parse_nstate_fit_input("templates/input_files/nstate_fit_example_realdata.txt")
+            spec = parse_nstate_fit_input("templates/input_files/two_point/nstate_fit_example_realdata.txt")
             spec = type(spec)(**{**spec.__dict__, "results_dir": results_dir})
             artifact = _load_previous_state_artifacts(spec, title, 2, 10)
 

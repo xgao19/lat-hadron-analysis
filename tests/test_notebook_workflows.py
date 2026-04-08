@@ -8,11 +8,15 @@ from unittest.mock import patch
 from lqcd_analysis.notebook_workflows import (
     _guess_notebook_dir,
     render_nstate_fit_input_text,
+    render_tmdwf_fit_input_text,
     render_tgevp_input_text,
     run_nstate_fit_from_notebook,
+    run_tmdwf_fit_from_notebook,
     run_tgevp_from_notebook,
     validate_plot_2pt_notebook_config,
+    validate_tmdwf_notebook_config,
 )
+from lqcd_analysis.tmdwf.fit_nstate import parse_tmdwf_fit_input
 from lqcd_analysis.two_point.fit_nstate import parse_nstate_fit_input
 from lqcd_analysis.two_point.tgevp import parse_tgevp_input
 
@@ -41,6 +45,33 @@ class NotebookWorkflowTests(unittest.TestCase):
             "model": "normal",
             "fit_mode": "uncorrelated",
             "nstates": [1, 2],
+        }
+        self.tmdwf_config = {
+            "title_pattern": "demo_pz*",
+            "ns": 64,
+            "nt": 64,
+            "lattice_spacing_fm": 0.076,
+            "fit_target": "ratio",
+            "fit_component": "both",
+            "nstates": [1, 2],
+            "pzlist": [0],
+            "gmlist": ["T5"],
+            "etalist": ["eta0"],
+            "Tdirlist": ["plus", "minus"],
+            "bTlist": [0],
+            "bzlist": [0],
+            "binsize": 1,
+            "bootstrap_samples": 16,
+            "bootstrap_size": 16,
+            "seed": 2026,
+            "tmin": 2,
+            "tmax": 12,
+            "qtmdwf_h5": "/tmp/qtmdwf_pz*.h5",
+            "dataset_path_template": "{gm}/{eta}/pz{pz}/{Tdir}/bT{bT}/bz{bz}",
+            "two_point_plateau_table": "/tmp/plateau_pz*.txt",
+            "c2pt": "/tmp/c2pt.csv",
+            "fold_t": "periodic",
+            "tsrange": [0, 20],
         }
 
     def test_render_tgevp_text(self) -> None:
@@ -108,6 +139,25 @@ class NotebookWorkflowTests(unittest.TestCase):
         self.assertNotIn("ignored", validated)
         self.assertEqual(validated["nstates"], 2)
 
+    def test_render_tmdwf_text(self) -> None:
+        text = render_tmdwf_fit_input_text(
+            {
+                **self.tmdwf_config,
+                "results_dir": "examples/outputs/tmdwf_demo",
+            }
+        )
+        self.assertIn("fit_target ratio", text)
+        self.assertIn("fit_component both", text)
+        self.assertIn("gmlist T5", text)
+        self.assertIn("bTlist 0", text)
+        self.assertIn("bzlist 0", text)
+        self.assertIn("results_dir examples/outputs/tmdwf_demo", text)
+
+    def test_validate_tmdwf_notebook_config(self) -> None:
+        parsed = validate_tmdwf_notebook_config(self.tmdwf_config)
+        self.assertEqual(parsed.fit_target, "ratio")
+        self.assertEqual(parsed.nstates, (1, 2))
+
     def test_guess_notebook_dir_uses_vscode_notebook_path(self) -> None:
         shell = SimpleNamespace(user_ns={"__vsc_ipynb_file__": "/tmp/demo/notebook.ipynb"})
         fake_ipython = SimpleNamespace(get_ipython=lambda: shell)
@@ -129,6 +179,10 @@ class NotebookWorkflowTests(unittest.TestCase):
             run_nstate_fit_from_notebook(self.nstate_config, results_dir="/tmp/explicit_nstate")
         self.assertEqual(Path(mock_nstate.call_args.kwargs["results_dir"]), Path("/tmp/explicit_nstate"))
 
+        with patch("lqcd_analysis.notebook_workflows.run_tmdwf_nstate_fit", return_value=[] ) as mock_tmdwf:
+            run_tmdwf_fit_from_notebook(self.tmdwf_config, results_dir="/tmp/explicit_tmdwf")
+        self.assertEqual(Path(mock_tmdwf.call_args.kwargs["results_dir"]), Path("/tmp/explicit_tmdwf"))
+
     def test_notebook_runners_use_vscode_notebook_dir_when_available(self) -> None:
         shell = SimpleNamespace(user_ns={"__vsc_ipynb_file__": "/tmp/vscode/session.ipynb"})
         fake_ipython = SimpleNamespace(get_ipython=lambda: shell)
@@ -142,11 +196,17 @@ class NotebookWorkflowTests(unittest.TestCase):
                 run_nstate_fit_from_notebook(self.nstate_config)
             self.assertEqual(Path(mock_nstate.call_args.kwargs["results_dir"]), Path("/tmp/vscode").resolve())
 
+        with patch.dict(sys.modules, {"IPython": fake_ipython}):
+            with patch("lqcd_analysis.notebook_workflows.run_tmdwf_nstate_fit", return_value=[] ) as mock_tmdwf:
+                run_tmdwf_fit_from_notebook(self.tmdwf_config)
+            self.assertEqual(Path(mock_tmdwf.call_args.kwargs["results_dir"]), Path("/tmp/vscode").resolve())
+
     def test_template_notebooks_exist_and_are_valid_json(self) -> None:
         for relative in (
-            "templates/tgevp_template.ipynb",
-            "templates/nstate_fit_template.ipynb",
-            "templates/plot_2pt_template.ipynb",
+            "templates/two_point/tgevp_template.ipynb",
+            "templates/two_point/nstate_fit_template.ipynb",
+            "templates/tmdwf/tmdwf_nstate_template.ipynb",
+            "templates/two_point/plot_2pt_template.ipynb",
         ):
             path = Path(relative)
             self.assertTrue(path.exists(), path)
@@ -155,14 +215,18 @@ class NotebookWorkflowTests(unittest.TestCase):
             self.assertTrue(notebook["cells"])
 
     def test_example_input_files_parse(self) -> None:
-        tgevp_input = Path("templates/input_files/tgevp_example_realdata.txt")
-        nstate_input = Path("templates/input_files/nstate_fit_example_realdata.txt")
+        tgevp_input = Path("templates/input_files/two_point/tgevp_example_realdata.txt")
+        nstate_input = Path("templates/input_files/two_point/nstate_fit_example_realdata.txt")
+        tmdwf_input = Path("templates/input_files/tmdwf/tmdwf_nstate_example.txt")
         self.assertTrue(tgevp_input.exists())
         self.assertTrue(nstate_input.exists())
+        self.assertTrue(tmdwf_input.exists())
         parsed_tgevp = parse_tgevp_input(tgevp_input)
         parsed_nstate = parse_nstate_fit_input(nstate_input)
+        parsed_tmdwf = parse_tmdwf_fit_input(tmdwf_input)
         self.assertEqual(parsed_tgevp.pzlist, (0,))
         self.assertEqual(parsed_nstate.pzlist, (0,))
+        self.assertEqual(parsed_tmdwf.pzlist, (0,))
 
     def test_example_data_files_exist(self) -> None:
         base = Path("examples/data/l64c64a076_m140/comb_c2pt_csv")

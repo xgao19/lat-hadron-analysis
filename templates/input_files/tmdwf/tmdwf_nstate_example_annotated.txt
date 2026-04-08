@@ -1,0 +1,92 @@
+# Example TMDWF N-state ratio-fit input file
+# Edit the values below, then run:
+#   lqcd-analysis tmdwf-nstate-fit templates/input_files/tmdwf/tmdwf_nstate_example_annotated.txt
+#
+# First line format:
+#   title_pattern Ns Nt lattice_spacing_fm
+l64c64a076_m140_tmdwf_pz* 64 64 0.076
+
+# Only the ratio workflow is supported.
+fit_target ratio
+
+# Which component(s) to fit:
+#   real
+#   imag
+#   both
+fit_component both
+
+# Allowed state choices in this first version:
+#   nstates 1
+#   nstates 2
+#   nstates 1 2
+nstates 1 2
+
+# Integer momentum labels to analyze.
+pzlist 0
+
+# Gamma labels passed into the dataset-path template.
+# For the gamma_t gamma_5 workflow, a short label like T5 is enough.
+gmlist T5
+
+# Eta labels passed into the dataset-path template.
+etalist eta0
+
+# Average over these Tdir entries after reading the HDF5 datasets.
+Tdirlist plus minus
+
+# Transverse separation choices.
+# Use either bTlist or bTrange.
+bTlist 0
+
+# Longitudinal separation choices.
+# If bz != 0, the workflow automatically combines +bz and -bz.
+bzlist 0
+
+# Bootstrap controls.
+binsize 1
+bootstrap_samples 32
+bootstrap_size 32
+seed 2026
+
+# Fit time window in lattice units.
+tmin 2
+tmax 12
+
+# HDF5 file path or wildcard pattern.
+# The pz wildcard can be written using * if helpful.
+qtmdwf_h5 /path/to/qtmdwf_pz*.h5
+
+# Dataset template inside the HDF5 file.
+# Supported placeholders:
+#   {gm} {eta} {pz} {Tdir} {bT} {bz}
+dataset_path_template {gm}/{eta}/pz{pz}/{Tdir}/bT{bT}/bz{bz}
+
+# Two-point plateau table providing the fixed A_i and E_i inputs.
+# This should point to a plateau table produced by the existing two-point workflow.
+two_point_plateau_table examples/outputs/nstate_fit_realdata/l64c64a076_m140_fit_k0_pz*/tables/l64c64a076_m140_fit_k0_pz*_normal_1state_plateau.txt
+
+# Two-point correlator CSV used to build the denominator part of the ratio.
+c2pt examples/data/l64c64a076_m140/comb_c2pt_csv/c2pt_5_5_k0_pz*_real.csv
+
+# Time-folding mode for the two-point denominator correlator.
+# Choices:
+#   none / false
+#   periodic / true
+#   antiperiodic
+fold_t periodic
+
+# Raw time window to keep before the TMDWF fit.
+tsrange 0 20
+
+# Plot generation is reserved for later extension.
+# Keep false in this first version.
+plot false
+
+# Output directory.
+# If omitted, outputs go to a `results_tmdwf_fit/` directory next to this input file.
+results_dir examples/outputs/tmdwf_fit_example
+
+# Notes:
+# - The first implementation fits the real and imaginary parts separately.
+# - A_i and E_i are loaded from the two-point plateau table as fixed central values.
+# - The code does not yet couple to two-point bootstrap-sample A_i/E_i.

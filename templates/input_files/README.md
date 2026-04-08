@@ -5,38 +5,66 @@ Both compact runnable examples and comment-rich annotated examples are provided.
 
 Run them from the repository root.
 
-## TGEVP Example
+## Two-Point Templates
+
+### TGEVP Example
 
 ```bash
-python scripts/ss_2pt_tgevp_extract.py ss-2pt-tgevp \
-  templates/input_files/tgevp_example_realdata.txt
+python scripts/two_point/ss_2pt_tgevp_extract.py ss-2pt-tgevp \
+  templates/input_files/two_point/tgevp_example_realdata.txt
 ```
 
 Annotated version:
 
 ```text
-templates/input_files/tgevp_example_realdata_annotated.txt
+templates/input_files/two_point/tgevp_example_realdata_annotated.txt
 ```
 
-## N-State Fit Example
+### N-State Fit Example
 
 ```bash
-python scripts/fit_2pt_nstate.py 2pt-nstate-fit \
-  templates/input_files/nstate_fit_example_realdata.txt
+python scripts/two_point/fit_2pt_nstate.py 2pt-nstate-fit \
+  templates/input_files/two_point/nstate_fit_example_realdata.txt
 ```
 
 Annotated version:
 
 ```text
-templates/input_files/nstate_fit_example_realdata_annotated.txt
+templates/input_files/two_point/nstate_fit_example_realdata_annotated.txt
 ```
+
+## TMDWF Templates
+
+### TMDWF Ratio-Fit Example
+
+```bash
+lqcd-analysis tmdwf-nstate-fit \
+  templates/input_files/tmdwf/tmdwf_nstate_example.txt
+```
+
+or:
+
+```bash
+python scripts/tmdwf/fit_tmdwf_nstate.py tmdwf-nstate-fit \
+  templates/input_files/tmdwf/tmdwf_nstate_example.txt
+```
+
+Annotated version:
+
+```text
+templates/input_files/tmdwf/tmdwf_nstate_example_annotated.txt
+```
+
+This TMDWF template is a workflow template rather than a fully runnable tracked
+example dataset. You should replace the HDF5 path, dataset template details, and
+two-point plateau table path with values that match your local data layout.
 
 ## Plot Example
 
 Run the N-state fit example first, then:
 
 ```bash
-python scripts/plot_2pt_results.py \
+python scripts/two_point/plot_2pt_results.py \
   examples/outputs/plot_2pt_realdata \
   examples/outputs/nstate_fit_realdata/l64c64a076_m140_fit_k0_pz0/tables/l64c64a076_m140_fit_k0_pz0_normal_correlator_mean.txt \
   examples/outputs/nstate_fit_realdata/l64c64a076_m140_fit_k0_pz0/tables/l64c64a076_m140_fit_k0_pz0_normal_effective_mass_tmax12.txt \

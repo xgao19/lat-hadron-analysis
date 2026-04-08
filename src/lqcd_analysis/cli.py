@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from .tmdwf.fit_nstate import run_tmdwf_nstate_fit
 from .two_point.fit_nstate import run_nstate_fit
 from .two_point.tgevp import run_ss_2pt_tgevp
 
@@ -56,6 +57,17 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Directory for fit tables, sample outputs, and plots",
     )
+
+    tmdwf_parser = subparsers.add_parser(
+        "tmdwf-nstate-fit",
+        help="Run bootstrap-based TMDWF N-state fits from a text input file.",
+    )
+    tmdwf_parser.add_argument("input_file", help="Input control file for the TMDWF fit workflow")
+    tmdwf_parser.add_argument(
+        "--results-dir",
+        default=None,
+        help="Directory for TMDWF fit tables, sample outputs, and summaries",
+    )
     return parser
 
 
@@ -78,6 +90,15 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.command == "2pt-nstate-fit":
         outputs = run_nstate_fit(
+            args.input_file,
+            results_dir=args.results_dir,
+        )
+        for output in outputs:
+            print(output)
+        return
+
+    if args.command == "tmdwf-nstate-fit":
+        outputs = run_tmdwf_nstate_fit(
             args.input_file,
             results_dir=args.results_dir,
         )

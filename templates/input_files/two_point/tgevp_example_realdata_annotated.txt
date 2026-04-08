@@ -1,6 +1,6 @@
 # Example SS 2pt TGEVP input file
 # Edit the values below, then run:
-#   python scripts/ss_2pt_tgevp_extract.py ss-2pt-tgevp templates/input_files/tgevp_example_realdata_annotated.txt
+#   python scripts/two_point/ss_2pt_tgevp_extract.py ss-2pt-tgevp templates/input_files/two_point/tgevp_example_realdata_annotated.txt
 #
 # First line format:
 #   title_pattern Ns Nt lattice_spacing_fm

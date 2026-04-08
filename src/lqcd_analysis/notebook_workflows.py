@@ -5,6 +5,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from .tmdwf.fit_nstate import parse_tmdwf_fit_input, run_tmdwf_nstate_fit
 from .two_point.fit_nstate import parse_nstate_fit_input, run_nstate_fit
 from .two_point.plotting import plot_nstate_outputs
 from .two_point.tgevp import parse_tgevp_input, run_ss_2pt_tgevp
@@ -54,6 +55,38 @@ NSTATE_INPUT_KEYS = {
     "results_dir",
 }
 NSTATE_RUN_KEYS = {"results_dir"}
+TMDWF_INPUT_KEYS = {
+    "title_pattern",
+    "ns",
+    "nt",
+    "lattice_spacing_fm",
+    "fit_target",
+    "fit_component",
+    "nstates",
+    "pzlist",
+    "gmlist",
+    "etalist",
+    "Tdirlist",
+    "bTlist",
+    "bTrange",
+    "bzlist",
+    "bzrange",
+    "binsize",
+    "bootstrap_samples",
+    "bootstrap_size",
+    "seed",
+    "tmin",
+    "tmax",
+    "qtmdwf_h5",
+    "dataset_path_template",
+    "two_point_plateau_table",
+    "c2pt",
+    "fold_t",
+    "tsrange",
+    "plot",
+    "results_dir",
+}
+TMDWF_RUN_KEYS = {"results_dir"}
 PLOT_REQUIRED_KEYS = {
     "output_dir",
     "correlator_table",
@@ -155,6 +188,81 @@ def render_nstate_fit_input_text(config: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def render_tmdwf_fit_input_text(config: dict[str, Any]) -> str:
+    config = _subset_config(config, TMDWF_INPUT_KEYS)
+    required = [
+        "title_pattern",
+        "ns",
+        "nt",
+        "lattice_spacing_fm",
+        "fit_target",
+        "fit_component",
+        "nstates",
+        "pzlist",
+        "gmlist",
+        "etalist",
+        "Tdirlist",
+        "tmin",
+        "tmax",
+        "qtmdwf_h5",
+        "dataset_path_template",
+        "two_point_plateau_table",
+        "c2pt",
+        "fold_t",
+        "tsrange",
+    ]
+    missing = [key for key in required if key not in config]
+    if missing:
+        raise ValueError(f"missing TMDWF notebook config keys: {missing}")
+    if "bTlist" not in config and "bTrange" not in config:
+        raise ValueError("missing TMDWF notebook config key: bTlist or bTrange")
+    if "bzlist" not in config and "bzrange" not in config:
+        raise ValueError("missing TMDWF notebook config key: bzlist or bzrange")
+
+    lines = [
+        f"{config['title_pattern']} {config['ns']} {config['nt']} {config['lattice_spacing_fm']}",
+        f"fit_target {_as_scalar_string(config['fit_target'])}",
+        f"fit_component {_as_scalar_string(config['fit_component'])}",
+        f"nstates {_as_scalar_string(config['nstates'])}",
+        f"pzlist {_as_scalar_string(config['pzlist'])}",
+        f"gmlist {_as_scalar_string(config['gmlist'])}",
+        f"etalist {_as_scalar_string(config['etalist'])}",
+        f"Tdirlist {_as_scalar_string(config['Tdirlist'])}",
+    ]
+    if "bTlist" in config and config["bTlist"] is not None:
+        lines.append(f"bTlist {_as_scalar_string(config['bTlist'])}")
+    elif "bTrange" in config and config["bTrange"] is not None:
+        lines.append(f"bTrange {_as_scalar_string(config['bTrange'])}")
+    if "bzlist" in config and config["bzlist"] is not None:
+        lines.append(f"bzlist {_as_scalar_string(config['bzlist'])}")
+    elif "bzrange" in config and config["bzrange"] is not None:
+        lines.append(f"bzrange {_as_scalar_string(config['bzrange'])}")
+
+    lines.extend(
+        [
+            f"tmin {_as_scalar_string(config['tmin'])}",
+            f"tmax {_as_scalar_string(config['tmax'])}",
+            f"qtmdwf_h5 {_as_scalar_string(config['qtmdwf_h5'])}",
+            f"dataset_path_template {_as_scalar_string(config['dataset_path_template'])}",
+            f"two_point_plateau_table {_as_scalar_string(config['two_point_plateau_table'])}",
+            f"c2pt {_as_scalar_string(config['c2pt'])}",
+            f"fold_t {_as_scalar_string(config['fold_t'])}",
+            f"tsrange {_as_scalar_string(config['tsrange'])}",
+        ]
+    )
+    for optional_key in (
+        "binsize",
+        "bootstrap_samples",
+        "bootstrap_size",
+        "seed",
+        "plot",
+        "results_dir",
+    ):
+        if optional_key in config and config[optional_key] is not None:
+            lines.append(f"{optional_key} {_as_scalar_string(config[optional_key])}")
+    return "\n".join(lines) + "\n"
+
+
 def _materialize_input_text(text: str, suffix: str) -> Path:
     tmpdir = Path(tempfile.mkdtemp(prefix="lqcd_notebook_"))
     path = tmpdir / suffix
@@ -194,6 +302,11 @@ def validate_nstate_notebook_config(config: dict[str, Any]):
     return parse_nstate_fit_input(input_path)
 
 
+def validate_tmdwf_notebook_config(config: dict[str, Any]):
+    input_path = _materialize_input_text(render_tmdwf_fit_input_text(config), "input_tmdwf.txt")
+    return parse_tmdwf_fit_input(input_path)
+
+
 def run_tgevp_from_notebook(
     config: dict[str, Any],
     **overrides: Any,
@@ -231,6 +344,19 @@ def run_nstate_fit_from_notebook(
     if run_config["results_dir"] is None:
         run_config["results_dir"] = _guess_notebook_dir()
     return run_nstate_fit(input_path, results_dir=run_config["results_dir"])
+
+
+def run_tmdwf_fit_from_notebook(
+    config: dict[str, Any],
+    **overrides: Any,
+) -> list[Path]:
+    input_path = _materialize_input_text(render_tmdwf_fit_input_text(config), "input_tmdwf.txt")
+    run_config = {"results_dir": None}
+    run_config.update(_subset_config(config, TMDWF_RUN_KEYS))
+    run_config.update({key: value for key, value in overrides.items() if value is not None})
+    if run_config["results_dir"] is None:
+        run_config["results_dir"] = _guess_notebook_dir()
+    return run_tmdwf_nstate_fit(input_path, results_dir=run_config["results_dir"])
 
 
 def validate_plot_2pt_notebook_config(config: dict[str, Any]) -> dict[str, Any]:

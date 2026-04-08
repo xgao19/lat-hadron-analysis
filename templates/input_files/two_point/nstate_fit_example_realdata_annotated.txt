@@ -1,6 +1,6 @@
 # Example 2pt N-state fit input file
 # Edit the values below, then run:
-#   python scripts/fit_2pt_nstate.py 2pt-nstate-fit templates/input_files/nstate_fit_example_realdata_annotated.txt
+#   python scripts/two_point/fit_2pt_nstate.py 2pt-nstate-fit templates/input_files/two_point/nstate_fit_example_realdata_annotated.txt
 #
 # First line format:
 #   title_pattern Ns Nt lattice_spacing_fm

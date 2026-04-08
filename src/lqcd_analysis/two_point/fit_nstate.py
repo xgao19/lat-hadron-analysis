@@ -871,7 +871,7 @@ def suggest_plateau(
     energy_index: int = 0,
     min_window_len: int = 2,
     slope_nsigma: float = 1.3,
-    max_constant_chi2_dof: float = 2.0,
+    max_constant_chi2_dof: float = 5.0,
     max_row_chi2_dof: float = 10.0,
     allow_relaxed_fallback: bool = False,
     target_energy: float | None = None,
@@ -1265,7 +1265,7 @@ def recommended_plateau_note() -> str:
         "3. For each consecutive candidate window, use the mean E0(tmin) values only.\n"
         "4. Fit that mean series to both a constant and a line: E(tmin) = a + b tmin.\n"
         "5. Accept the window if the constant-fit chi2/dof is reasonable and the slope is not significant.\n"
-        "   The default constant-fit threshold is chi2/dof < 2.0,\n"
+        "   The default constant-fit threshold is chi2/dof < 5.0,\n"
         "   using the default criterion |b|/sigma_b < 1.3.\n"
         "6. Among acceptable windows, prefer the longest one; if lengths tie, prefer the later-time window;\n"
         "   if still tied, prefer the one with the smallest slope significance.\n"

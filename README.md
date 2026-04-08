@@ -9,7 +9,7 @@ processed data.
 - Correlator IO helpers
 - Effective mass extraction
 - Jackknife and bootstrap analysis
-- Fit pipelines for two-point and three-point functions
+- Fit pipelines for two-point functions, TMDWF observables, and future TMDPDF workflows
 - Reproducible analysis scripts and notebooks
 
 ## Project Layout
@@ -21,13 +21,16 @@ processed data.
 ├── examples/
 │   ├── data/             Tracked example correlator CSV files
 │   └── outputs/          Ignored example run products
-├── scripts/              Reproducible command-line entry points
+├── scripts/              Domain-organized command-line entry points
 ├── src/lqcd_analysis/    Python source package
 │   ├── common/           Shared reusable helpers and infrastructure
 │   ├── two_point/        Two-point analysis workflows
-│   ├── three_point/      Three-point analysis scaffolding
+│   ├── tmdpdf_pion/      Pion TMDPDF scaffolding
+│   ├── tmdpdf_proton/    Proton TMDPDF scaffolding
+│   ├── gpd_pion/         Pion GPD scaffolding
+│   ├── gpd_proton/       Proton GPD scaffolding
 │   └── tmdwf/            TMDWF analysis scaffolding
-├── templates/            Notebook and input-file templates
+├── templates/            Domain-organized notebook and input-file templates
 └── tests/                Unit tests
 ```
 
@@ -58,7 +61,7 @@ lqcd-analysis ss-2pt-tgevp input_k0_SS.txt --seed 123
 or:
 
 ```bash
-python scripts/ss_2pt_tgevp_extract.py ss-2pt-tgevp input_k0_SS.txt --seed 123
+python scripts/two_point/ss_2pt_tgevp_extract.py ss-2pt-tgevp input_k0_SS.txt --seed 123
 ```
 
 If `--results-dir` is not provided, outputs are written to `results/` next to the input file.
@@ -84,7 +87,7 @@ The analysis writes:
 Traditional multi-exponential fits are available as a separate workflow:
 
 ```bash
-python scripts/fit_2pt_nstate.py 2pt-nstate-fit configs/example_nstate_fit.txt
+python scripts/two_point/fit_2pt_nstate.py 2pt-nstate-fit configs/example_nstate_fit.txt
 ```
 
 Expected extra input keys:
@@ -131,6 +134,66 @@ Notes on the workflow:
 - Plot outputs convert fitted energies and effective masses from lattice units `E*a` into physical units in MeV using the provided lattice spacing.
 - After each 2pt fit run, an editable notebook is written under `results_dir/notebook_plots/`. The notebook calls the reusable plotting module so you can tweak paths, styles, and which state to draw.
 
+## TMDWF N-State Ratio Fit
+
+The repository also includes a focused TMDWF ratio-fitting workflow for the
+`gamma_t gamma_5` insertion case:
+
+```bash
+lqcd-analysis tmdwf-nstate-fit input_tmdwf.txt
+```
+
+or:
+
+```bash
+python scripts/tmdwf/fit_tmdwf_nstate.py tmdwf-nstate-fit input_tmdwf.txt
+```
+
+This first implementation:
+
+- fits only the TMDWF ratio
+- supports only the `gamma_t gamma_5` case, typically labeled as `T5` in the input
+- supports only `1-state` and `2-state` fits
+- fits real and imaginary parts separately
+- uses fixed two-point amplitudes and energies loaded from a two-point plateau table
+- does not yet couple to two-point bootstrap-sample amplitudes and energies
+
+Expected key input fields include:
+
+```text
+fit_target ratio
+fit_component both
+nstates 1 2
+gmlist T5
+qtmdwf_h5 /path/to/file_or_pattern.h5
+dataset_path_template {gm}/{eta}/pz{pz}/{Tdir}/bT{bT}/bz{bz}
+two_point_plateau_table /path/to/2pt_plateau_pz*.txt
+c2pt /path/to/c2pt_pz*_real.csv
+fold_t periodic
+tsrange 0 20
+```
+
+The TMDWF workflow:
+
+- expands HDF5 dataset paths using `{gm}`, `{eta}`, `{pz}`, `{Tdir}`, `{bT}`, and `{bz}`
+- averages over the requested `Tdir` entries
+- combines `+bz` and `-bz` when `bz != 0`
+- applies the phase factor `exp(-i * phase * bz / 2)` with `phase = 2*pi*pz/Ns`
+- applies the `gamma_t gamma_5` sign pattern with first-half `+1` and second-half `-1`
+- folds the time dependence after preprocessing
+
+Template inputs are provided in:
+
+- `templates/input_files/tmdwf/tmdwf_nstate_example.txt`
+- `templates/input_files/tmdwf/tmdwf_nstate_example_annotated.txt`
+
+A matching notebook template is also provided in:
+
+- `templates/tmdwf/tmdwf_nstate_template.ipynb`
+
+These TMDWF templates are intentionally example workflow templates rather than
+fully runnable tracked examples, because they depend on user-local HDF5 data.
+
 ## Workflows
 
 Both workflows are supported:
@@ -142,15 +205,16 @@ Both workflows are supported:
 
 Current notebook templates:
 
-- `templates/tgevp_template.ipynb`
-- `templates/nstate_fit_template.ipynb`
-- `templates/plot_2pt_template.ipynb`
+- `templates/two_point/tgevp_template.ipynb`
+- `templates/two_point/nstate_fit_template.ipynb`
+- `templates/tmdwf/tmdwf_nstate_template.ipynb`
+- `templates/two_point/plot_2pt_template.ipynb`
 
 Notebook templates are thin wrappers around the existing analysis code. They are intended for clarity and interactive use, while the plain-text input-file workflow remains the stable batch-style interface.
 Each template now uses the same notebook-facing pattern: edit a single `workflow_config` object, validate it, and then call one `run_*_from_notebook(...)` function.
 Each notebook template also includes an `Option Guide` markdown cell right after the user-input cell, describing the main options, their expected choices, and their practical effect.
 
-The helper bridge for notebooks lives in `src/lqcd_analysis/notebook_workflows.py`. It renders notebook configs into the same or nearly the same text fields used by the existing input-file parsers, and then calls the same backend runners in the `two_point` package.
+The helper bridge for notebooks lives in `src/lqcd_analysis/notebook_workflows.py`. It renders notebook configs into the same or nearly the same text fields used by the existing input-file parsers, and then calls the same backend runners in the `two_point` and `tmdwf` packages.
 The two workflows use different default output locations by design: notebook workflows default to the current working directory, while plain-text input-file workflows default to a results directory next to the input file.
 For `nstatefit`, the user-facing `fit_mode` option supports both `uncorrelated` and `correlated` fits. In correlated mode the code builds one shared covariance matrix from the full bootstrap ensemble and reuses it across the mean fit and bootstrap fits; if a correlated sample/window fit fails, it falls back to a diagonal fit using only the covariance diagonal.
 The N-state fit outputs also track this fallback usage: fit tables include a `fallback_uncorrelated_successes` column for each `tmin` window, and summaries report the representative window's fallback count.
@@ -163,14 +227,18 @@ The repository now includes tracked example correlator data under:
 
 and plain-text example inputs under:
 
-- `templates/input_files/tgevp_example_realdata.txt`
-- `templates/input_files/nstate_fit_example_realdata.txt`
-- `templates/input_files/plot_2pt_example_command.txt`
-- `templates/input_files/tgevp_example_realdata_annotated.txt`
-- `templates/input_files/nstate_fit_example_realdata_annotated.txt`
+- `templates/input_files/two_point/tgevp_example_realdata.txt`
+- `templates/input_files/two_point/nstate_fit_example_realdata.txt`
+- `templates/input_files/tmdwf/tmdwf_nstate_example.txt`
+- `templates/input_files/two_point/plot_2pt_example_command.txt`
+- `templates/input_files/two_point/tgevp_example_realdata_annotated.txt`
+- `templates/input_files/two_point/nstate_fit_example_realdata_annotated.txt`
+- `templates/input_files/tmdwf/tmdwf_nstate_example_annotated.txt`
+- `templates/tmdwf/tmdwf_nstate_template.ipynb`
 
 These examples use repository-relative paths, so they can be run directly from the repository root.
 The `_annotated.txt` variants include inline comments describing each option and are meant to mirror the notebook `Option Guide` cells in plain-text form.
+The TMDWF templates are the exception: they are structurally complete templates, but you should point them at your own local HDF5 datasets and two-point plateau tables before running.
 
 Example outputs are intentionally ignored by git and should go under:
 
@@ -182,4 +250,8 @@ This lets the repository keep realistic data and templates tracked, while avoidi
 
 - `lqcd_analysis.common` contains genuinely shared infrastructure such as bootstrap helpers, folding utilities, generic correlator helpers, and fit-table schema parsing.
 - `lqcd_analysis.two_point` contains the current two-point analysis implementations, including N-state fitting, plotting, TGEVP, and two-point-specific CSV loading.
-- `lqcd_analysis.three_point` and `lqcd_analysis.tmdwf` are scaffold subpackages reserved for future domain-specific workflows.
+- `lqcd_analysis.tmdwf` contains the current TMDWF ratio-fitting workflow and TMDWF-specific HDF5/data-model helpers.
+- `lqcd_analysis.tmdpdf_pion` is a reserved subpackage for future pion TMDPDF workflows.
+- `lqcd_analysis.tmdpdf_proton` is a reserved subpackage for future proton TMDPDF workflows.
+- `lqcd_analysis.gpd_pion` is a reserved subpackage for future pion GPD workflows.
+- `lqcd_analysis.gpd_proton` is a reserved subpackage for future proton GPD workflows.

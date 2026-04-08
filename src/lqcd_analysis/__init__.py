@@ -8,6 +8,7 @@ from .common.utils import (
     bin_correlators,
     bootstrap_correlator_means,
 )
+from .tmdwf.fit_nstate import parse_tmdwf_fit_input, run_tmdwf_nstate_fit
 from .two_point.fit_nstate import parse_nstate_fit_input, run_nstate_fit
 from .two_point.tgevp import parse_tgevp_input, run_ss_2pt_tgevp, solve_tgevp
 
@@ -20,8 +21,10 @@ __all__ = [
     "effective_mass",
     "jackknife_mean",
     "parse_nstate_fit_input",
+    "parse_tmdwf_fit_input",
     "run_nstate_fit",
     "parse_tgevp_input",
     "run_ss_2pt_tgevp",
+    "run_tmdwf_nstate_fit",
     "solve_tgevp",
 ]

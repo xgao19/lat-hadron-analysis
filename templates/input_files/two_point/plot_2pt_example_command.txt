@@ -1,4 +1,4 @@
-python scripts/plot_2pt_results.py \
+python scripts/two_point/plot_2pt_results.py \
   examples/outputs/plot_2pt_realdata \
   examples/outputs/nstate_fit_realdata/l64c64a076_m140_fit_k0_pz0/tables/l64c64a076_m140_fit_k0_pz0_normal_correlator_mean.txt \
   examples/outputs/nstate_fit_realdata/l64c64a076_m140_fit_k0_pz0/tables/l64c64a076_m140_fit_k0_pz0_normal_effective_mass_tmax12.txt \
