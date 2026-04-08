@@ -10,11 +10,12 @@ from scipy.stats import chi2
 from ..common.utils import (
     apply_fold_t,
     parse_bool,
+    parse_fold_t,
     robust_mean_and_error,
 )
 from ..two_point.io import load_correlator_csv
 from .io import expand_template, load_tmdwf_correlator, load_two_point_plateau_values
-from .models import evaluate_tmdwf_ratio_gamma_t_gamma5
+from .models import evaluate_tmdwf_ratio, normalize_tmdwf_operator
 
 
 @dataclass(frozen=True)
@@ -123,6 +124,8 @@ def parse_tmdwf_fit_input(path: str | Path, results_dir: str | Path | None = Non
     nstates = tuple(sorted({int(item) for item in entries["nstates"]}))
     if not nstates or any(state not in {1, 2} for state in nstates):
         raise ValueError("TMDWF nstates must contain only 1 and/or 2")
+    for gm in entries["gmlist"]:
+        normalize_tmdwf_operator(gm)
 
     input_path = file_path.resolve()
     return TMDWFNStateInput(
@@ -148,7 +151,7 @@ def parse_tmdwf_fit_input(path: str | Path, results_dir: str | Path | None = Non
         qtmdwf_h5=entries["qtmdwf_h5"][0],
         dataset_path_template=entries["dataset_path_template"][0],
         c2pt=entries["c2pt"][0],
-        fold_t=entries["fold_t"][0],
+        fold_t=parse_fold_t(entries),
         tsrange=(int(entries["tsrange"][0]), int(entries["tsrange"][1])),
         two_point_plateau_table=entries["two_point_plateau_table"][0],
         make_plots=parse_bool(entries.get("plot", ["false"])[0]),
@@ -225,6 +228,9 @@ def fit_tmdwf_component(
     amplitudes: np.ndarray,
     energies: np.ndarray,
     nt: int,
+    pz: int,
+    ns: int,
+    gm: str,
     tmin: int,
     tmax: int,
     component: str,
@@ -243,7 +249,7 @@ def fit_tmdwf_component(
     sigma = np.where(np.isfinite(sigma) & (sigma > 0.0), sigma, 1e-12)
 
     def residuals(params: np.ndarray, data: np.ndarray) -> np.ndarray:
-        model_values = evaluate_tmdwf_ratio_gamma_t_gamma5(times, amplitudes, energies, params, nt)
+        model_values = evaluate_tmdwf_ratio(times, amplitudes, energies, params, nt, gm=gm, pz=pz, ns=ns)
         return (model_values - data) / sigma
 
     theta0 = np.zeros(len(amplitudes), dtype=float)
@@ -300,6 +306,9 @@ def _write_component_outputs(
     amplitudes: np.ndarray,
     energies: np.ndarray,
     nt: int,
+    pz: int,
+    ns: int,
+    gm: str,
 ) -> list[Path]:
     tables_dir = output_root / "tables"
     samples_dir = output_root / "samples"
@@ -345,11 +354,11 @@ def _write_component_outputs(
     )
 
     times = np.arange(tmin, tmax + 1)
-    center = evaluate_tmdwf_ratio_gamma_t_gamma5(times, amplitudes, energies, np.asarray(params_mean), nt)
+    center = evaluate_tmdwf_ratio(times, amplitudes, energies, np.asarray(params_mean), nt, gm=gm, pz=pz, ns=ns)
     valid_samples = sample_params[np.all(np.isfinite(sample_params), axis=1)]
     if len(valid_samples) > 0:
         curves = np.array(
-            [evaluate_tmdwf_ratio_gamma_t_gamma5(times, amplitudes, energies, params, nt) for params in valid_samples]
+            [evaluate_tmdwf_ratio(times, amplitudes, energies, params, nt, gm=gm, pz=pz, ns=ns) for params in valid_samples]
         )
         low = np.percentile(curves, 16.0, axis=0)
         high = np.percentile(curves, 84.0, axis=0)
@@ -416,6 +425,9 @@ def run_tmdwf_nstate_fit(
                                     amplitudes,
                                     energies,
                                     spec.nt,
+                                    pz,
+                                    spec.ns,
+                                    gm,
                                     spec.tmin,
                                     spec.tmax,
                                     component,
@@ -433,6 +445,9 @@ def run_tmdwf_nstate_fit(
                                         amplitudes,
                                         energies,
                                         spec.nt,
+                                        pz,
+                                        spec.ns,
+                                        gm,
                                     )
                                 )
     return outputs

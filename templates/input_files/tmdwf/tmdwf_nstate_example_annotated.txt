@@ -24,8 +24,11 @@ nstates 1 2
 # Integer momentum labels to analyze.
 pzlist 0
 
-# Gamma labels passed into the dataset-path template.
-# For the gamma_t gamma_5 workflow, a short label like T5 is enough.
+# Gamma/operator labels passed into the dataset-path template and used to select
+# the operator-dependent TMDWF physics behavior.
+# Supported labels in the first version:
+#   T5 -> gamma_t gamma_5
+#   Z5 -> gamma_z gamma_5
 gmlist T5
 
 # Eta labels passed into the dataset-path template.
@@ -90,3 +93,5 @@ results_dir examples/outputs/tmdwf_fit_example
 # - The first implementation fits the real and imaginary parts separately.
 # - A_i and E_i are loaded from the two-point plateau table as fixed central values.
 # - The code does not yet couple to two-point bootstrap-sample A_i/E_i.
+# - T5 keeps the original sign-pattern preprocessing.
+# - Z5 multiplies the correlator by -i before folding and uses an extra Pz/E_i factor in the numerator model.

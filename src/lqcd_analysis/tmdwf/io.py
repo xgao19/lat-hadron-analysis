@@ -4,6 +4,8 @@ from pathlib import Path
 
 import numpy as np
 
+from .models import normalize_tmdwf_operator
+
 try:
     import h5py
 except ModuleNotFoundError:  # pragma: no cover - depends on local environment
@@ -49,9 +51,13 @@ def _sign_pattern(nt: int) -> np.ndarray:
     return pattern
 
 
-def apply_tmdwf_preprocessing(values: np.ndarray, nt: int) -> np.ndarray:
+def apply_tmdwf_preprocessing(values: np.ndarray, nt: int, gm: str) -> np.ndarray:
     processed = np.asarray(values, dtype=np.complex128).copy()
-    processed *= _sign_pattern(nt)[None, :]
+    operator = normalize_tmdwf_operator(gm)
+    if operator == "T5":
+        processed *= _sign_pattern(nt)[None, :]
+    else:
+        processed *= -1j
     return processed
 
 
@@ -114,4 +120,4 @@ def load_tmdwf_correlator(
             tdir_blocks.append(averaged_bz)
 
     averaged = np.mean(np.stack(tdir_blocks, axis=0), axis=0)
-    return fold_antisymmetric_complex(apply_tmdwf_preprocessing(averaged, nt), nt)
+    return fold_antisymmetric_complex(apply_tmdwf_preprocessing(averaged, nt, gm), nt)

@@ -137,7 +137,7 @@ Notes on the workflow:
 ## TMDWF N-State Ratio Fit
 
 The repository also includes a focused TMDWF ratio-fitting workflow for the
-`gamma_t gamma_5` insertion case:
+`gamma_t gamma_5` / `gamma_z gamma_5` insertion cases:
 
 ```bash
 lqcd-analysis tmdwf-nstate-fit input_tmdwf.txt
@@ -152,7 +152,7 @@ python scripts/tmdwf/fit_tmdwf_nstate.py tmdwf-nstate-fit input_tmdwf.txt
 This first implementation:
 
 - fits only the TMDWF ratio
-- supports only the `gamma_t gamma_5` case, typically labeled as `T5` in the input
+- supports `T5` (`gamma_t gamma_5`) and `Z5` (`gamma_z gamma_5`)
 - supports only `1-state` and `2-state` fits
 - fits real and imaginary parts separately
 - uses fixed two-point amplitudes and energies loaded from a two-point plateau table
@@ -179,7 +179,12 @@ The TMDWF workflow:
 - averages over the requested `Tdir` entries
 - combines `+bz` and `-bz` when `bz != 0`
 - applies the phase factor `exp(-i * phase * bz / 2)` with `phase = 2*pi*pz/Ns`
-- applies the `gamma_t gamma_5` sign pattern with first-half `+1` and second-half `-1`
+- applies operator-dependent preprocessing before folding:
+  - `T5`: first-half `+1`, second-half `-1`
+  - `Z5`: multiply the whole correlator by `-i`
+- applies operator-dependent numerator models:
+  - `T5`: the original `gamma_t gamma_5` form
+  - `Z5`: the `gamma_z gamma_5` form with the lattice-momentum factor `Pz / E_i`
 - folds the time dependence after preprocessing
 
 Template inputs are provided in:
