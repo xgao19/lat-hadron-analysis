@@ -312,9 +312,13 @@ def write_tmdwf_plot_notebook(
     ratio_tables: dict[int, str | Path],
     curve_tables: dict[int, dict[str, dict[int, str | Path]]],
     fit_tables: dict[int, dict[str, dict[int, str | Path]]],
+    sample_tables: dict[int, dict[str, dict[int, str | Path]]],
     title: str,
     gm: str,
     eta: str,
+    pz: int,
+    ns: int,
+    lattice_spacing_fm: float,
 ) -> Path:
     notebook_path = Path(notebook_path)
     notebook_output_dir = Path(notebook_output_dir)
@@ -332,6 +336,13 @@ def write_tmdwf_plot_notebook(
             for component, table_map in component_map.items()
         }
         for bT, component_map in fit_tables.items()
+    }
+    sample_tables_repr = {
+        str(bT): {
+            component: {str(key): str(Path(value)) for key, value in table_map.items()}
+            for component, table_map in component_map.items()
+        }
+        for bT, component_map in sample_tables.items()
     }
     repo_src = Path(__file__).resolve().parents[1]
     notebook = {
@@ -353,8 +364,10 @@ def write_tmdwf_plot_notebook(
                 "source": [
                     "from pathlib import Path\n",
                     "import sys\n",
+                    "import numpy as np\n",
                     f"sys.path.insert(0, {str(repo_src)!r})\n",
                     "from lqcd_analysis.tmdwf.plotting import plot_tmdwf_grouped_outputs, plot_tmdwf_m0_from_fit_tables\n",
+                    "from lqcd_analysis.tmdwf.fourier import run_tmdwf_fourier_from_fit_outputs\n",
                 ],
             },
             {
@@ -366,9 +379,13 @@ def write_tmdwf_plot_notebook(
                     f"title = {title!r}\n",
                     f"gm = {gm!r}\n",
                     f"eta = {eta!r}\n",
+                    f"pz = {pz}\n",
+                    f"ns = {ns}\n",
+                    f"lattice_spacing_fm = {lattice_spacing_fm}\n",
                     f"ratio_tables = {json.dumps(ratio_tables_repr, indent=2)}\n",
                     f"curve_tables = {json.dumps(curve_tables_repr, indent=2)}\n",
                     f"fit_tables = {json.dumps(fit_tables_repr, indent=2)}\n",
+                    f"sample_tables = {json.dumps(sample_tables_repr, indent=2)}\n",
                     f"output_dir = Path({str(notebook_output_dir)!r})\n",
                     "available_bT = sorted(int(key) for key in ratio_tables)\n",
                     "chosen_bT = available_bT[0]\n",
@@ -387,6 +404,13 @@ def write_tmdwf_plot_notebook(
                     "m0_ylim = None\n",
                     "m0_output_name = None  # e.g. 'custom_m0_vs_bz.pdf'\n",
                     "m0_alternate_output_dir = None\n",
+                    "x_values = np.linspace(-0.5, 1.5, 201)\n",
+                    "zstep_fm = 0.01\n",
+                    "interpolation_kind = 'cubic'\n",
+                    "fourier_output_name = None  # e.g. 'custom_fourier.pdf'\n",
+                    "fourier_alternate_output_dir = None\n",
+                    "fourier_xlim = None\n",
+                    "fourier_ylim = None\n",
                     "output_dir.mkdir(parents=True, exist_ok=True)\n",
                 ],
             },
@@ -467,6 +491,51 @@ def write_tmdwf_plot_notebook(
                     "    xlim=m0_xlim,\n",
                     "    ylim=m0_ylim,\n",
                     ")\n",
+                ],
+            },
+            {
+                "cell_type": "markdown",
+                "metadata": {},
+                "source": [
+                    "## Fourier Transform\n",
+                    "This section recomputes the post-fit cosine transform from the existing grouped fit/sample tables only, so you can tune `x_values`, `zstep_fm`, and `interpolation_kind` without rerunning the TMDWF fit.\n",
+                ],
+            },
+            {
+                "cell_type": "code",
+                "execution_count": None,
+                "metadata": {},
+                "outputs": [],
+                "source": [
+                    "fourier_output_dir = output_dir if fourier_alternate_output_dir is None else Path(fourier_alternate_output_dir)\n",
+                    "fourier_output_dir.mkdir(parents=True, exist_ok=True)\n",
+                    "default_fourier_name = f'{title}_{gm}_{eta}_bT{chosen_bT}_{component}_{nstates}state_fourier.pdf'\n",
+                    "fourier_plot_name = default_fourier_name if fourier_output_name is None else fourier_output_name\n",
+                    "fit_table = Path(fit_tables[str(chosen_bT)][component][str(nstates)])\n",
+                    "sample_table = Path(sample_tables[str(chosen_bT)][component][str(nstates)])\n",
+                    "fourier_outputs = run_tmdwf_fourier_from_fit_outputs(\n",
+                    "    output_root=fourier_output_dir,\n",
+                    "    stem=f'{title}_{gm}_{eta}_bT{chosen_bT}',\n",
+                    "    fit_table=fit_table,\n",
+                    "    sample_table=sample_table,\n",
+                    "    pz=pz,\n",
+                    "    ns=ns,\n",
+                    "    lattice_spacing_fm=lattice_spacing_fm,\n",
+                    "    bT=chosen_bT,\n",
+                    "    component=component,\n",
+                    "    nstates=nstates,\n",
+                    "    x_values=x_values,\n",
+                    "    zstep_fm=zstep_fm,\n",
+                    "    interpolation_kind=interpolation_kind,\n",
+                    "    make_plots=True,\n",
+                    "    plot_xlim=fourier_xlim,\n",
+                    "    plot_ylim=fourier_ylim,\n",
+                    ")\n",
+                    "if fourier_output_name is not None:\n",
+                    "    generated_plot = fourier_output_dir / 'plots' / f'{title}_{gm}_{eta}_bT{chosen_bT}_{component}_{nstates}state_fourier.pdf'\n",
+                    "    target_plot = fourier_output_dir / fourier_plot_name\n",
+                    "    generated_plot.replace(target_plot)\n",
+                    "fourier_outputs\n",
                 ],
             },
         ],

@@ -222,6 +222,64 @@ A matching notebook template is also provided in:
 These TMDWF templates are intentionally example workflow templates rather than
 fully runnable tracked examples, because they depend on user-local HDF5 data.
 
+## TMDWF Normalize
+
+The extracted TMDWF matrix elements can also be normalized in a separate
+downstream step, using only the grouped fit/sample outputs produced by the
+TMDWF N-state fit:
+
+```bash
+lqcd-analysis tmdwf-normalize input_tmdwf_normalize.txt
+```
+
+This normalization workflow:
+
+- reads grouped `..._fit.txt` and `..._samples.txt` outputs from the TMDWF fit workflow
+- normalizes the matrix element sample-by-sample before summarizing
+- writes grouped normalized outputs that keep the familiar `m0_mean`, `m0_err`, and `m0` columns
+- can be used as an intermediate step before the downstream Fourier workflow
+
+Supported normalization modes are:
+
+- `mode1`: `m0(pz, bT, bz) / m0(pz, bT=0, bz=0)`
+- `mode2`: `m0(pz, bT, bz) / m0(pz=0, bT, bz=0)`
+- `mode3`: `[m0(pz, bT, bz) / m0(pz, bT=0, bz=0)] / [m0(pz=0, bT, bz=0) / m0(pz=0, bT=0, bz=0)]`
+
+Template inputs are provided in:
+
+- `templates/input_files/tmdwf/tmdwf_normalize_example.txt`
+- `templates/input_files/tmdwf/tmdwf_normalize_example_annotated.txt`
+
+A matching notebook template is also provided in:
+
+- `templates/tmdwf/tmdwf_normalize_template.ipynb`
+
+## TMDWF Fourier
+
+The repository also provides a separate downstream Fourier workflow that reads
+existing grouped TMDWF matrix-element outputs and performs the post-fit cosine
+transform:
+
+```bash
+lqcd-analysis tmdwf-fourier input_tmdwf_fourier.txt
+```
+
+This Fourier workflow:
+
+- reads grouped TMDWF fit/sample outputs, including normalized outputs when desired
+- treats the extracted `m0(bT, bz)` as the matrix element to transform in `bz`
+- performs the cosine transform on a refined `z` grid
+- writes downstream table, sample, and plot outputs without rerunning the nonlinear fit
+
+Template inputs are provided in:
+
+- `templates/input_files/tmdwf/tmdwf_fourier_example.txt`
+- `templates/input_files/tmdwf/tmdwf_fourier_example_annotated.txt`
+
+A matching notebook template is also provided in:
+
+- `templates/tmdwf/tmdwf_fourier_template.ipynb`
+
 ## Workflows
 
 Both workflows are supported:
@@ -236,6 +294,8 @@ Current notebook templates:
 - `templates/two_point/tgevp_template.ipynb`
 - `templates/two_point/nstate_fit_template.ipynb`
 - `templates/tmdwf/tmdwf_nstate_template.ipynb`
+- `templates/tmdwf/tmdwf_normalize_template.ipynb`
+- `templates/tmdwf/tmdwf_fourier_template.ipynb`
 - `templates/two_point/plot_2pt_template.ipynb`
 
 Notebook templates are thin wrappers around the existing analysis code. They are intended for clarity and interactive use, while the plain-text input-file workflow remains the stable batch-style interface.
@@ -258,6 +318,8 @@ and plain-text example inputs under:
 - `templates/input_files/two_point/tgevp_example_realdata.txt`
 - `templates/input_files/two_point/nstate_fit_example_realdata.txt`
 - `templates/input_files/tmdwf/tmdwf_nstate_example.txt`
+- `templates/input_files/tmdwf/tmdwf_normalize_example.txt`
+- `templates/input_files/tmdwf/tmdwf_fourier_example.txt`
 - `templates/input_files/two_point/plot_2pt_example_command.txt`
 - `templates/input_files/two_point/tgevp_example_realdata_annotated.txt`
 - `templates/input_files/two_point/nstate_fit_example_realdata_annotated.txt`

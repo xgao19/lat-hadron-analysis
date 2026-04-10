@@ -7,6 +7,7 @@ from unittest.mock import patch
 import numpy as np
 
 from lqcd_analysis.tmdwf.fit_nstate import (
+    _effective_shared_window_min_fit_dof,
     _select_curve_component,
     _write_component_outputs,
     build_bootstrap_ratio_samples,
@@ -35,6 +36,14 @@ from lqcd_analysis.tmdwf.models import (
     evaluate_tmdwf_ratio,
     evaluate_two_point_symmetric,
 )
+from lqcd_analysis.tmdwf.fourier import (
+    compute_tmdwf_cosine_transform,
+    load_tmdwf_m0_fit_table,
+    load_tmdwf_m0_sample_table,
+    run_tmdwf_fourier_from_fit_outputs,
+    summarize_tmdwf_fourier_samples,
+)
+from lqcd_analysis.tmdwf.normalize import run_tmdwf_normalization
 from lqcd_analysis.tmdwf.plotting import (
     RatioFitPlotSeries,
     TMDWFM0VsBZSeries,
@@ -54,6 +63,48 @@ except ModuleNotFoundError:  # pragma: no cover - depends on local environment
 
 @unittest.skipIf(h5py is None, "h5py is required for TMDWF HDF5 tests")
 class TMDWFFitTests(unittest.TestCase):
+    @staticmethod
+    def _write_tmdwf_m0_outputs(
+        root: Path,
+        title: str,
+        gm: str,
+        eta: str,
+        bT: int,
+        component: str,
+        nstates: int,
+        fit_rows: list[tuple[int, float, float]],
+        sample_rows: list[tuple[int, int, int, float]],
+    ) -> None:
+        fit_dir = root / title / "tables"
+        sample_dir = root / title / "samples"
+        fit_dir.mkdir(parents=True, exist_ok=True)
+        sample_dir.mkdir(parents=True, exist_ok=True)
+        stem = f"{title}_{gm}_{eta}_bT{bT}_{component}_{nstates}state"
+        (fit_dir / f"{stem}_fit.txt").write_text(
+            "\n".join(
+                [
+                    "bz\ttmin\ttmax\tsuccess_meanfit\tchi2_dof\tpvalue\tshared_window_flag\treference_eta\treference_bT\treference_bz\tplateau_tmax_used\tm0_mean\tm0_err",
+                    *[
+                        f"{bz}\t2\t6\t1\t1.0\t0.5\t0\tnone\t-1\t-1\t6\t{mean:.10e}\t{err:.10e}"
+                        for bz, mean, err in fit_rows
+                    ],
+                ]
+            ),
+            encoding="utf-8",
+        )
+        (sample_dir / f"{stem}_samples.txt").write_text(
+            "\n".join(
+                [
+                    "bz\tsample_id\tsuccess\tm0",
+                    *[
+                        f"{bz}\t{sample_id}\t{success}\t{value:.10e}"
+                        for bz, sample_id, success, value in sample_rows
+                    ],
+                ]
+            ),
+            encoding="utf-8",
+        )
+
     def test_parse_input_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             input_file = Path(tmpdir) / "input_tmdwf.txt"
@@ -653,6 +704,69 @@ class TMDWFFitTests(unittest.TestCase):
         self.assertTrue(rows)
         self.assertTrue(all(np.isfinite(row.m0_mean) for row in rows))
 
+    def test_shared_window_min_fit_dof_has_hard_floor_of_four(self) -> None:
+        self.assertEqual(_effective_shared_window_min_fit_dof(1), 4)
+        self.assertEqual(_effective_shared_window_min_fit_dof(3), 4)
+        self.assertEqual(_effective_shared_window_min_fit_dof(4), 4)
+        self.assertEqual(_effective_shared_window_min_fit_dof(5), 5)
+
+    def test_scan_reference_tmin_rows_enforces_hard_fit_dof_floor(self) -> None:
+        nt = 16
+        amplitudes = np.array([2.5])
+        energies = np.array([0.35])
+        matrix_elements = np.array([1.2])
+        times = np.arange(0, nt // 2 + 1)
+        model = evaluate_tmdwf_ratio(times, amplitudes, energies, matrix_elements, nt, gm="T5", pz=0, ns=32)
+        rng = np.random.default_rng(7)
+        ratio_samples = model[None, :] + 0.002 * rng.normal(size=(24, times.size))
+
+        rows_min1 = scan_reference_tmin_rows(
+            ratio_samples,
+            amplitudes,
+            energies,
+            nt=nt,
+            pz=0,
+            ns=32,
+            gm="T5",
+            tmin_start=2,
+            tmax=6,
+            nstates=1,
+            min_fit_dof=1,
+            component="real",
+        )
+        rows_min4 = scan_reference_tmin_rows(
+            ratio_samples,
+            amplitudes,
+            energies,
+            nt=nt,
+            pz=0,
+            ns=32,
+            gm="T5",
+            tmin_start=2,
+            tmax=6,
+            nstates=1,
+            min_fit_dof=4,
+            component="real",
+        )
+        rows_min5 = scan_reference_tmin_rows(
+            ratio_samples,
+            amplitudes,
+            energies,
+            nt=nt,
+            pz=0,
+            ns=32,
+            gm="T5",
+            tmin_start=2,
+            tmax=7,
+            nstates=1,
+            min_fit_dof=5,
+            component="real",
+        )
+
+        self.assertEqual([row.fit_dof for row in rows_min1], [4])
+        self.assertEqual([row.fit_dof for row in rows_min4], [4])
+        self.assertEqual([row.fit_dof for row in rows_min5], [5])
+
     def test_end_to_end_workflow_writes_outputs_for_t5_and_z5(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
@@ -1049,7 +1163,7 @@ class TMDWFFitTests(unittest.TestCase):
                 for t in range(nt):
                     handle.write(str(t) + "," + ",".join(f"{value:.12e}" for value in c2pt_data[t]) + "\n")
 
-            plateau_path = tmp / "plateau_pz0_tmax5_plateau.txt"
+            plateau_path = tmp / "plateau_pz0_tmax6_plateau.txt"
             np.savetxt(plateau_path, np.array([[amplitudes[0], energies[0], 0.05, 0.02]]))
             h5_path = tmp / "tmdwf_pz0.h5"
             with h5py.File(h5_path, "w") as handle:
@@ -1093,6 +1207,7 @@ class TMDWFFitTests(unittest.TestCase):
                         f"two_point_plateau_table {tmp / 'plateau_pz*_tmax#_plateau.txt'}",
                         f"c2pt {tmp / 'c2pt_pz*.csv'}",
                         "fold_t periodic",
+                        "tsrange 0 6",
                         f"results_dir {tmp / 'results'}",
                     ]
                 ),
@@ -1111,6 +1226,12 @@ class TMDWFFitTests(unittest.TestCase):
         self.assertTrue(shared_exists)
         self.assertIn("selection_basis reference_mean_fits_only", shared_text)
         self.assertIn("reference_dataset gm=T5 eta=eta0 pz=0 bT=0 bz=0", shared_text)
+        self.assertIn("decay_constant_target 1.1000000000e-01", shared_text)
+        self.assertIn("decay_constant_error 3.0000000000e-02", shared_text)
+        self.assertIn("decay_constant_source input", shared_text)
+        candidate_lines = shared_text.split("candidate_rows\n", 1)[1].splitlines()[1:]
+        fit_dofs = [int(line.split()[-1]) for line in candidate_lines if line.strip()]
+        self.assertEqual(fit_dofs, [4])
         self.assertIn("shared_tfit", first_text)
         self.assertIn("shared_tfit", second_text)
         self.assertIn("m0 ", first_text)
@@ -1463,9 +1584,16 @@ class TMDWFFitTests(unittest.TestCase):
                     0: {"real": {1: tmp / "bT0_real1_fit.txt", 2: tmp / "bT0_real2_fit.txt"}, "imag": {1: tmp / "bT0_imag1_fit.txt"}},
                     2: {"real": {1: tmp / "bT2_real1_fit.txt", 2: tmp / "bT2_real2_fit.txt"}, "imag": {1: tmp / "bT2_imag1_fit.txt"}},
                 },
+                sample_tables={
+                    0: {"real": {1: tmp / "bT0_real1_samples.txt", 2: tmp / "bT0_real2_samples.txt"}, "imag": {1: tmp / "bT0_imag1_samples.txt"}},
+                    2: {"real": {1: tmp / "bT2_real1_samples.txt", 2: tmp / "bT2_real2_samples.txt"}, "imag": {1: tmp / "bT2_imag1_samples.txt"}},
+                },
                 title="demo_pz0",
                 gm="T5",
                 eta="eta0",
+                pz=2,
+                ns=64,
+                lattice_spacing_fm=0.076,
             )
             self.assertTrue(notebook.exists())
             payload = json.loads(notebook.read_text(encoding="utf-8"))
@@ -1473,14 +1601,18 @@ class TMDWFFitTests(unittest.TestCase):
         self.assertEqual(payload["nbformat"], 4)
         self.assertIn("plot_tmdwf_grouped_outputs", joined)
         self.assertIn("plot_tmdwf_m0_from_fit_tables", joined)
+        self.assertIn("run_tmdwf_fourier_from_fit_outputs", joined)
         self.assertIn("ratio_tables =", joined)
         self.assertIn("curve_tables =", joined)
         self.assertIn("fit_tables =", joined)
+        self.assertIn("sample_tables =", joined)
         self.assertIn("chosen_bT = available_bT[0]", joined)
         self.assertIn("component = 'real'", joined)
         self.assertIn("bz_values = None", joined)
         self.assertIn("selected_bT_values = None", joined)
         self.assertIn("m0_output_name = None", joined)
+        self.assertIn("x_values = np.linspace(-0.5, 1.5, 201)", joined)
+        self.assertIn("interpolation_kind = 'cubic'", joined)
 
     def test_plot_tmdwf_grouped_outputs_reads_grouped_tables(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1646,6 +1778,318 @@ class TMDWFFitTests(unittest.TestCase):
         self.assertEqual(captured["kwargs"]["nstates"], 1)
         self.assertEqual(captured["kwargs"]["title"], "demo")
 
+    def test_load_tmdwf_m0_fit_and_sample_tables(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            fit_table = tmp / "fit.txt"
+            sample_table = tmp / "samples.txt"
+            fit_table.write_text(
+                "\n".join(
+                    [
+                        "bz\ttmin\ttmax\tsuccess_meanfit\tchi2_dof\tpvalue\tshared_window_flag\treference_eta\treference_bT\treference_bz\tplateau_tmax_used\tm0_mean\tm0_err",
+                        "2\t2\t6\t1\t1.0\t0.5\t0\tnone\t-1\t-1\t6\t1.20\t0.12",
+                        "0\t2\t6\t1\t1.0\t0.5\t0\tnone\t-1\t-1\t6\t1.00\t0.10",
+                        "1\t2\t6\t1\t1.0\t0.5\t0\tnone\t-1\t-1\t6\t1.10\t0.11",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            sample_table.write_text(
+                "\n".join(
+                    [
+                        "bz\tsample_id\tsuccess\tm0",
+                        "0\t0\t1\t1.00",
+                        "1\t0\t1\t1.10",
+                        "2\t0\t1\t1.20",
+                        "0\t1\t1\t0.90",
+                        "1\t1\t1\t1.00",
+                        "2\t1\t1\t1.10",
+                        "0\t2\t1\t1.10",
+                        "1\t2\t0\tnan",
+                        "2\t2\t1\t1.30",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            bz_fit, m0_mean, m0_err = load_tmdwf_m0_fit_table(fit_table)
+            bz_samples, m0_samples = load_tmdwf_m0_sample_table(sample_table)
+
+        self.assertTrue(np.array_equal(bz_fit, np.array([0, 1, 2])))
+        self.assertTrue(np.allclose(m0_mean, np.array([1.0, 1.1, 1.2])))
+        self.assertTrue(np.allclose(m0_err, np.array([0.10, 0.11, 0.12])))
+        self.assertTrue(np.array_equal(bz_samples, np.array([0, 1, 2])))
+        self.assertEqual(m0_samples.shape, (2, 3))
+        self.assertTrue(np.allclose(m0_samples[0], np.array([1.0, 1.1, 1.2])))
+
+    def test_compute_tmdwf_cosine_transform_constant_function(self) -> None:
+        bz_values = np.array([0, 1, 2], dtype=int)
+        m0_samples = np.ones((2, 3), dtype=float)
+        x_values = np.array([0.5], dtype=float)
+        x_grid, transformed = compute_tmdwf_cosine_transform(
+            bz_values,
+            m0_samples,
+            pz=1,
+            ns=10,
+            lattice_spacing_fm=1.0,
+            x_values=x_values,
+            zstep_fm=0.01,
+            interpolation_kind="linear",
+        )
+        expected = np.array([[0.4], [0.4]])
+        self.assertTrue(np.array_equal(x_grid, x_values))
+        self.assertTrue(np.allclose(transformed, expected, atol=5e-3))
+
+    def test_summarize_and_write_tmdwf_fourier_outputs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            fit_table = tmp / "fit.txt"
+            sample_table = tmp / "samples.txt"
+            fit_table.write_text(
+                "\n".join(
+                    [
+                        "bz\ttmin\ttmax\tsuccess_meanfit\tchi2_dof\tpvalue\tshared_window_flag\treference_eta\treference_bT\treference_bz\tplateau_tmax_used\tm0_mean\tm0_err",
+                        "0\t2\t6\t1\t1.0\t0.5\t0\tnone\t-1\t-1\t6\t1.00\t0.10",
+                        "1\t2\t6\t1\t1.0\t0.5\t0\tnone\t-1\t-1\t6\t1.10\t0.11",
+                        "2\t2\t6\t1\t1.0\t0.5\t0\tnone\t-1\t-1\t6\t1.20\t0.12",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            sample_table.write_text(
+                "\n".join(
+                    [
+                        "bz\tsample_id\tsuccess\tm0",
+                        "0\t0\t1\t1.00",
+                        "1\t0\t1\t1.10",
+                        "2\t0\t1\t1.20",
+                        "0\t1\t1\t0.90",
+                        "1\t1\t1\t1.00",
+                        "2\t1\t1\t1.10",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            outputs = run_tmdwf_fourier_from_fit_outputs(
+                output_root=tmp,
+                stem="demo_pz0_T5_eta0_bT0",
+                fit_table=fit_table,
+                sample_table=sample_table,
+                pz=1,
+                ns=10,
+                lattice_spacing_fm=1.0,
+                bT=0,
+                component="real",
+                nstates=1,
+                x_values=np.array([0.0, 0.5, 1.0]),
+                zstep_fm=0.05,
+                interpolation_kind="linear",
+                make_plots=False,
+            )
+            summary = (tmp / "tables" / "demo_pz0_T5_eta0_bT0_real_1state_fourier.txt").read_text(encoding="utf-8")
+            samples = (tmp / "samples" / "demo_pz0_T5_eta0_bT0_real_1state_fourier_samples.txt").read_text(encoding="utf-8")
+
+        self.assertEqual(len(outputs), 2)
+        self.assertIn("zstep_fm 5.0000000000e-02", summary)
+        self.assertIn("interpolation_kind linear", summary)
+        self.assertIn("x\tq_mean\tq_err\tq_p16\tq_p84", summary)
+        self.assertIn("sample_id\tx\tq_sample", samples)
+
+    def test_tmdwf_normalization_mode1_mode2_mode3(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            input_root = tmp / "fit_outputs"
+            self._write_tmdwf_m0_outputs(
+                input_root,
+                "demo_pz2",
+                "T5",
+                "eta0",
+                1,
+                "real",
+                1,
+                fit_rows=[(0, 5.0, 0.1), (1, 10.0, 0.2)],
+                sample_rows=[
+                    (0, 0, 1, 4.0),
+                    (1, 0, 1, 8.0),
+                    (0, 1, 1, 6.0),
+                    (1, 1, 1, 12.0),
+                ],
+            )
+            self._write_tmdwf_m0_outputs(
+                input_root,
+                "demo_pz2",
+                "T5",
+                "eta0",
+                0,
+                "real",
+                1,
+                fit_rows=[(0, 2.5, 0.1)],
+                sample_rows=[(0, 0, 1, 2.0), (0, 1, 1, 3.0)],
+            )
+            self._write_tmdwf_m0_outputs(
+                input_root,
+                "demo_pz0",
+                "T5",
+                "eta0",
+                1,
+                "real",
+                1,
+                fit_rows=[(0, 1.5, 0.1)],
+                sample_rows=[(0, 0, 1, 1.0), (0, 1, 1, 2.0)],
+            )
+            self._write_tmdwf_m0_outputs(
+                input_root,
+                "demo_pz0",
+                "T5",
+                "eta0",
+                0,
+                "real",
+                1,
+                fit_rows=[(0, 1.0, 0.1)],
+                sample_rows=[(0, 0, 1, 0.5), (0, 1, 1, 1.0)],
+            )
+
+            def run_mode(mode: str) -> tuple[str, str]:
+                input_path = tmp / f"{mode}.txt"
+                input_path.write_text(
+                    "\n".join(
+                        [
+                            "title_pattern demo_pz*",
+                            f"input_root {input_root}",
+                            "ns 64",
+                            "lattice_spacing_fm 0.076",
+                            "pzlist 2",
+                            "gmlist T5",
+                            "etalist eta0",
+                            "bTlist 1",
+                            "bzlist 0 1",
+                            "component real",
+                            "nstates 1",
+                            f"normalization_mode {mode}",
+                            f"results_dir {tmp / ('normalized_' + mode)}",
+                        ]
+                    ),
+                    encoding="utf-8",
+                )
+                run_tmdwf_normalization(input_path)
+                out_root = tmp / f"normalized_{mode}" / "demo_pz2"
+                fit_text = (out_root / "tables" / f"demo_pz2_T5_eta0_bT1_{mode}_real_1state_fit.txt").read_text(encoding="utf-8")
+                sample_text = (out_root / "samples" / f"demo_pz2_T5_eta0_bT1_{mode}_real_1state_samples.txt").read_text(encoding="utf-8")
+                return fit_text, sample_text
+
+            fit_mode1, samples_mode1 = run_mode("mode1")
+            fit_mode2, samples_mode2 = run_mode("mode2")
+            fit_mode3, samples_mode3 = run_mode("mode3")
+
+        self.assertIn("normalization_mode mode1", fit_mode1)
+        self.assertIn("2.0000000000e+00", fit_mode1)
+        self.assertIn("4.0000000000e+00", fit_mode1)
+        self.assertIn("3.5000000000e+00", fit_mode2)
+        self.assertIn("7.0000000000e+00", fit_mode2)
+        self.assertIn("1.0000000000e+00", fit_mode3)
+        self.assertIn("2.0000000000e+00", fit_mode3)
+        self.assertIn("0\t0\t1\t2.0000000000e+00", samples_mode1)
+        self.assertIn("1\t1\t1\t6.0000000000e+00", samples_mode2)
+        self.assertIn("1\t0\t1\t2.0000000000e+00", samples_mode3)
+
+    def test_tmdwf_normalization_missing_reference_raises_clear_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            input_root = tmp / "fit_outputs"
+            self._write_tmdwf_m0_outputs(
+                input_root,
+                "demo_pz2",
+                "T5",
+                "eta0",
+                1,
+                "real",
+                1,
+                fit_rows=[(0, 5.0, 0.1)],
+                sample_rows=[(0, 0, 1, 4.0)],
+            )
+            input_path = tmp / "normalize.txt"
+            input_path.write_text(
+                "\n".join(
+                    [
+                        "title_pattern demo_pz*",
+                        f"input_root {input_root}",
+                        "ns 64",
+                        "lattice_spacing_fm 0.076",
+                        "pzlist 2",
+                        "gmlist T5",
+                        "etalist eta0",
+                        "bTlist 1",
+                        "bzlist 0",
+                        "component real",
+                        "nstates 1",
+                        "normalization_mode mode1",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaises(FileNotFoundError) as ctx:
+                run_tmdwf_normalization(input_path)
+        self.assertIn("TMDWF normalization fit table does not exist", str(ctx.exception))
+
+    def test_tmdwf_fit_workflow_does_not_auto_run_fourier(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            nt = 12
+            ns = 16
+            times = np.arange(nt)
+            amplitudes = np.array([2.8])
+            energies = np.array([0.42])
+            matrix_elements = np.array([1.1])
+            denominator = evaluate_two_point_symmetric(times, amplitudes, energies, nt)
+            numerator = evaluate_tmdwf_numerator(times, amplitudes, energies, matrix_elements, nt, gm="T5", pz=0, ns=ns)
+            c2pt_data = np.tile(denominator[:, None], (1, 4))
+            numerator_data = np.column_stack([numerator for _ in range(4)]).T
+            h5_path = tmp / "tmdwf_pz0.h5"
+            with h5py.File(h5_path, "w") as handle:
+                handle.create_dataset("T5/eta0/pz0/plus/bT0/bz0", data=numerator_data)
+                handle.create_dataset("T5/eta0/pz0/minus/bT0/bz0", data=numerator_data)
+            with (tmp / "c2pt_pz0.csv").open("w", encoding="utf-8") as handle:
+                handle.write("," + ",".join(f"cfg{i}" for i in range(c2pt_data.shape[1])) + "\n")
+                for t in range(nt):
+                    handle.write(str(t) + "," + ",".join(f"{value:.12e}" for value in c2pt_data[t]) + "\n")
+            plateau_path = tmp / "plateau_pz0_tmax5_plateau.txt"
+            np.savetxt(plateau_path, np.array([[amplitudes[0], energies[0], 0.05, 0.02]]))
+            input_path = tmp / "input_tmdwf.txt"
+            input_path.write_text(
+                "\n".join(
+                    [
+                        "demo_pz* 16 12 0.076",
+                        "fit_target ratio",
+                        "fit_component real",
+                        "nstates 1",
+                        "pzlist 0",
+                        "gmlist T5",
+                        "etalist eta0",
+                        "Tdirlist plus minus",
+                        "bTlist 0",
+                        "bzlist 0",
+                        "tmin 2",
+                        "tmax auto",
+                        f"qtmdwf_h5 {h5_path}",
+                        "dataset_path_template {gm}/{eta}/pz{pz}/{Tdir}/bT{bT}/bz{bz}",
+                        f"two_point_plateau_table {tmp / 'plateau_pz*_tmax#_plateau.txt'}",
+                        f"c2pt {tmp / 'c2pt_pz*.csv'}",
+                        "fold_t periodic",
+                        f"results_dir {tmp / 'results'}",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            run_tmdwf_nstate_fit(input_path)
+
+            fourier_table = tmp / "results" / "demo_pz0" / "tables" / "demo_pz0_T5_eta0_bT0_real_1state_fourier.txt"
+            fourier_samples = tmp / "results" / "demo_pz0" / "samples" / "demo_pz0_T5_eta0_bT0_real_1state_fourier_samples.txt"
+            fourier_plot = tmp / "results" / "demo_pz0" / "plots" / "demo_pz0_T5_eta0_bT0_real_1state_fourier.pdf"
+
+        self.assertFalse(fourier_table.exists())
+        self.assertFalse(fourier_samples.exists())
+        self.assertFalse(fourier_plot.exists())
+
     def test_workflow_writes_tmdwf_plot_notebook(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
@@ -1712,9 +2156,11 @@ class TMDWFFitTests(unittest.TestCase):
         self.assertEqual(payload["nbformat"], 4)
         self.assertIn("plot_tmdwf_grouped_outputs", joined)
         self.assertIn("plot_tmdwf_m0_from_fit_tables", joined)
+        self.assertIn("run_tmdwf_fourier_from_fit_outputs", joined)
         self.assertIn("demo_pz0_T5_eta0_bT0_ratio.txt", joined)
         self.assertIn("demo_pz0_T5_eta0_bT0_real_1state_fit.txt", joined)
         self.assertIn("demo_pz0_T5_eta0_bT0_imag_1state_fit.txt", joined)
+        self.assertIn("demo_pz0_T5_eta0_bT0_real_1state_samples.txt", joined)
         self.assertIn("demo_pz0_T5_eta0_bT0_real_1state_curve.txt", joined)
         self.assertIn("demo_pz0_T5_eta0_bT0_imag_1state_curve.txt", joined)
 

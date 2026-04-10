@@ -1,0 +1,52 @@
+# Example TMDWF normalization input file
+# Edit the values below, then run the downstream normalization workflow on
+# grouped TMDWF fit/sample outputs that already exist.
+#
+# Suggested intent:
+#   first run the TMDWF N-state fit workflow
+#   then normalize the extracted matrix elements
+#   then optionally feed the normalized outputs into the Fourier workflow
+
+# Data / metadata block
+# These fields identify which grouped TMDWF fit/sample outputs should be read.
+title_pattern l64c64a076_m140_tmdwf_pz*
+input_root examples/outputs/tmdwf_fit_notebook
+ns 64
+lattice_spacing_fm 0.076
+pzlist 0
+gmlist T5
+etalist eta0
+
+# Choose either:
+#   bTlist ...
+# or:
+#   bTrange bTmin bTmax
+bTlist 0
+
+# Choose either:
+#   bzlist ...
+# or:
+#   bzrange bzmin bzmax
+bzlist 0
+
+# Select which grouped matrix-element outputs to normalize.
+component real
+nstates 1
+
+# Normalization mode:
+#   mode1 -> m0(pz, bT, bz) / m0(pz, bT=0, bz=0)
+#   mode2 -> m0(pz, bT, bz) / m0(pz=0, bT, bz=0)
+#   mode3 -> [m0(pz, bT, bz) / m0(pz, bT=0, bz=0)] / [m0(pz=0, bT, bz=0) / m0(pz=0, bT=0, bz=0)]
+normalization_mode mode1
+
+# Output controls.
+# If plot is true, the workflow also writes a simple normalized m0-vs-bz plot.
+plot false
+results_dir examples/outputs/tmdwf_normalize_example
+
+# Notes:
+# - This workflow consumes grouped fit/sample outputs from the TMDWF N-state fit.
+# - It does not rerun the nonlinear fit.
+# - Normalization is done sample-by-sample before percentile summaries are built.
+# - The output fit/sample tables keep the familiar m0_mean / m0_err / m0 columns
+#   so downstream code, including the Fourier step, can reuse them smoothly.

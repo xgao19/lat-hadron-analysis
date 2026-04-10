@@ -455,6 +455,10 @@ def _select_curve_component(values: np.ndarray, component: str) -> np.ndarray:
     raise ValueError("component must be real or imag")
 
 
+def _effective_shared_window_min_fit_dof(min_fit_dof: int) -> int:
+    return max(4, int(min_fit_dof))
+
+
 def scan_reference_tmin_rows(
     ratio_samples: np.ndarray,
     amplitudes: np.ndarray,
@@ -471,10 +475,11 @@ def scan_reference_tmin_rows(
     component: str = "real",
 ) -> tuple[SharedWindowScanRow, ...]:
     rows: list[SharedWindowScanRow] = []
+    effective_min_fit_dof = _effective_shared_window_min_fit_dof(min_fit_dof)
     for tmin in range(tmin_start, tmax + 1):
         n_points = tmax - tmin + 1
         fit_dof = n_points - nstates
-        if fit_dof < min_fit_dof:
+        if fit_dof < effective_min_fit_dof:
             continue
         fit_result = fit_tmdwf_mean_component(
             ratio_samples,
@@ -595,12 +600,17 @@ def _write_shared_window_summary(
     reference_dataset: str,
     rows: tuple[SharedWindowScanRow, ...],
     selected: SharedWindowCandidate,
+    decay_constant: tuple[float, float] | None = None,
 ) -> Path:
     output_root.mkdir(parents=True, exist_ok=True)
     path = output_root / f"{stem}_{nstates}state_shared_window.txt"
     with path.open("w", encoding="utf-8") as handle:
         handle.write(f"reference_dataset {reference_dataset}\n")
         handle.write("selection_basis reference_mean_fits_only\n")
+        if decay_constant is not None:
+            handle.write(f"decay_constant_target {decay_constant[0]:.10e}\n")
+            handle.write(f"decay_constant_error {decay_constant[1]:.10e}\n")
+            handle.write("decay_constant_source input\n")
         handle.write(f"selected_tfit {selected.start_tmin} {selected.tmax}\n")
         handle.write(f"selected_window_tmin_range {selected.start_tmin} {selected.end_tmin}\n")
         handle.write(f"selected_window_length {selected.length}\n")
@@ -948,6 +958,7 @@ def run_tmdwf_nstate_fit(
                     eta_ratio_tables: dict[int, Path] = {}
                     eta_curve_tables: dict[int, dict[str, dict[int, Path]]] = {}
                     eta_fit_tables: dict[int, dict[str, dict[int, Path]]] = {}
+                    eta_sample_tables: dict[int, dict[str, dict[int, Path]]] = {}
                     for bT in spec.bTlist:
                         grouped_records: dict[tuple[str, int], list[TMDWFOutputRecord]] = {}
                         grouped_ratio_records: list[TMDWFRatioRecord] = []
@@ -1046,6 +1057,7 @@ def run_tmdwf_nstate_fit(
                                                 reference_dataset,
                                                 rows,
                                                 selected,
+                                                decay_constant=spec.decay_constant,
                                             )
                                         )
                                         shared_windows[nstates] = (
@@ -1118,6 +1130,7 @@ def run_tmdwf_nstate_fit(
                         eta_ratio_tables[bT] = ratio_table_path
                         eta_curve_tables[bT] = {}
                         eta_fit_tables[bT] = {}
+                        eta_sample_tables[bT] = {}
                         for (component, nstates), records in grouped_records.items():
                             outputs.extend(
                                 _write_component_outputs(
@@ -1133,6 +1146,9 @@ def run_tmdwf_nstate_fit(
                             )
                             eta_fit_tables[bT].setdefault(component, {})[nstates] = (
                                 dataset_root / "tables" / f"{combo_stem}_{component}_{nstates}state_fit.txt"
+                            )
+                            eta_sample_tables[bT].setdefault(component, {})[nstates] = (
+                                dataset_root / "samples" / f"{combo_stem}_{component}_{nstates}state_samples.txt"
                             )
                     if spec.make_plots:
                         plots_dir = dataset_root / "plots"
@@ -1164,9 +1180,13 @@ def run_tmdwf_nstate_fit(
                             ratio_tables=eta_ratio_tables,
                             curve_tables=eta_curve_tables,
                             fit_tables=eta_fit_tables,
+                            sample_tables=eta_sample_tables,
                             title=title,
                             gm=gm,
                             eta=eta,
+                            pz=pz,
+                            ns=spec.ns,
+                            lattice_spacing_fm=spec.lattice_spacing_fm,
                         )
                     )
     return outputs

@@ -3,7 +3,9 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from .tmdwf.fourier import run_tmdwf_fourier_workflow
 from .tmdwf.fit_nstate import run_tmdwf_nstate_fit
+from .tmdwf.normalize import run_tmdwf_normalization
 from .two_point.fit_nstate import run_nstate_fit
 from .two_point.tgevp import run_ss_2pt_tgevp
 
@@ -68,6 +70,34 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Directory for TMDWF fit tables, sample outputs, and summaries",
     )
+
+    tmdwf_normalize_parser = subparsers.add_parser(
+        "tmdwf-normalize",
+        help="Run downstream TMDWF matrix-element normalization from a text input file.",
+    )
+    tmdwf_normalize_parser.add_argument(
+        "input_file",
+        help="Input control file for the TMDWF normalization workflow",
+    )
+    tmdwf_normalize_parser.add_argument(
+        "--results-dir",
+        default=None,
+        help="Directory for normalized TMDWF tables, sample outputs, and summaries",
+    )
+
+    tmdwf_fourier_parser = subparsers.add_parser(
+        "tmdwf-fourier",
+        help="Run downstream TMDWF Fourier postprocessing from a text input file.",
+    )
+    tmdwf_fourier_parser.add_argument(
+        "input_file",
+        help="Input control file for the TMDWF Fourier workflow",
+    )
+    tmdwf_fourier_parser.add_argument(
+        "--results-dir",
+        default=None,
+        help="Directory for TMDWF Fourier tables, sample outputs, and plots",
+    )
     return parser
 
 
@@ -99,6 +129,24 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.command == "tmdwf-nstate-fit":
         outputs = run_tmdwf_nstate_fit(
+            args.input_file,
+            results_dir=args.results_dir,
+        )
+        for output in outputs:
+            print(output)
+        return
+
+    if args.command == "tmdwf-normalize":
+        outputs = run_tmdwf_normalization(
+            args.input_file,
+            results_dir=args.results_dir,
+        )
+        for output in outputs:
+            print(output)
+        return
+
+    if args.command == "tmdwf-fourier":
+        outputs = run_tmdwf_fourier_workflow(
             args.input_file,
             results_dir=args.results_dir,
         )
