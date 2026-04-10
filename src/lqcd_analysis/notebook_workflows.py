@@ -77,6 +77,9 @@ TMDWF_INPUT_KEYS = {
     "seed",
     "tmin",
     "tmax",
+    "shared_window_by_pz_gm",
+    "decay_constant",
+    "min_fit_dof",
     "qtmdwf_h5",
     "dataset_path_template",
     "two_point_plateau_table",
@@ -123,7 +126,6 @@ def render_tgevp_input_text(config: dict[str, Any]) -> str:
         "c2pt",
         "pzlist",
         "fold_t",
-        "tsrange",
     ]
     missing = [key for key in required if key not in config]
     if missing:
@@ -134,8 +136,9 @@ def render_tgevp_input_text(config: dict[str, Any]) -> str:
         f"c2pt {_as_scalar_string(config['c2pt'])}",
         f"pzlist {_as_scalar_string(config['pzlist'])}",
         f"fold_t {_as_scalar_string(config['fold_t'])}",
-        f"tsrange {_as_scalar_string(config['tsrange'])}",
     ]
+    if "tsrange" in config and config["tsrange"] is not None:
+        lines.append(f"tsrange {_as_scalar_string(config['tsrange'])}")
     for optional_key in ("binsize", "bootstrap_samples", "bootstrap_size", "seed", "results_dir"):
         if optional_key in config and config[optional_key] is not None:
             lines.append(f"{optional_key} {_as_scalar_string(config[optional_key])}")
@@ -152,7 +155,6 @@ def render_nstate_fit_input_text(config: dict[str, Any]) -> str:
         "c2pt",
         "pzlist",
         "fold_t",
-        "tsrange",
         "model",
         "fit_mode",
         "nstates",
@@ -166,11 +168,12 @@ def render_nstate_fit_input_text(config: dict[str, Any]) -> str:
         f"c2pt {_as_scalar_string(config['c2pt'])}",
         f"pzlist {_as_scalar_string(config['pzlist'])}",
         f"fold_t {_as_scalar_string(config['fold_t'])}",
-        f"tsrange {_as_scalar_string(config['tsrange'])}",
         f"model {_as_scalar_string(config['model'])}",
         f"fit_mode {_as_scalar_string(config.get('fit_mode', 'uncorrelated'))}",
         f"nstates {_as_scalar_string(config['nstates'])}",
     ]
+    if "tsrange" in config and config["tsrange"] is not None:
+        lines.append(f"tsrange {_as_scalar_string(config['tsrange'])}")
 
     for optional_key in (
         "pz0_ground_energy",
@@ -203,13 +206,11 @@ def render_tmdwf_fit_input_text(config: dict[str, Any]) -> str:
         "etalist",
         "Tdirlist",
         "tmin",
-        "tmax",
         "qtmdwf_h5",
         "dataset_path_template",
         "two_point_plateau_table",
         "c2pt",
         "fold_t",
-        "tsrange",
     ]
     missing = [key for key in required if key not in config]
     if missing:
@@ -227,8 +228,8 @@ def render_tmdwf_fit_input_text(config: dict[str, Any]) -> str:
         f"pzlist {_as_scalar_string(config['pzlist'])}",
         f"gmlist {_as_scalar_string(config['gmlist'])}",
         f"etalist {_as_scalar_string(config['etalist'])}",
-        f"Tdirlist {_as_scalar_string(config['Tdirlist'])}",
-    ]
+            f"Tdirlist {_as_scalar_string(config['Tdirlist'])}",
+        ]
     if "bTlist" in config and config["bTlist"] is not None:
         lines.append(f"bTlist {_as_scalar_string(config['bTlist'])}")
     elif "bTrange" in config and config["bTrange"] is not None:
@@ -241,20 +242,28 @@ def render_tmdwf_fit_input_text(config: dict[str, Any]) -> str:
     lines.extend(
         [
             f"tmin {_as_scalar_string(config['tmin'])}",
-            f"tmax {_as_scalar_string(config['tmax'])}",
+            *(
+                [f"tmax {_as_scalar_string(config['tmax'])}"]
+                if "tmax" in config and config["tmax"] is not None
+                else []
+            ),
             f"qtmdwf_h5 {_as_scalar_string(config['qtmdwf_h5'])}",
             f"dataset_path_template {_as_scalar_string(config['dataset_path_template'])}",
             f"two_point_plateau_table {_as_scalar_string(config['two_point_plateau_table'])}",
             f"c2pt {_as_scalar_string(config['c2pt'])}",
             f"fold_t {_as_scalar_string(config['fold_t'])}",
-            f"tsrange {_as_scalar_string(config['tsrange'])}",
         ]
     )
+    if "tsrange" in config and config["tsrange"] is not None:
+        lines.append(f"tsrange {_as_scalar_string(config['tsrange'])}")
     for optional_key in (
         "binsize",
         "bootstrap_samples",
         "bootstrap_size",
         "seed",
+        "shared_window_by_pz_gm",
+        "decay_constant",
+        "min_fit_dof",
         "plot",
         "results_dir",
     ):

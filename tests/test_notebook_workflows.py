@@ -13,6 +13,7 @@ from lqcd_analysis.notebook_workflows import (
     run_nstate_fit_from_notebook,
     run_tmdwf_fit_from_notebook,
     run_tgevp_from_notebook,
+    validate_nstate_notebook_config,
     validate_plot_2pt_notebook_config,
     validate_tmdwf_notebook_config,
 )
@@ -72,6 +73,9 @@ class NotebookWorkflowTests(unittest.TestCase):
             "c2pt": "/tmp/c2pt.csv",
             "fold_t": "periodic",
             "tsrange": [0, 20],
+            "shared_window_by_pz_gm": True,
+            "decay_constant": [0.1, 0.02],
+            "min_fit_dof": 2,
         }
 
     def test_render_tgevp_text(self) -> None:
@@ -122,6 +126,16 @@ class NotebookWorkflowTests(unittest.TestCase):
         self.assertIn("lambda_prior 0.5", text)
         self.assertIn("results_dir examples/outputs/demo", text)
 
+    def test_render_nstate_text_without_tsrange(self) -> None:
+        config = dict(self.nstate_config)
+        config.pop("tsrange")
+        text = render_nstate_fit_input_text(config)
+        self.assertNotIn("tsrange", text)
+        parsed = parse_nstate_fit_input(
+            Path("templates/input_files/two_point/nstate_fit_example_realdata.txt")
+        )
+        self.assertEqual(parsed.nt, 64)
+
     def test_validate_plot_config(self) -> None:
         config = {
             "output_dir": "examples/outputs/plot_2pt_notebook",
@@ -151,12 +165,52 @@ class NotebookWorkflowTests(unittest.TestCase):
         self.assertIn("gmlist T5", text)
         self.assertIn("bTlist 0", text)
         self.assertIn("bzlist 0", text)
+        self.assertIn("tmax 12", text)
+        self.assertIn("shared_window_by_pz_gm true", text)
+        self.assertIn("decay_constant 0.1 0.02", text)
+        self.assertIn("min_fit_dof 2", text)
         self.assertIn("results_dir examples/outputs/tmdwf_demo", text)
+
+    def test_render_tmdwf_text_without_tsrange(self) -> None:
+        config = dict(self.tmdwf_config)
+        config.pop("tsrange")
+        text = render_tmdwf_fit_input_text(config)
+        self.assertNotIn("tsrange", text)
+
+    def test_render_tmdwf_text_without_tmax(self) -> None:
+        config = dict(self.tmdwf_config)
+        config.pop("tmax")
+        text = render_tmdwf_fit_input_text(config)
+        self.assertNotIn("tmax", text)
+
+    def test_render_tmdwf_text_with_auto_tmax(self) -> None:
+        config = dict(self.tmdwf_config)
+        config["tmax"] = "auto"
+        text = render_tmdwf_fit_input_text(config)
+        self.assertIn("tmax auto", text)
 
     def test_validate_tmdwf_notebook_config(self) -> None:
         parsed = validate_tmdwf_notebook_config(self.tmdwf_config)
         self.assertEqual(parsed.fit_target, "ratio")
         self.assertEqual(parsed.nstates, (1, 2))
+
+    def test_validate_nstate_and_tmdwf_configs_without_tsrange(self) -> None:
+        nstate_config = dict(self.nstate_config)
+        nstate_config.pop("tsrange")
+        parsed_nstate = validate_nstate_notebook_config(nstate_config)
+        self.assertEqual(parsed_nstate.tsrange, (0, 31))
+
+        tmdwf_config = dict(self.tmdwf_config)
+        tmdwf_config.pop("tsrange")
+        parsed_tmdwf = validate_tmdwf_notebook_config(tmdwf_config)
+        self.assertEqual(parsed_tmdwf.tsrange, (0, 31))
+        self.assertEqual(parsed_tmdwf.tmax, 12)
+
+    def test_validate_tmdwf_config_without_tmax(self) -> None:
+        tmdwf_config = dict(self.tmdwf_config)
+        tmdwf_config.pop("tmax")
+        parsed_tmdwf = validate_tmdwf_notebook_config(tmdwf_config)
+        self.assertIsNone(parsed_tmdwf.tmax)
 
     def test_guess_notebook_dir_uses_vscode_notebook_path(self) -> None:
         shell = SimpleNamespace(user_ns={"__vsc_ipynb_file__": "/tmp/demo/notebook.ipynb"})

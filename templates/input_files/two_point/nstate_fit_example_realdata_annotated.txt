@@ -20,6 +20,7 @@ pzlist 0
 fold_t none
 
 # Raw correlator time window [t_start, t_end].
+# Optional. If omitted, the backend defaults to [0, Nt//2 - 1].
 tsrange 0 24
 
 # Fit model choices:

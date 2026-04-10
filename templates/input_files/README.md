@@ -59,6 +59,12 @@ This TMDWF template is a workflow template rather than a fully runnable tracked
 example dataset. You should replace the HDF5 path, dataset template details, and
 two-point plateau table path with values that match your local data layout.
 
+Current grouped-output behavior:
+
+- outputs are grouped by `bT`, not split into a separate file per `bz`
+- grouped summaries contain one parseable block per `bz`
+- grouped fit / sample / curve files include an explicit leading `bz` column
+
 ## Plot Example
 
 Run the N-state fit example first, then:

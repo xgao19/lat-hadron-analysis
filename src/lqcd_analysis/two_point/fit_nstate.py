@@ -138,6 +138,12 @@ class ResidualModel:
 SHRINKAGE_LAMBDAS: tuple[float, ...] = (0.05, 0.1, 0.2, 0.3, 0.5, 1.0)
 
 
+def _parse_tsrange(entries: dict[str, list[str]], nt: int) -> tuple[int, int]:
+    if "tsrange" in entries:
+        return int(entries["tsrange"][0]), int(entries["tsrange"][1])
+    return 0, max(0, nt // 2 - 1)
+
+
 def parse_nstate_fit_input(path: str | Path, results_dir: str | Path | None = None) -> NStateFitInput:
     file_path = Path(path)
     entries: dict[str, list[str]] = {}
@@ -156,7 +162,7 @@ def parse_nstate_fit_input(path: str | Path, results_dir: str | Path | None = No
     if first_tokens is None or len(first_tokens) < 4:
         raise ValueError("the first non-empty line must be: title Ns Nt a_fm")
 
-    required = {"c2pt", "pzlist", "tsrange", "model", "nstates"}
+    required = {"c2pt", "pzlist", "model", "nstates"}
     missing = required - entries.keys()
     if missing:
         raise ValueError(f"missing required keys in {file_path}: {sorted(missing)}")
@@ -182,7 +188,7 @@ def parse_nstate_fit_input(path: str | Path, results_dir: str | Path | None = No
         correlator_path_pattern=entries["c2pt"][0],
         pzlist=tuple(int(item) for item in entries["pzlist"]),
         fold_t=parse_fold_t(entries),
-        tsrange=(int(entries["tsrange"][0]), int(entries["tsrange"][1])),
+        tsrange=_parse_tsrange(entries, int(first_tokens[2])),
         model=model,
         fit_mode=fit_mode,
         pz0_ground_energy=(

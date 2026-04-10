@@ -52,8 +52,12 @@ bootstrap_size 32
 seed 2026
 
 # Fit time window in lattice units.
+# `tmax` may be:
+#   an explicit integer, which always takes precedence
+#   auto, which infers tmax from the two-point plateau filename token
+# Omit the line entirely to use the same inference rule as auto.
 tmin 2
-tmax 12
+tmax auto
 
 # HDF5 file path or wildcard pattern.
 # The pz wildcard can be written using * if helpful.
@@ -66,7 +70,12 @@ dataset_path_template {gm}/{eta}/pz{pz}/{Tdir}/bT{bT}/bz{bz}
 
 # Two-point plateau table providing the fixed A_i and E_i inputs.
 # This should point to a plateau table produced by the existing two-point workflow.
-two_point_plateau_table examples/outputs/nstate_fit_realdata/l64c64a076_m140_fit_k0_pz*/tables/l64c64a076_m140_fit_k0_pz*_normal_1state_plateau.txt
+# You may use:
+#   *  for the pz substitution
+#   #  for numeric tmax wildcard matching in filenames like `_tmax12_plateau.txt`
+# Example:
+#   ..._normal_1state_tmax#_plateau.txt
+two_point_plateau_table examples/outputs/nstate_fit_realdata/l64c64a076_m140_fit_k0_pz*/tables/l64c64a076_m140_fit_k0_pz*_normal_1state_tmax#_plateau.txt
 
 # Two-point correlator CSV used to build the denominator part of the ratio.
 c2pt examples/data/l64c64a076_m140/comb_c2pt_csv/c2pt_5_5_k0_pz*_real.csv
@@ -79,6 +88,7 @@ c2pt examples/data/l64c64a076_m140/comb_c2pt_csv/c2pt_5_5_k0_pz*_real.csv
 fold_t periodic
 
 # Raw time window to keep before the TMDWF fit.
+# Optional. If omitted, the backend defaults to [0, Nt//2 - 1].
 tsrange 0 20
 
 # Plot generation is reserved for later extension.
@@ -95,3 +105,16 @@ results_dir examples/outputs/tmdwf_fit_example
 # - The code does not yet couple to two-point bootstrap-sample A_i/E_i.
 # - T5 keeps the original sign-pattern preprocessing.
 # - Z5 multiplies the correlator by -i before folding and uses an extra Pz/E_i factor in the numerator model.
+# - Outputs are grouped by bT. For a fixed (title, gm, eta, bT, component, nstates),
+#   one summary / fit / samples / curve file is written and each file contains all bz entries.
+# - Grouped summary files contain one `begin_bz ...` / `end_bz ...` block per bz.
+# - Summary blocks also record:
+#     two_point_plateau_table_resolved
+#     two_point_tmax_source
+#     two_point_tmax_inferred
+# - Grouped fit tables include metadata columns such as:
+#     shared_window_flag
+#     reference_eta
+#     reference_bT
+#     reference_bz
+#     plateau_tmax_used

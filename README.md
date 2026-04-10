@@ -165,9 +165,10 @@ fit_target ratio
 fit_component both
 nstates 1 2
 gmlist T5
+tmax auto
 qtmdwf_h5 /path/to/file_or_pattern.h5
 dataset_path_template {gm}/{eta}/pz{pz}/{Tdir}/bT{bT}/bz{bz}
-two_point_plateau_table /path/to/2pt_plateau_pz*.txt
+two_point_plateau_table /path/to/2pt_plateau_pz*_tmax#_plateau.txt
 c2pt /path/to/c2pt_pz*_real.csv
 fold_t periodic
 tsrange 0 20
@@ -176,6 +177,8 @@ tsrange 0 20
 The TMDWF workflow:
 
 - expands HDF5 dataset paths using `{gm}`, `{eta}`, `{pz}`, `{Tdir}`, `{bT}`, and `{bz}`
+- resolves `tmax` from the two-point plateau filename token `_tmax<digits>_plateau.txt` when `tmax` is omitted or set to `auto`
+- lets an explicit integer `tmax` override any inferred filename value
 - averages over the requested `Tdir` entries
 - combines `+bz` and `-bz` when `bz != 0`
 - applies the phase factor `exp(-i * phase * bz / 2)` with `phase = 2*pi*pz/Ns`
@@ -186,6 +189,26 @@ The TMDWF workflow:
   - `T5`: the original `gamma_t gamma_5` form
   - `Z5`: the `gamma_z gamma_5` form with the lattice-momentum factor `Pz / E_i`
 - folds the time dependence after preprocessing
+- writes outputs grouped by `bT` rather than one file per `bz`
+- stores one parseable `bz` block per grouped summary file
+- records two-point provenance in each summary block:
+  - `two_point_plateau_table_resolved`
+  - `two_point_tmax_source`
+  - `two_point_tmax_inferred`
+- records downstream-friendly metadata in grouped fit tables:
+  - `shared_window_flag`
+  - `reference_eta`
+  - `reference_bT`
+  - `reference_bz`
+  - `plateau_tmax_used`
+
+For a fixed `(title, gm, eta, bT, component, nstates)` combination, the grouped
+TMDWF outputs now look like:
+
+- `..._summary.txt`: one clearly separated block per `bz`
+- `..._fit.txt`: one row per `bz`
+- `..._samples.txt`: one row per `(bz, sample_id)`
+- `..._curve.txt`: one row per `(bz, t)`
 
 Template inputs are provided in:
 

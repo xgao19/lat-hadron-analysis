@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import glob
 from pathlib import Path
+import re
 
 import numpy as np
 
@@ -32,6 +34,37 @@ def load_two_point_plateau_values(path: str | Path, nstates: int) -> tuple[np.nd
     if not np.all(np.isfinite(amplitudes)) or not np.all(np.isfinite(energies)):
         raise ValueError(f"non-finite two-point plateau values found in {path}")
     return amplitudes, energies
+
+
+def _infer_tmax_from_plateau_filename(path: str | Path) -> int | None:
+    match = re.search(r"_tmax(\d+)_plateau\.txt$", Path(path).name)
+    if match is None:
+        return None
+    return int(match.group(1))
+
+
+def resolve_two_point_plateau_table(path_pattern: str | Path, *, pz: int) -> tuple[Path, int | None]:
+    expanded = Path(expand_template(str(path_pattern), pz=pz))
+    if "#" not in str(expanded):
+        if not expanded.exists():
+            raise FileNotFoundError(expanded)
+        return expanded, _infer_tmax_from_plateau_filename(expanded)
+
+    glob_pattern = str(expanded).replace("#", "*")
+    matches = [Path(match) for match in sorted(glob.glob(glob_pattern))]
+    if not matches:
+        raise FileNotFoundError(path_pattern)
+
+    ranked_matches: list[tuple[int, Path]] = []
+    for candidate in matches:
+        inferred_tmax = _infer_tmax_from_plateau_filename(candidate)
+        if inferred_tmax is not None:
+            ranked_matches.append((inferred_tmax, candidate))
+    if not ranked_matches:
+        raise ValueError(f"could not infer tmax from any plateau filename matching pattern: {path_pattern}")
+    ranked_matches.sort(key=lambda item: item[0])
+    selected_tmax, selected_path = ranked_matches[-1]
+    return selected_path, selected_tmax
 
 
 def _normalize_time_axis(data: np.ndarray, nt: int) -> np.ndarray:
@@ -94,30 +127,58 @@ def load_tmdwf_correlator(
     file_path = Path(h5_path)
     if not file_path.exists():
         raise FileNotFoundError(file_path)
+    with h5py.File(file_path, "r") as handle:
+        return _load_tmdwf_correlator_from_handle(
+            handle,
+            dataset_path_template,
+            gm=gm,
+            eta=eta,
+            pz=pz,
+            tdirs=tdirs,
+            bT=bT,
+            bz=bz,
+            nt=nt,
+            ns=ns,
+            file_label=str(file_path),
+        )
 
+
+def _load_tmdwf_correlator_from_handle(
+    handle: "h5py.File",
+    dataset_path_template: str,
+    *,
+    gm: str,
+    eta: str,
+    pz: int,
+    tdirs: tuple[str, ...],
+    bT: int,
+    bz: int,
+    nt: int,
+    ns: int,
+    file_label: str = "<open-h5>",
+) -> np.ndarray:
     phase = 2.0 * np.pi * float(pz) / float(ns)
     bz_values = (0,) if bz == 0 else (abs(bz), -abs(bz))
     tdir_blocks: list[np.ndarray] = []
-    with h5py.File(file_path, "r") as handle:
-        for tdir in tdirs:
-            bz_blocks: list[np.ndarray] = []
-            for signed_bz in bz_values:
-                dataset_path = expand_template(
-                    dataset_path_template,
-                    gm=gm,
-                    eta=eta,
-                    pz=pz,
-                    Tdir=tdir,
-                    bT=bT,
-                    bz=signed_bz,
-                )
-                if dataset_path not in handle:
-                    raise KeyError(f"dataset path not found in {file_path}: {dataset_path}")
-                raw = _normalize_time_axis(np.asarray(handle[dataset_path]), nt)
-                rotation = np.exp(-1j * phase * float(signed_bz) / 2.0)
-                bz_blocks.append(np.asarray(raw, dtype=np.complex128) * rotation)
-            averaged_bz = bz_blocks[0] if len(bz_blocks) == 1 else 0.5 * (bz_blocks[0] + bz_blocks[1])
-            tdir_blocks.append(averaged_bz)
+    for tdir in tdirs:
+        bz_blocks: list[np.ndarray] = []
+        for signed_bz in bz_values:
+            dataset_path = expand_template(
+                dataset_path_template,
+                gm=gm,
+                eta=eta,
+                pz=pz,
+                Tdir=tdir,
+                bT=bT,
+                bz=signed_bz,
+            )
+            if dataset_path not in handle:
+                raise KeyError(f"dataset path not found in {file_label}: {dataset_path}")
+            raw = _normalize_time_axis(np.asarray(handle[dataset_path]), nt)
+            rotation = np.exp(-1j * phase * float(signed_bz) / 2.0)
+            bz_blocks.append(np.asarray(raw, dtype=np.complex128) * rotation)
+        averaged_bz = bz_blocks[0] if len(bz_blocks) == 1 else 0.5 * (bz_blocks[0] + bz_blocks[1])
+        tdir_blocks.append(averaged_bz)
 
     averaged = np.mean(np.stack(tdir_blocks, axis=0), axis=0)
     return fold_antisymmetric_complex(apply_tmdwf_preprocessing(averaged, nt, gm), nt)

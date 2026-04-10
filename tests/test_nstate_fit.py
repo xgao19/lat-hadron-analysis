@@ -815,6 +815,26 @@ class NStateFitTests(unittest.TestCase):
         self.assertEqual(parsed.fold_t, "antiperiodic")
         self.assertEqual(parsed.results_dir, Path("/tmp/nstate_results"))
 
+    def test_parse_input_defaults_tsrange_when_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "input.txt"
+            path.write_text(
+                "\n".join(
+                    [
+                        "demo_pz* 64 64 0.076",
+                        "c2pt /tmp/c2pt_pz*.csv",
+                        "pzlist 0 1",
+                        "fold_t antiperiodic",
+                        "model symmetric",
+                        "fit_mode correlated",
+                        "nstates 1 2 3",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            parsed = parse_nstate_fit_input(path)
+        self.assertEqual(parsed.tsrange, (0, 31))
+
     def test_end_to_end_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
