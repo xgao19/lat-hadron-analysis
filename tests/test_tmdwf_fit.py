@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -6,19 +7,25 @@ from unittest.mock import patch
 import numpy as np
 
 from lqcd_analysis.tmdwf.fit_nstate import (
+    _select_curve_component,
+    _write_component_outputs,
     build_bootstrap_ratio_samples,
     fit_tmdwf_component,
     fit_tmdwf_mean_component,
     parse_tmdwf_fit_input,
     run_tmdwf_nstate_fit,
     scan_reference_tmin_rows,
+    TMDWFFitResult,
+    TMDWFOutputRecord,
 )
 from lqcd_analysis.tmdwf.io import (
     _load_tmdwf_correlator_from_handle,
     apply_tmdwf_preprocessing,
     expand_template,
+    fold_symmetric_complex,
     load_tmdwf_correlator,
     load_two_point_plateau_values,
+    resolve_qtmdwf_h5_path,
     resolve_two_point_plateau_table,
 )
 from lqcd_analysis.tmdwf.models import (
@@ -27,6 +34,16 @@ from lqcd_analysis.tmdwf.models import (
     evaluate_tmdwf_numerator_z5,
     evaluate_tmdwf_ratio,
     evaluate_two_point_symmetric,
+)
+from lqcd_analysis.tmdwf.plotting import (
+    RatioFitPlotSeries,
+    TMDWFM0VsBZSeries,
+    _build_m0_series_from_fit_tables,
+    plot_tmdwf_grouped_outputs,
+    plot_tmdwf_m0_from_fit_tables,
+    plot_tmdwf_m0_vs_bz,
+    plot_tmdwf_ratio_fit,
+    write_tmdwf_plot_notebook,
 )
 
 try:
@@ -255,6 +272,30 @@ class TMDWFFitTests(unittest.TestCase):
         self.assertEqual(loaded.shape, (3, nt // 2 + 1))
         self.assertTrue(np.iscomplexobj(loaded))
 
+    def test_resolve_qtmdwf_h5_path_supports_gm_and_legacy_pz_wildcard(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            gm_path = tmp / "qtmdwf_pz0_OT5.h5"
+            gm_path.touch()
+            legacy_path = tmp / "qtmdwf_pz0.h5"
+            legacy_path.touch()
+
+            self.assertEqual(
+                resolve_qtmdwf_h5_path(tmp / "qtmdwf_pz{pz}_O{gm}.h5", pz=0, gm="T5"),
+                gm_path,
+            )
+            self.assertEqual(
+                resolve_qtmdwf_h5_path(tmp / "qtmdwf_pz*.h5", pz=0, gm="Z5"),
+                legacy_path,
+            )
+
+    def test_resolve_qtmdwf_h5_path_missing_file_reports_fully_resolved_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            with self.assertRaises(FileNotFoundError) as ctx:
+                resolve_qtmdwf_h5_path(tmp / "qtmdwf_pz{pz}_O{gm}.h5", pz=0, gm="Z5")
+        self.assertEqual(str(ctx.exception), str(tmp / "qtmdwf_pz0_OZ5.h5"))
+
     def test_handle_based_loader_matches_path_based_loader(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             h5_path = Path(tmpdir) / "demo.h5"
@@ -357,6 +398,31 @@ class TMDWFFitTests(unittest.TestCase):
         self.assertTrue(np.allclose(t5, expected_t5))
         self.assertTrue(np.allclose(z5, -1j * np.ones((2, nt), dtype=np.complex128)))
 
+    def test_tmdwf_loader_uses_symmetric_fold_after_preprocessing(self) -> None:
+        nt = 8
+        raw = np.array([[1.0, 2.0, 3.0, 4.0, 10.0, 20.0, 30.0, 40.0]], dtype=float)
+        processed = apply_tmdwf_preprocessing(raw, nt, "T5")
+        expected = fold_symmetric_complex(processed, nt)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            h5_path = Path(tmpdir) / "demo.h5"
+            with h5py.File(h5_path, "w") as handle:
+                handle.create_dataset("T5/eta0/pz0/plus/bT0/bz0", data=raw)
+            loaded = load_tmdwf_correlator(
+                h5_path,
+                "{gm}/{eta}/pz{pz}/{Tdir}/bT{bT}/bz{bz}",
+                gm="T5",
+                eta="eta0",
+                pz=0,
+                tdirs=("plus",),
+                bT=0,
+                bz=0,
+                nt=nt,
+                ns=32,
+            )
+
+        self.assertTrue(np.allclose(loaded, expected))
+
     def test_bootstrap_ratio_construction_preserves_complex_values(self) -> None:
         numerator = np.array(
             [
@@ -389,6 +455,11 @@ class TMDWFFitTests(unittest.TestCase):
         self.assertEqual(denominator_boot.shape, (6, 2))
         self.assertTrue(np.any(np.abs(np.imag(ratio_boot)) > 0.0))
 
+    def test_select_curve_component_uses_requested_part(self) -> None:
+        values = np.array([[1.0 + 3.0j, 2.0 + 4.0j], [5.0 + 7.0j, 6.0 + 8.0j]])
+        self.assertTrue(np.allclose(_select_curve_component(values, "real"), np.array([[1.0, 2.0], [5.0, 6.0]])))
+        self.assertTrue(np.allclose(_select_curve_component(values, "imag"), np.array([[3.0, 4.0], [7.0, 8.0]])))
+
     def test_load_two_point_plateau_values(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "plateau.txt"
@@ -397,6 +468,114 @@ class TMDWFFitTests(unittest.TestCase):
             amplitudes, energies = load_two_point_plateau_values(path, 2)
         self.assertTrue(np.allclose(amplitudes, [3.0, 1.1]))
         self.assertTrue(np.allclose(energies, [0.40, 0.90]))
+
+    def test_curve_output_uses_imag_component_for_imag_records(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_root = Path(tmpdir)
+            times = np.arange(0, 3, dtype=int)
+            amplitudes = np.array([2.5])
+            energies = np.array([0.35])
+            sample_params = np.array([[1.0], [1.2]], dtype=float)
+            record = TMDWFOutputRecord(
+                bz=0,
+                component="imag",
+                nstates=1,
+                tmin=0,
+                tmax=2,
+                fit_result=TMDWFFitResult(
+                    params=np.array([1.1]),
+                    chi2=0.0,
+                    chi2_dof=0.0,
+                    pvalue=1.0,
+                    success=True,
+                    message="ok",
+                ),
+                sample_params=sample_params,
+                amplitudes=amplitudes,
+                energies=energies,
+                pz=1,
+                ns=16,
+                gm="Z5",
+                shared_window_flag=0,
+                reference_eta="none",
+                reference_bT=-1,
+                reference_bz=-1,
+                plateau_tmax_used=2,
+                two_point_plateau_table_resolved="plateau.txt",
+                two_point_tmax_source="explicit",
+                two_point_tmax_inferred="none",
+                tsrange_start=0,
+                tsrange_end=2,
+                ratio_samples=np.ones((2, 3), dtype=np.complex128),
+            )
+            _write_component_outputs(output_root, "demo", (record,), 8, make_plots=False)
+            curve_path = output_root / "tables" / "demo_imag_1state_curve.txt"
+            rows = curve_path.read_text(encoding="utf-8").splitlines()[1:]
+            written = np.array([float(line.split("\t")[3]) for line in rows])
+            expected_curves = np.array(
+                [
+                    np.imag(evaluate_tmdwf_ratio(times, amplitudes, energies, params, 8, gm="Z5", pz=1, ns=16))
+                    for params in sample_params
+                ]
+            )
+            expected_mean = 0.5 * (
+                np.percentile(expected_curves, 84.0, axis=0) + np.percentile(expected_curves, 16.0, axis=0)
+            )
+        self.assertTrue(np.allclose(written, expected_mean))
+
+    def test_curve_output_uses_real_component_for_real_records(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_root = Path(tmpdir)
+            times = np.arange(0, 3, dtype=int)
+            amplitudes = np.array([2.5])
+            energies = np.array([0.35])
+            sample_params = np.array([[1.0], [1.2]], dtype=float)
+            record = TMDWFOutputRecord(
+                bz=0,
+                component="real",
+                nstates=1,
+                tmin=0,
+                tmax=2,
+                fit_result=TMDWFFitResult(
+                    params=np.array([1.1]),
+                    chi2=0.0,
+                    chi2_dof=0.0,
+                    pvalue=1.0,
+                    success=True,
+                    message="ok",
+                ),
+                sample_params=sample_params,
+                amplitudes=amplitudes,
+                energies=energies,
+                pz=0,
+                ns=16,
+                gm="T5",
+                shared_window_flag=0,
+                reference_eta="none",
+                reference_bT=-1,
+                reference_bz=-1,
+                plateau_tmax_used=2,
+                two_point_plateau_table_resolved="plateau.txt",
+                two_point_tmax_source="explicit",
+                two_point_tmax_inferred="none",
+                tsrange_start=0,
+                tsrange_end=2,
+                ratio_samples=np.ones((2, 3), dtype=np.complex128),
+            )
+            _write_component_outputs(output_root, "demo", (record,), 8, make_plots=False)
+            curve_path = output_root / "tables" / "demo_real_1state_curve.txt"
+            rows = curve_path.read_text(encoding="utf-8").splitlines()[1:]
+            written = np.array([float(line.split("\t")[3]) for line in rows])
+            expected_curves = np.array(
+                [
+                    np.real(evaluate_tmdwf_ratio(times, amplitudes, energies, params, 8, gm="T5", pz=0, ns=16))
+                    for params in sample_params
+                ]
+            )
+            expected_mean = 0.5 * (
+                np.percentile(expected_curves, 84.0, axis=0) + np.percentile(expected_curves, 16.0, axis=0)
+            )
+        self.assertTrue(np.allclose(written, expected_mean))
 
     def test_fit_tmdwf_component_one_state(self) -> None:
         nt = 16
@@ -553,6 +732,134 @@ class TMDWFFitTests(unittest.TestCase):
                 self.assertTrue(summary.exists())
                 self.assertTrue(imag_summary.exists())
                 self.assertIn("m0", summary.read_text(encoding="utf-8"))
+
+    def test_end_to_end_workflow_selects_gm_specific_qtmdwf_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            nt = 12
+            ns = 16
+            times = np.arange(nt)
+            folded_times = np.arange(nt // 2 + 1)
+            amplitudes = np.array([2.8])
+            energies = np.array([0.42])
+            matrix_elements = np.array([1.1])
+            denominator = evaluate_two_point_symmetric(times, amplitudes, energies, nt)
+
+            c2pt_csv = tmp / "c2pt_pz0.csv"
+            c2pt_data = np.column_stack(
+                [denominator * (1.0 + 0.001 * np.cos(times + cfg)) for cfg in range(10)]
+            )
+            with c2pt_csv.open("w", encoding="utf-8") as handle:
+                handle.write(",".join(["t"] + [f"cfg_{idx}" for idx in range(c2pt_data.shape[1])]) + "\n")
+                for t in range(nt):
+                    row = ",".join([str(t)] + [f"{value:.12e}" for value in c2pt_data[t]])
+                    handle.write(row + "\n")
+
+            plateau_path = tmp / "plateau_pz0.txt"
+            np.savetxt(plateau_path, np.array([[amplitudes[0], energies[0], 0.05, 0.02]]))
+
+            for gm in ("T5", "Z5"):
+                h5_path = tmp / f"tmdwf_pz0_O{gm}.h5"
+                with h5py.File(h5_path, "w") as handle:
+                    numerator = evaluate_tmdwf_numerator(
+                        times,
+                        amplitudes,
+                        energies,
+                        matrix_elements,
+                        nt,
+                        gm=gm,
+                        pz=0,
+                        ns=ns,
+                    )
+                    for tdir in ("plus", "minus"):
+                        dataset = np.column_stack(
+                            [numerator * (1.0 + 0.001 * np.sin(times + cfg)) for cfg in range(10)]
+                        ).T
+                        handle.create_dataset(
+                            f"{gm}/eta0/pz0/{tdir}/bT0/bz0",
+                            data=dataset,
+                        )
+
+            input_path = tmp / "input_tmdwf_gm_specific.txt"
+            input_path.write_text(
+                "\n".join(
+                    [
+                        "demo_pz* 16 12 0.076",
+                        "fit_target ratio",
+                        "fit_component both",
+                        "nstates 1",
+                        "pzlist 0",
+                        "gmlist T5 Z5",
+                        "etalist eta0",
+                        "Tdirlist plus minus",
+                        "bTlist 0",
+                        "bzlist 0",
+                        "binsize 1",
+                        "bootstrap_samples 12",
+                        "bootstrap_size 10",
+                        "seed 9",
+                        "tmin 2",
+                        f"tmax {folded_times[-1]}",
+                        f"qtmdwf_h5 {tmp / 'tmdwf_pz{pz}_O{gm}.h5'}",
+                        "dataset_path_template {gm}/{eta}/pz{pz}/{Tdir}/bT{bT}/bz{bz}",
+                        f"two_point_plateau_table {tmp / 'plateau_pz*.txt'}",
+                        f"c2pt {tmp / 'c2pt_pz*.csv'}",
+                        "fold_t periodic",
+                        f"tsrange 0 {folded_times[-1]}",
+                        f"results_dir {tmp / 'results'}",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            outputs = run_tmdwf_nstate_fit(input_path)
+
+            self.assertTrue(outputs)
+            for gm in ("T5", "Z5"):
+                summary = tmp / "results" / "demo_pz0" / f"demo_pz0_{gm}_eta0_bT0_real_1state_summary.txt"
+                imag_summary = tmp / "results" / "demo_pz0" / f"demo_pz0_{gm}_eta0_bT0_imag_1state_summary.txt"
+                self.assertTrue(summary.exists())
+                self.assertTrue(imag_summary.exists())
+                self.assertIn("m0", summary.read_text(encoding="utf-8"))
+
+    def test_missing_gm_specific_qtmdwf_file_raises_with_resolved_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            c2pt_csv = tmp / "c2pt_pz0.csv"
+            c2pt_csv.write_text("t,cfg_0\n0,1.0\n1,0.9\n2,0.8\n3,0.7\n", encoding="utf-8")
+            plateau_path = tmp / "plateau_pz0.txt"
+            np.savetxt(plateau_path, np.array([[1.0, 0.5, 0.05, 0.02]]))
+
+            input_path = tmp / "input_missing_qtmdwf.txt"
+            input_path.write_text(
+                "\n".join(
+                    [
+                        "demo_pz* 16 4 0.076",
+                        "fit_target ratio",
+                        "fit_component real",
+                        "nstates 1",
+                        "pzlist 0",
+                        "gmlist Z5",
+                        "etalist eta0",
+                        "Tdirlist plus minus",
+                        "bTlist 0",
+                        "bzlist 0",
+                        "tmin 0",
+                        "tmax 1",
+                        f"qtmdwf_h5 {tmp / 'missing_pz{pz}_O{gm}.h5'}",
+                        "dataset_path_template {gm}/{eta}/pz{pz}/{Tdir}/bT{bT}/bz{bz}",
+                        f"two_point_plateau_table {tmp / 'plateau_pz*.txt'}",
+                        f"c2pt {tmp / 'c2pt_pz*.csv'}",
+                        "fold_t none",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(FileNotFoundError) as ctx:
+                run_tmdwf_nstate_fit(input_path)
+
+        self.assertEqual(str(ctx.exception), str(tmp / "missing_pz0_OZ5.h5"))
 
     def test_explicit_tmax_overrides_inferred_plateau_filename_tmax(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -871,10 +1178,12 @@ class TMDWFFitTests(unittest.TestCase):
             run_tmdwf_nstate_fit(input_path)
             summary_path = tmp / "results" / "demo_pz0" / "demo_pz0_T5_eta0_bT0_real_1state_summary.txt"
             fit_path = tmp / "results" / "demo_pz0" / "tables" / "demo_pz0_T5_eta0_bT0_real_1state_fit.txt"
+            ratio_path = tmp / "results" / "demo_pz0" / "tables" / "demo_pz0_T5_eta0_bT0_ratio.txt"
             sample_path = tmp / "results" / "demo_pz0" / "samples" / "demo_pz0_T5_eta0_bT0_real_1state_samples.txt"
             curve_path = tmp / "results" / "demo_pz0" / "tables" / "demo_pz0_T5_eta0_bT0_real_1state_curve.txt"
             summary_text = summary_path.read_text(encoding="utf-8")
             fit_text = fit_path.read_text(encoding="utf-8")
+            ratio_text = ratio_path.read_text(encoding="utf-8")
             sample_text = sample_path.read_text(encoding="utf-8")
             curve_text = curve_path.read_text(encoding="utf-8")
 
@@ -884,14 +1193,608 @@ class TMDWFFitTests(unittest.TestCase):
         self.assertIn("shared_window_flag", fit_text.splitlines()[0])
         self.assertIn("reference_eta", fit_text.splitlines()[0])
         self.assertIn("plateau_tmax_used", fit_text.splitlines()[0])
+        self.assertIn("tsrange 0 5", ratio_text)
+        self.assertIn("tfit 2 5", ratio_text)
+        self.assertIn("shared_window_flag 0", ratio_text)
+        self.assertIn("two_point_plateau_table_resolved", ratio_text)
+        self.assertIn("two_point_tmax_source inferred", ratio_text)
+        self.assertIn("two_point_tmax_inferred 5", ratio_text)
+        ratio_header = next(line for line in ratio_text.splitlines() if line.startswith("bz\t"))
+        self.assertEqual(
+            ratio_header.split("\t"),
+            ["bz", "t", "in_fit_window", "ratio_real_mean", "ratio_real_err", "ratio_imag_mean", "ratio_imag_err"],
+        )
+        self.assertTrue(any(line.startswith("0\t") for line in ratio_text.splitlines() if "\t" in line))
+        self.assertTrue(any(line.startswith("1\t") for line in ratio_text.splitlines() if "\t" in line))
         self.assertTrue(any(line.startswith("0\t") for line in fit_text.splitlines()[1:]))
         self.assertTrue(any(line.startswith("1\t") for line in fit_text.splitlines()[1:]))
         self.assertEqual(sample_text.splitlines()[0].split("\t")[:3], ["bz", "sample_id", "success"])
         self.assertTrue(any(line.startswith("0\t") for line in sample_text.splitlines()[1:]))
         self.assertTrue(any(line.startswith("1\t") for line in sample_text.splitlines()[1:]))
-        self.assertEqual(curve_text.splitlines()[0].split("\t")[:2], ["bz", "t"])
+        self.assertEqual(
+            curve_text.splitlines()[0].split("\t"),
+            ["bz", "t", "in_fit_window", "fit_mean", "fit_p16", "fit_p84"],
+        )
         self.assertTrue(any(line.startswith("0\t") for line in curve_text.splitlines()[1:]))
         self.assertTrue(any(line.startswith("1\t") for line in curve_text.splitlines()[1:]))
+
+    def test_plot_outputs_are_written_when_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            nt = 12
+            ns = 16
+            times = np.arange(nt)
+            amplitudes = np.array([2.8])
+            energies = np.array([0.42])
+            matrix_elements = np.array([1.1])
+            denominator = evaluate_two_point_symmetric(times, amplitudes, energies, nt)
+            numerator = evaluate_tmdwf_numerator(times, amplitudes, energies, matrix_elements, nt, gm="T5", pz=0, ns=ns)
+
+            c2pt_csv = tmp / "c2pt_pz0.csv"
+            c2pt_data = np.column_stack([denominator for _ in range(8)])
+            with c2pt_csv.open("w", encoding="utf-8") as handle:
+                handle.write(",".join(["t"] + [f"cfg_{idx}" for idx in range(c2pt_data.shape[1])]) + "\n")
+                for t in range(nt):
+                    handle.write(str(t) + "," + ",".join(f"{value:.12e}" for value in c2pt_data[t]) + "\n")
+
+            plateau_path = tmp / "plateau_pz0_tmax5_plateau.txt"
+            np.savetxt(plateau_path, np.array([[amplitudes[0], energies[0], 0.05, 0.02]]))
+            h5_path = tmp / "tmdwf_pz0.h5"
+            with h5py.File(h5_path, "w") as handle:
+                for tdir in ("plus", "minus"):
+                    for bz in (0, 1, -1):
+                        handle.create_dataset(
+                            f"T5/eta0/pz0/{tdir}/bT0/bz{bz}",
+                            data=np.column_stack([numerator for _ in range(8)]).T,
+                        )
+
+            input_path = tmp / "input_tmdwf_plot.txt"
+            input_path.write_text(
+                "\n".join(
+                    [
+                        "demo_pz* 16 12 0.076",
+                        "fit_target ratio",
+                        "fit_component both",
+                        "nstates 1",
+                        "pzlist 0",
+                        "gmlist T5",
+                        "etalist eta0",
+                        "Tdirlist plus minus",
+                        "bTlist 0",
+                        "bzlist 0 1",
+                        "tmin 2",
+                        "tmax auto",
+                        f"qtmdwf_h5 {h5_path}",
+                        "dataset_path_template {gm}/{eta}/pz{pz}/{Tdir}/bT{bT}/bz{bz}",
+                        f"two_point_plateau_table {tmp / 'plateau_pz*_tmax#_plateau.txt'}",
+                        f"c2pt {tmp / 'c2pt_pz*.csv'}",
+                        "fold_t periodic",
+                        "plot true",
+                        f"results_dir {tmp / 'results'}",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            def fake_plot(output_path, *args, **kwargs):
+                output_path.write_text("fake plot\n", encoding="utf-8")
+                return output_path
+
+            with patch("lqcd_analysis.tmdwf.fit_nstate.plot_tmdwf_ratio_fit", side_effect=fake_plot):
+                with patch("lqcd_analysis.tmdwf.fit_nstate.plot_tmdwf_m0_from_fit_tables", side_effect=fake_plot):
+                    run_tmdwf_nstate_fit(input_path)
+
+            real_plot = tmp / "results" / "demo_pz0" / "plots" / "demo_pz0_T5_eta0_bT0_real_1state_ratio_fit.pdf"
+            imag_plot = tmp / "results" / "demo_pz0" / "plots" / "demo_pz0_T5_eta0_bT0_imag_1state_ratio_fit.pdf"
+            m0_plot = tmp / "results" / "demo_pz0" / "plots" / "demo_pz0_T5_eta0_real_1state_m0_vs_bz.pdf"
+            real_exists = real_plot.exists()
+            imag_exists = imag_plot.exists()
+            m0_exists = m0_plot.exists()
+
+        self.assertTrue(real_exists)
+        self.assertTrue(imag_exists)
+        self.assertTrue(m0_exists)
+
+    def test_plot_tmdwf_ratio_fit_uses_log_for_positive_real_series(self) -> None:
+        class FakeAxes:
+            def __init__(self):
+                self.scale_calls = []
+
+            def axvspan(self, *args, **kwargs):
+                return None
+
+            def errorbar(self, *args, **kwargs):
+                return None
+
+            def fill_between(self, *args, **kwargs):
+                return None
+
+            def plot(self, *args, **kwargs):
+                return None
+
+            def set_yscale(self, *args, **kwargs):
+                self.scale_calls.append((args, kwargs))
+
+            def set_xlabel(self, *args, **kwargs):
+                return None
+
+            def set_ylabel(self, *args, **kwargs):
+                return None
+
+            def set_title(self, *args, **kwargs):
+                return None
+
+            def legend(self, *args, **kwargs):
+                return None
+
+        class FakeFigure:
+            def tight_layout(self):
+                return None
+
+            def savefig(self, *args, **kwargs):
+                return None
+
+        fake_ax = FakeAxes()
+        fake_fig = FakeFigure()
+        fake_plt = type(
+            "FakePlt",
+            (),
+            {
+                "subplots": staticmethod(lambda **kwargs: (fake_fig, fake_ax)),
+                "close": staticmethod(lambda fig: None),
+            },
+        )()
+        series = (
+            RatioFitPlotSeries(
+                bz=0,
+                times=np.array([0, 1, 2]),
+                ratio_mean=np.array([1.0, 2.0, 3.0]),
+                ratio_err=np.array([0.1, 0.1, 0.1]),
+                fit_mean=np.array([1.1, 2.1, 3.1]),
+                fit_p16=np.array([1.0, 2.0, 3.0]),
+                fit_p84=np.array([1.2, 2.2, 3.2]),
+            ),
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("lqcd_analysis.tmdwf.plotting.prepare_matplotlib", return_value=fake_plt):
+                plot_tmdwf_ratio_fit(Path(tmpdir) / "plot.pdf", series, component="real", fit_window=(1, 2))
+        self.assertEqual(fake_ax.scale_calls, [(("log",), {})])
+
+    def test_plot_tmdwf_ratio_fit_uses_symlog_for_imag_or_nonpositive_real(self) -> None:
+        class FakeAxes:
+            def __init__(self):
+                self.scale_calls = []
+
+            def axvspan(self, *args, **kwargs):
+                return None
+
+            def errorbar(self, *args, **kwargs):
+                return None
+
+            def fill_between(self, *args, **kwargs):
+                return None
+
+            def plot(self, *args, **kwargs):
+                return None
+
+            def set_yscale(self, *args, **kwargs):
+                self.scale_calls.append((args, kwargs))
+
+            def set_xlabel(self, *args, **kwargs):
+                return None
+
+            def set_ylabel(self, *args, **kwargs):
+                return None
+
+            def set_title(self, *args, **kwargs):
+                return None
+
+            def legend(self, *args, **kwargs):
+                return None
+
+        class FakeFigure:
+            def tight_layout(self):
+                return None
+
+            def savefig(self, *args, **kwargs):
+                return None
+
+        def build_fake_plot():
+            fake_ax = FakeAxes()
+            fake_fig = FakeFigure()
+            fake_plt = type(
+                "FakePlt",
+                (),
+                {
+                    "subplots": staticmethod(lambda **kwargs: (fake_fig, fake_ax)),
+                    "close": staticmethod(lambda fig: None),
+                },
+            )()
+            return fake_ax, fake_plt
+
+        imag_series = (
+            RatioFitPlotSeries(
+                bz=0,
+                times=np.array([0, 1, 2]),
+                ratio_mean=np.array([0.1, -0.2, 0.3]),
+                ratio_err=np.array([0.01, 0.01, 0.01]),
+                fit_mean=np.array([0.11, -0.21, 0.31]),
+                fit_p16=np.array([0.09, -0.25, 0.29]),
+                fit_p84=np.array([0.13, -0.18, 0.33]),
+            ),
+        )
+        fake_ax, fake_plt = build_fake_plot()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("lqcd_analysis.tmdwf.plotting.prepare_matplotlib", return_value=fake_plt):
+                plot_tmdwf_ratio_fit(Path(tmpdir) / "imag.pdf", imag_series, component="imag", fit_window=(1, 2))
+        self.assertEqual(fake_ax.scale_calls[0][0][0], "symlog")
+        self.assertIn("linthresh", fake_ax.scale_calls[0][1])
+
+        nonpositive_real_series = (
+            RatioFitPlotSeries(
+                bz=0,
+                times=np.array([0, 1, 2]),
+                ratio_mean=np.array([1.0, 0.0, 3.0]),
+                ratio_err=np.array([0.1, 0.1, 0.1]),
+                fit_mean=np.array([1.1, 0.0, 3.1]),
+                fit_p16=np.array([1.0, -0.1, 3.0]),
+                fit_p84=np.array([1.2, 0.1, 3.2]),
+            ),
+        )
+        fake_ax2, fake_plt2 = build_fake_plot()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("lqcd_analysis.tmdwf.plotting.prepare_matplotlib", return_value=fake_plt2):
+                plot_tmdwf_ratio_fit(Path(tmpdir) / "real.pdf", nonpositive_real_series, component="real", fit_window=(1, 2))
+        self.assertEqual(fake_ax2.scale_calls[0][0][0], "symlog")
+        self.assertIn("linthresh", fake_ax2.scale_calls[0][1])
+
+    def test_write_tmdwf_plot_notebook(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            notebook = write_tmdwf_plot_notebook(
+                notebook_path=tmp / "notebook_plots" / "demo.ipynb",
+                notebook_output_dir=tmp / "notebook_plots" / "generated",
+                ratio_tables={0: tmp / "bT0_ratio.txt", 2: tmp / "bT2_ratio.txt"},
+                curve_tables={
+                    0: {"real": {1: tmp / "bT0_real1.txt", 2: tmp / "bT0_real2.txt"}, "imag": {1: tmp / "bT0_imag1.txt"}},
+                    2: {"real": {1: tmp / "bT2_real1.txt", 2: tmp / "bT2_real2.txt"}, "imag": {1: tmp / "bT2_imag1.txt"}},
+                },
+                fit_tables={
+                    0: {"real": {1: tmp / "bT0_real1_fit.txt", 2: tmp / "bT0_real2_fit.txt"}, "imag": {1: tmp / "bT0_imag1_fit.txt"}},
+                    2: {"real": {1: tmp / "bT2_real1_fit.txt", 2: tmp / "bT2_real2_fit.txt"}, "imag": {1: tmp / "bT2_imag1_fit.txt"}},
+                },
+                title="demo_pz0",
+                gm="T5",
+                eta="eta0",
+            )
+            self.assertTrue(notebook.exists())
+            payload = json.loads(notebook.read_text(encoding="utf-8"))
+            joined = "\n".join("".join(cell.get("source", [])) for cell in payload["cells"])
+        self.assertEqual(payload["nbformat"], 4)
+        self.assertIn("plot_tmdwf_grouped_outputs", joined)
+        self.assertIn("plot_tmdwf_m0_from_fit_tables", joined)
+        self.assertIn("ratio_tables =", joined)
+        self.assertIn("curve_tables =", joined)
+        self.assertIn("fit_tables =", joined)
+        self.assertIn("chosen_bT = available_bT[0]", joined)
+        self.assertIn("component = 'real'", joined)
+        self.assertIn("bz_values = None", joined)
+        self.assertIn("selected_bT_values = None", joined)
+        self.assertIn("m0_output_name = None", joined)
+
+    def test_plot_tmdwf_grouped_outputs_reads_grouped_tables(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            ratio_table = tmp / "ratio.txt"
+            curve_table = tmp / "curve.txt"
+            ratio_table.write_text(
+                "\n".join(
+                    [
+                        "tsrange 0 2",
+                        "tfit 1 2",
+                        "shared_window_flag 0",
+                        "two_point_plateau_table_resolved plateaus.txt",
+                        "two_point_tmax_source explicit",
+                        "two_point_tmax_inferred none",
+                        "bz\tt\tin_fit_window\tratio_real_mean\tratio_real_err\tratio_imag_mean\tratio_imag_err",
+                        "0\t0\t0\t1.0\t0.1\t0.2\t0.02",
+                        "0\t1\t1\t1.1\t0.1\t0.3\t0.02",
+                        "0\t2\t1\t1.2\t0.1\t0.4\t0.02",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            curve_table.write_text(
+                "\n".join(
+                    [
+                        "bz\tt\tin_fit_window\tfit_mean\tfit_p16\tfit_p84",
+                        "0\t0\t0\t0.2\t0.1\t0.3",
+                        "0\t1\t1\t0.3\t0.2\t0.4",
+                        "0\t2\t1\t0.4\t0.3\t0.5",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            captured = {}
+
+            def fake_plot(output_path, series, **kwargs):
+                captured["output_path"] = output_path
+                captured["series"] = series
+                captured["component"] = kwargs["component"]
+                captured["fit_window"] = kwargs["fit_window"]
+                captured["title"] = kwargs.get("title")
+                output_path.write_text("ok\n", encoding="utf-8")
+                return output_path
+
+            with patch("lqcd_analysis.tmdwf.plotting.plot_tmdwf_ratio_fit", side_effect=fake_plot):
+                output = plot_tmdwf_grouped_outputs(
+                    tmp / "out.pdf",
+                    ratio_table,
+                    curve_table,
+                    component="imag",
+                    title="demo",
+                )
+                output_exists = output.exists()
+
+        self.assertTrue(output_exists)
+        self.assertEqual(captured["component"], "imag")
+        self.assertEqual(captured["fit_window"], (1, 2))
+        self.assertEqual(captured["title"], "demo")
+        self.assertTrue(np.allclose(captured["series"][0].ratio_mean, np.array([0.2, 0.3, 0.4])))
+
+    def test_build_m0_series_from_fit_tables_sorts_bz_and_reads_columns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            fit_bt0 = tmp / "bT0_fit.txt"
+            fit_bt2 = tmp / "bT2_fit.txt"
+            header = "\t".join(
+                [
+                    "bz",
+                    "tmin",
+                    "tmax",
+                    "success_meanfit",
+                    "chi2_dof",
+                    "pvalue",
+                    "shared_window_flag",
+                    "reference_eta",
+                    "reference_bT",
+                    "reference_bz",
+                    "plateau_tmax_used",
+                    "m0_mean",
+                    "m0_err",
+                ]
+            )
+            fit_bt0.write_text(
+                "\n".join(
+                    [
+                        header,
+                        "2\t2\t5\t1\t1.0\t0.5\t0\tnone\t-1\t-1\t5\t1.20\t0.12",
+                        "0\t2\t5\t1\t1.0\t0.5\t0\tnone\t-1\t-1\t5\t1.00\t0.10",
+                        "1\t2\t5\t1\t1.0\t0.5\t0\tnone\t-1\t-1\t5\t1.10\t0.11",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            fit_bt2.write_text(
+                "\n".join(
+                    [
+                        header,
+                        "1\t2\t5\t1\t1.0\t0.5\t0\tnone\t-1\t-1\t5\t2.10\t0.21",
+                        "0\t2\t5\t1\t1.0\t0.5\t0\tnone\t-1\t-1\t5\t2.00\t0.20",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            series = _build_m0_series_from_fit_tables({2: fit_bt2, 0: fit_bt0})
+
+        self.assertEqual([item.bT for item in series], [0, 2])
+        self.assertTrue(np.array_equal(series[0].bz, np.array([0, 1, 2])))
+        self.assertTrue(np.allclose(series[0].m0_mean, np.array([1.00, 1.10, 1.20])))
+        self.assertTrue(np.allclose(series[0].m0_err, np.array([0.10, 0.11, 0.12])))
+        self.assertTrue(np.array_equal(series[1].bz, np.array([0, 1])))
+        self.assertTrue(np.allclose(series[1].m0_mean, np.array([2.00, 2.10])))
+        self.assertTrue(np.allclose(series[1].m0_err, np.array([0.20, 0.21])))
+
+    def test_plot_tmdwf_m0_from_fit_tables_builds_one_series_per_bt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            fit_bt0 = tmp / "bT0_fit.txt"
+            fit_bt2 = tmp / "bT2_fit.txt"
+            header = "\t".join(
+                [
+                    "bz",
+                    "tmin",
+                    "tmax",
+                    "success_meanfit",
+                    "chi2_dof",
+                    "pvalue",
+                    "shared_window_flag",
+                    "reference_eta",
+                    "reference_bT",
+                    "reference_bz",
+                    "plateau_tmax_used",
+                    "m0_mean",
+                    "m0_err",
+                ]
+            )
+            fit_bt0.write_text("\n".join([header, "1\t2\t5\t1\t1.0\t0.5\t0\tnone\t-1\t-1\t5\t1.10\t0.11"]), encoding="utf-8")
+            fit_bt2.write_text("\n".join([header, "0\t2\t5\t1\t1.0\t0.5\t0\tnone\t-1\t-1\t5\t2.00\t0.20"]), encoding="utf-8")
+
+            captured = {}
+
+            def fake_plot(output_path, series, **kwargs):
+                captured["output_path"] = output_path
+                captured["series"] = series
+                captured["kwargs"] = kwargs
+                output_path.write_text("ok\n", encoding="utf-8")
+                return output_path
+
+            with patch("lqcd_analysis.tmdwf.plotting.plot_tmdwf_m0_vs_bz", side_effect=fake_plot):
+                output = plot_tmdwf_m0_from_fit_tables(
+                    tmp / "m0_vs_bz.pdf",
+                    {0: fit_bt0, 2: fit_bt2},
+                    component="real",
+                    nstates=1,
+                    title="demo",
+                )
+                output_exists = output.exists()
+
+        self.assertTrue(output_exists)
+        self.assertEqual([item.bT for item in captured["series"]], [0, 2])
+        self.assertEqual(captured["kwargs"]["component"], "real")
+        self.assertEqual(captured["kwargs"]["nstates"], 1)
+        self.assertEqual(captured["kwargs"]["title"], "demo")
+
+    def test_workflow_writes_tmdwf_plot_notebook(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            nt = 12
+            ns = 16
+            times = np.arange(nt)
+            amplitudes = np.array([2.8])
+            energies = np.array([0.42])
+            matrix_elements = np.array([1.1])
+            denominator = evaluate_two_point_symmetric(times, amplitudes, energies, nt)
+            numerator = evaluate_tmdwf_numerator(times, amplitudes, energies, matrix_elements, nt, gm="T5", pz=0, ns=ns)
+
+            c2pt_csv = tmp / "c2pt_pz0.csv"
+            c2pt_data = np.column_stack([denominator for _ in range(8)])
+            with c2pt_csv.open("w", encoding="utf-8") as handle:
+                handle.write(",".join(["t"] + [f"cfg_{idx}" for idx in range(c2pt_data.shape[1])]) + "\n")
+                for t in range(nt):
+                    handle.write(str(t) + "," + ",".join(f"{value:.12e}" for value in c2pt_data[t]) + "\n")
+
+            np.savetxt(tmp / "plateau_pz0_tmax5_plateau.txt", np.array([[amplitudes[0], energies[0], 0.05, 0.02]]))
+            h5_path = tmp / "tmdwf_pz0.h5"
+            with h5py.File(h5_path, "w") as handle:
+                for tdir in ("plus", "minus"):
+                    for bz in (0, 1, -1):
+                        handle.create_dataset(
+                            f"T5/eta0/pz0/{tdir}/bT0/bz{bz}",
+                            data=np.column_stack([numerator for _ in range(8)]).T,
+                        )
+
+            input_path = tmp / "input_tmdwf_notebook.txt"
+            input_path.write_text(
+                "\n".join(
+                    [
+                        "demo_pz* 16 12 0.076",
+                        "fit_target ratio",
+                        "fit_component both",
+                        "nstates 1",
+                        "pzlist 0",
+                        "gmlist T5",
+                        "etalist eta0",
+                        "Tdirlist plus minus",
+                        "bTlist 0",
+                        "bzlist 0 1",
+                        "tmin 2",
+                        "tmax auto",
+                        f"qtmdwf_h5 {h5_path}",
+                        "dataset_path_template {gm}/{eta}/pz{pz}/{Tdir}/bT{bT}/bz{bz}",
+                        f"two_point_plateau_table {tmp / 'plateau_pz*_tmax#_plateau.txt'}",
+                        f"c2pt {tmp / 'c2pt_pz*.csv'}",
+                        "fold_t periodic",
+                        f"results_dir {tmp / 'results'}",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            run_tmdwf_nstate_fit(input_path)
+            notebook = tmp / "results" / "notebook_plots" / "demo_pz0" / "demo_pz0_T5_eta0_tmdwf_plots.ipynb"
+            notebook_exists = notebook.exists()
+            payload = json.loads(notebook.read_text(encoding="utf-8"))
+            joined = "\n".join("".join(cell.get("source", [])) for cell in payload["cells"])
+
+        self.assertTrue(notebook_exists)
+        self.assertEqual(payload["nbformat"], 4)
+        self.assertIn("plot_tmdwf_grouped_outputs", joined)
+        self.assertIn("plot_tmdwf_m0_from_fit_tables", joined)
+        self.assertIn("demo_pz0_T5_eta0_bT0_ratio.txt", joined)
+        self.assertIn("demo_pz0_T5_eta0_bT0_real_1state_fit.txt", joined)
+        self.assertIn("demo_pz0_T5_eta0_bT0_imag_1state_fit.txt", joined)
+        self.assertIn("demo_pz0_T5_eta0_bT0_real_1state_curve.txt", joined)
+        self.assertIn("demo_pz0_T5_eta0_bT0_imag_1state_curve.txt", joined)
+
+    def test_workflow_groups_m0_vs_bz_plot_across_bt_fit_tables(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            nt = 12
+            ns = 16
+            times = np.arange(nt)
+            amplitudes = np.array([2.8])
+            energies = np.array([0.42])
+            matrix_elements = np.array([1.1])
+            denominator = evaluate_two_point_symmetric(times, amplitudes, energies, nt)
+            numerator = evaluate_tmdwf_numerator(times, amplitudes, energies, matrix_elements, nt, gm="T5", pz=0, ns=ns)
+
+            c2pt_csv = tmp / "c2pt_pz0.csv"
+            c2pt_data = np.column_stack([denominator for _ in range(8)])
+            with c2pt_csv.open("w", encoding="utf-8") as handle:
+                handle.write(",".join(["t"] + [f"cfg_{idx}" for idx in range(c2pt_data.shape[1])]) + "\n")
+                for t in range(nt):
+                    handle.write(str(t) + "," + ",".join(f"{value:.12e}" for value in c2pt_data[t]) + "\n")
+
+            np.savetxt(tmp / "plateau_pz0_tmax5_plateau.txt", np.array([[amplitudes[0], energies[0], 0.05, 0.02]]))
+            h5_path = tmp / "tmdwf_pz0.h5"
+            with h5py.File(h5_path, "w") as handle:
+                for bT in (0, 1):
+                    for tdir in ("plus", "minus"):
+                        for bz in (0, 1, -1):
+                            handle.create_dataset(
+                                f"T5/eta0/pz0/{tdir}/bT{bT}/bz{bz}",
+                                data=np.column_stack([numerator for _ in range(8)]).T,
+                            )
+
+            input_path = tmp / "input_tmdwf_m0_group.txt"
+            input_path.write_text(
+                "\n".join(
+                    [
+                        "demo_pz* 16 12 0.076",
+                        "fit_target ratio",
+                        "fit_component real",
+                        "nstates 1",
+                        "pzlist 0",
+                        "gmlist T5",
+                        "etalist eta0",
+                        "Tdirlist plus minus",
+                        "bTlist 0 1",
+                        "bzlist 0 1",
+                        "tmin 2",
+                        "tmax auto",
+                        f"qtmdwf_h5 {h5_path}",
+                        "dataset_path_template {gm}/{eta}/pz{pz}/{Tdir}/bT{bT}/bz{bz}",
+                        f"two_point_plateau_table {tmp / 'plateau_pz*_tmax#_plateau.txt'}",
+                        f"c2pt {tmp / 'c2pt_pz*.csv'}",
+                        "fold_t periodic",
+                        "plot true",
+                        f"results_dir {tmp / 'results'}",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            captured = {}
+
+            def fake_ratio_plot(output_path, *args, **kwargs):
+                output_path.write_text("ratio\n", encoding="utf-8")
+                return output_path
+
+            def fake_m0_plot(output_path, fit_tables_by_bT, **kwargs):
+                captured["keys"] = sorted(fit_tables_by_bT.keys())
+                captured["paths"] = [Path(value).name for value in fit_tables_by_bT.values()]
+                output_path.write_text("m0\n", encoding="utf-8")
+                return output_path
+
+            with patch("lqcd_analysis.tmdwf.fit_nstate.plot_tmdwf_ratio_fit", side_effect=fake_ratio_plot):
+                with patch("lqcd_analysis.tmdwf.fit_nstate.plot_tmdwf_m0_from_fit_tables", side_effect=fake_m0_plot):
+                    run_tmdwf_nstate_fit(input_path)
+
+        self.assertEqual(captured["keys"], [0, 1])
+        self.assertIn("demo_pz0_T5_eta0_bT0_real_1state_fit.txt", captured["paths"])
+        self.assertIn("demo_pz0_T5_eta0_bT1_real_1state_fit.txt", captured["paths"])
 
     def test_plateau_resolution_prints_once_per_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

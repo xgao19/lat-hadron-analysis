@@ -18,9 +18,11 @@ from .io import (
     _load_tmdwf_correlator_from_handle,
     expand_template,
     load_two_point_plateau_values,
+    resolve_qtmdwf_h5_path,
     resolve_two_point_plateau_table,
 )
 from .models import evaluate_tmdwf_ratio, normalize_tmdwf_operator
+from .plotting import RatioFitPlotSeries, plot_tmdwf_m0_from_fit_tables, plot_tmdwf_ratio_fit, write_tmdwf_plot_notebook
 
 
 @dataclass(frozen=True)
@@ -121,6 +123,23 @@ class TMDWFOutputRecord:
     two_point_plateau_table_resolved: str
     two_point_tmax_source: str
     two_point_tmax_inferred: str
+    tsrange_start: int
+    tsrange_end: int
+    ratio_samples: np.ndarray
+
+
+@dataclass(frozen=True)
+class TMDWFRatioRecord:
+    bz: int
+    tmin: int
+    tmax: int
+    shared_window_flag: int
+    two_point_plateau_table_resolved: str
+    two_point_tmax_source: str
+    two_point_tmax_inferred: str
+    tsrange_start: int
+    tsrange_end: int
+    ratio_samples: np.ndarray
 
 
 def parse_optional_int(value: str) -> int | None:
@@ -417,6 +436,25 @@ def summarize_parameter_samples(samples: np.ndarray) -> tuple[tuple[float, ...],
     return tuple(means), tuple(errors)
 
 
+def _summarize_bootstrap_series(samples: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    values = np.asarray(samples, dtype=float)
+    if values.ndim != 2:
+        raise ValueError("bootstrap summary samples must be two-dimensional")
+    p16 = np.percentile(values, 16.0, axis=0)
+    p84 = np.percentile(values, 84.0, axis=0)
+    center = 0.5 * (p16 + p84)
+    return center, p16, p84
+
+
+def _select_curve_component(values: np.ndarray, component: str) -> np.ndarray:
+    curve_values = np.asarray(values)
+    if component == "real":
+        return np.asarray(np.real(curve_values), dtype=float)
+    if component == "imag":
+        return np.asarray(np.imag(curve_values), dtype=float)
+    raise ValueError("component must be real or imag")
+
+
 def scan_reference_tmin_rows(
     ratio_samples: np.ndarray,
     amplitudes: np.ndarray,
@@ -580,15 +618,82 @@ def _write_shared_window_summary(
     return path
 
 
+def _write_ratio_outputs(
+    output_root: Path,
+    stem: str,
+    records: tuple[TMDWFRatioRecord, ...],
+) -> Path:
+    tables_dir = output_root / "tables"
+    tables_dir.mkdir(parents=True, exist_ok=True)
+    if not records:
+        raise ValueError("ratio output requires at least one record")
+    path = tables_dir / f"{stem}_ratio.txt"
+    metadata = records[0]
+    with path.open("w", encoding="utf-8") as handle:
+        handle.write(f"tsrange {metadata.tsrange_start} {metadata.tsrange_end}\n")
+        handle.write(f"tfit {metadata.tmin} {metadata.tmax}\n")
+        handle.write(f"shared_window_flag {metadata.shared_window_flag}\n")
+        handle.write(f"two_point_plateau_table_resolved {metadata.two_point_plateau_table_resolved}\n")
+        handle.write(f"two_point_tmax_source {metadata.two_point_tmax_source}\n")
+        handle.write(f"two_point_tmax_inferred {metadata.two_point_tmax_inferred}\n")
+        handle.write(
+            "\t".join(
+                [
+                    "bz",
+                    "t",
+                    "in_fit_window",
+                    "ratio_real_mean",
+                    "ratio_real_err",
+                    "ratio_imag_mean",
+                    "ratio_imag_err",
+                ]
+            )
+            + "\n"
+        )
+        for record in records:
+            times = np.arange(record.tsrange_start, record.tsrange_end + 1, dtype=int)
+            ratio_real_mean, ratio_real_p16, ratio_real_p84 = _summarize_bootstrap_series(np.real(record.ratio_samples))
+            ratio_imag_mean, ratio_imag_p16, ratio_imag_p84 = _summarize_bootstrap_series(np.imag(record.ratio_samples))
+            ratio_real_err = 0.5 * (ratio_real_p84 - ratio_real_p16)
+            ratio_imag_err = 0.5 * (ratio_imag_p84 - ratio_imag_p16)
+            for t, real_mean, real_err, imag_mean, imag_err in zip(
+                times,
+                ratio_real_mean,
+                ratio_real_err,
+                ratio_imag_mean,
+                ratio_imag_err,
+                strict=True,
+            ):
+                handle.write(
+                    "\t".join(
+                        [
+                            str(record.bz),
+                            str(int(t)),
+                            str(int(record.tmin <= int(t) <= record.tmax)),
+                            f"{real_mean:.10e}",
+                            f"{real_err:.10e}",
+                            f"{imag_mean:.10e}",
+                            f"{imag_err:.10e}",
+                        ]
+                    )
+                    + "\n"
+                )
+    return path
+
+
 def _write_component_outputs(
     output_root: Path,
     stem: str,
     records: tuple[TMDWFOutputRecord, ...],
     nt: int,
+    *,
+    make_plots: bool,
 ) -> list[Path]:
     tables_dir = output_root / "tables"
+    plots_dir = output_root / "plots"
     samples_dir = output_root / "samples"
     tables_dir.mkdir(parents=True, exist_ok=True)
+    plots_dir.mkdir(parents=True, exist_ok=True)
     samples_dir.mkdir(parents=True, exist_ok=True)
     if not records:
         return []
@@ -598,6 +703,7 @@ def _write_component_outputs(
     table_path = tables_dir / f"{stem}_{component}_{nstates}state_fit.txt"
     sample_path = samples_dir / f"{stem}_{component}_{nstates}state_samples.txt"
     curve_path = tables_dir / f"{stem}_{component}_{nstates}state_curve.txt"
+    plot_path = plots_dir / f"{stem}_{component}_{nstates}state_ratio_fit.pdf"
 
     with summary_path.open("w", encoding="utf-8") as handle:
         handle.write(f"component {component}\n")
@@ -658,31 +764,45 @@ def _write_component_outputs(
                 handle.write("\t".join(row) + "\n")
 
     with curve_path.open("w", encoding="utf-8") as handle:
-        handle.write("\t".join(["bz", "t", "fit_mean", "fit_p16", "fit_p84"]) + "\n")
+        handle.write("\t".join(["bz", "t", "in_fit_window", "fit_mean", "fit_p16", "fit_p84"]) + "\n")
         for record in records:
-            params_mean, _ = summarize_parameter_samples(record.sample_params)
-            times = np.arange(record.tmin, record.tmax + 1)
-            center = evaluate_tmdwf_ratio(
-                times,
-                record.amplitudes,
-                record.energies,
-                np.asarray(params_mean),
-                nt,
-                gm=record.gm,
-                pz=record.pz,
-                ns=record.ns,
-            )
+            times = np.arange(record.tsrange_start, record.tsrange_end + 1, dtype=int)
             valid_samples = record.sample_params[np.all(np.isfinite(record.sample_params), axis=1)]
             if len(valid_samples) > 0:
-                curves = np.array(
+                component_curves = np.array(
                     [
-                        evaluate_tmdwf_ratio(times, record.amplitudes, record.energies, params, nt, gm=record.gm, pz=record.pz, ns=record.ns)
+                        _select_curve_component(
+                            evaluate_tmdwf_ratio(
+                                times,
+                                record.amplitudes,
+                                record.energies,
+                                params,
+                                nt,
+                                gm=record.gm,
+                                pz=record.pz,
+                                ns=record.ns,
+                            ),
+                            component,
+                        )
                         for params in valid_samples
                     ]
                 )
-                low = np.percentile(curves, 16.0, axis=0)
-                high = np.percentile(curves, 84.0, axis=0)
+                center, low, high = _summarize_bootstrap_series(component_curves)
             else:
+                params_mean, _ = summarize_parameter_samples(record.sample_params)
+                center = _select_curve_component(
+                    evaluate_tmdwf_ratio(
+                        times,
+                        record.amplitudes,
+                        record.energies,
+                        np.asarray(params_mean),
+                        nt,
+                        gm=record.gm,
+                        pz=record.pz,
+                        ns=record.ns,
+                    ),
+                    component,
+                )
                 low = np.full_like(center, np.nan)
                 high = np.full_like(center, np.nan)
             for t, mean_value, low_value, high_value in zip(times, center, low, high, strict=True):
@@ -691,6 +811,7 @@ def _write_component_outputs(
                         [
                             str(record.bz),
                             str(int(t)),
+                            str(int(record.tmin <= int(t) <= record.tmax)),
                             f"{mean_value:.10e}",
                             f"{low_value:.10e}",
                             f"{high_value:.10e}",
@@ -698,7 +819,78 @@ def _write_component_outputs(
                     )
                     + "\n"
                 )
-    return [summary_path, table_path, sample_path, curve_path]
+    outputs = [summary_path, table_path, sample_path, curve_path]
+    if make_plots:
+        plot_series: list[RatioFitPlotSeries] = []
+        for record in records:
+            times = np.arange(record.tsrange_start, record.tsrange_end + 1, dtype=int)
+            ratio_real_mean, ratio_real_p16, ratio_real_p84 = _summarize_bootstrap_series(np.real(record.ratio_samples))
+            ratio_imag_mean, ratio_imag_p16, ratio_imag_p84 = _summarize_bootstrap_series(np.imag(record.ratio_samples))
+            ratio_mean = ratio_real_mean if component == "real" else ratio_imag_mean
+            ratio_err = (
+                0.5 * (ratio_real_p84 - ratio_real_p16)
+                if component == "real"
+                else 0.5 * (ratio_imag_p84 - ratio_imag_p16)
+            )
+            valid_samples = record.sample_params[np.all(np.isfinite(record.sample_params), axis=1)]
+            if len(valid_samples) > 0:
+                component_curves = np.array(
+                    [
+                        _select_curve_component(
+                            evaluate_tmdwf_ratio(
+                                times,
+                                record.amplitudes,
+                                record.energies,
+                                params,
+                                nt,
+                                gm=record.gm,
+                                pz=record.pz,
+                                ns=record.ns,
+                            ),
+                            component,
+                        )
+                        for params in valid_samples
+                    ]
+                )
+                fit_mean, fit_p16, fit_p84 = _summarize_bootstrap_series(component_curves)
+            else:
+                params_mean, _ = summarize_parameter_samples(record.sample_params)
+                fit_mean = _select_curve_component(
+                    evaluate_tmdwf_ratio(
+                        times,
+                        record.amplitudes,
+                        record.energies,
+                        np.asarray(params_mean),
+                        nt,
+                        gm=record.gm,
+                        pz=record.pz,
+                        ns=record.ns,
+                    ),
+                    component,
+                )
+                fit_p16 = np.full_like(fit_mean, np.nan)
+                fit_p84 = np.full_like(fit_mean, np.nan)
+            plot_series.append(
+                RatioFitPlotSeries(
+                    bz=record.bz,
+                    times=times,
+                    ratio_mean=np.asarray(ratio_mean, dtype=float),
+                    ratio_err=np.asarray(ratio_err, dtype=float),
+                    fit_mean=np.asarray(fit_mean, dtype=float),
+                    fit_p16=np.asarray(fit_p16, dtype=float),
+                    fit_p84=np.asarray(fit_p84, dtype=float),
+                )
+            )
+        outputs.append(
+            plot_tmdwf_ratio_fit(
+                plot_path,
+                tuple(plot_series),
+                component=component,
+                fit_window=(records[0].tmin, records[0].tmax),
+                title=f"{stem} {component} {nstates}state",
+            )
+        )
+    return outputs
 
 
 def run_tmdwf_nstate_fit(
@@ -716,7 +908,6 @@ def run_tmdwf_nstate_fit(
         c2pt_processed = apply_fold_t(c2pt_raw, spec.nt, spec.fold_t)
         t0, t1 = spec.tsrange
         c2pt_selected = c2pt_processed[:, t0 : t1 + 1]
-        qtmdwf_path = expand_template(spec.qtmdwf_h5, pz=pz)
 
         dataset_root = spec.results_dir / title
         dataset_root.mkdir(parents=True, exist_ok=True)
@@ -748,13 +939,19 @@ def run_tmdwf_nstate_fit(
         except ModuleNotFoundError as exc:  # pragma: no cover
             raise ModuleNotFoundError("h5py is required to load TMDWF HDF5 data") from exc
 
-        with h5py.File(qtmdwf_path, "r") as qtmdwf_handle:
-            for gm in spec.gmlist:
+        for gm in spec.gmlist:
+            qtmdwf_path = resolve_qtmdwf_h5_path(spec.qtmdwf_h5, pz=pz, gm=gm)
+            with h5py.File(qtmdwf_path, "r") as qtmdwf_handle:
                 shared_windows: dict[int, tuple[int, int, str]] = {}
                 reference_combo = (spec.etalist[0], 0, 0) if spec.etalist else None
                 for eta in spec.etalist:
+                    eta_ratio_tables: dict[int, Path] = {}
+                    eta_curve_tables: dict[int, dict[str, dict[int, Path]]] = {}
+                    eta_fit_tables: dict[int, dict[str, dict[int, Path]]] = {}
                     for bT in spec.bTlist:
                         grouped_records: dict[tuple[str, int], list[TMDWFOutputRecord]] = {}
+                        grouped_ratio_records: list[TMDWFRatioRecord] = []
+                        primary_nstate = spec.nstates[0]
                         for bz in spec.bzlist:
                             numerator_selected = _load_tmdwf_correlator_from_handle(
                                 qtmdwf_handle,
@@ -861,6 +1058,21 @@ def run_tmdwf_nstate_fit(
                                     reference_eta_value = spec.etalist[0]
                                     reference_bT_value = 0
                                     reference_bz_value = 0
+                                if nstates == primary_nstate:
+                                    grouped_ratio_records.append(
+                                        TMDWFRatioRecord(
+                                            bz=bz,
+                                            tmin=fit_tmin,
+                                            tmax=fit_tmax,
+                                            shared_window_flag=shared_window_flag,
+                                            two_point_plateau_table_resolved=str(plateau_path),
+                                            two_point_tmax_source="explicit" if spec.tmax is not None else "inferred",
+                                            two_point_tmax_inferred="none" if inferred_tmax is None else str(inferred_tmax),
+                                            tsrange_start=t0,
+                                            tsrange_end=t1,
+                                            ratio_samples=ratio_samples,
+                                        )
+                                    )
                                 for component in _component_list(spec.fit_component):
                                     fit_result, sample_params = fit_tmdwf_component(
                                         ratio_samples,
@@ -896,8 +1108,16 @@ def run_tmdwf_nstate_fit(
                                             two_point_plateau_table_resolved=str(plateau_path),
                                             two_point_tmax_source="explicit" if spec.tmax is not None else "inferred",
                                             two_point_tmax_inferred="none" if inferred_tmax is None else str(inferred_tmax),
+                                            tsrange_start=t0,
+                                            tsrange_end=t1,
+                                            ratio_samples=ratio_samples,
                                         )
                                     )
+                        ratio_table_path = _write_ratio_outputs(dataset_root, combo_stem, tuple(grouped_ratio_records))
+                        outputs.append(ratio_table_path)
+                        eta_ratio_tables[bT] = ratio_table_path
+                        eta_curve_tables[bT] = {}
+                        eta_fit_tables[bT] = {}
                         for (component, nstates), records in grouped_records.items():
                             outputs.extend(
                                 _write_component_outputs(
@@ -905,6 +1125,48 @@ def run_tmdwf_nstate_fit(
                                     combo_stem,
                                     tuple(records),
                                     spec.nt,
+                                    make_plots=spec.make_plots,
                                 )
                             )
+                            eta_curve_tables[bT].setdefault(component, {})[nstates] = (
+                                dataset_root / "tables" / f"{combo_stem}_{component}_{nstates}state_curve.txt"
+                            )
+                            eta_fit_tables[bT].setdefault(component, {})[nstates] = (
+                                dataset_root / "tables" / f"{combo_stem}_{component}_{nstates}state_fit.txt"
+                            )
+                    if spec.make_plots:
+                        plots_dir = dataset_root / "plots"
+                        plots_dir.mkdir(parents=True, exist_ok=True)
+                        for component in _component_list(spec.fit_component):
+                            for nstates in spec.nstates:
+                                fit_tables_by_bT = {
+                                    bT: eta_fit_tables[bT][component][nstates]
+                                    for bT in spec.bTlist
+                                    if component in eta_fit_tables[bT] and nstates in eta_fit_tables[bT][component]
+                                }
+                                if fit_tables_by_bT:
+                                    outputs.append(
+                                        plot_tmdwf_m0_from_fit_tables(
+                                            plots_dir / f"{title}_{sanitize_token(gm)}_{sanitize_token(eta)}_{component}_{nstates}state_m0_vs_bz.pdf",
+                                            fit_tables_by_bT,
+                                            component=component,
+                                            nstates=nstates,
+                                            title=f"{title} {gm} {eta} {component} {nstates}state m0 vs bz",
+                                        )
+                                    )
+                    notebook_root = spec.results_dir / "notebook_plots" / title
+                    notebook_generated = notebook_root / f"{title}_{sanitize_token(gm)}_{sanitize_token(eta)}"
+                    notebook_path = notebook_root / f"{title}_{sanitize_token(gm)}_{sanitize_token(eta)}_tmdwf_plots.ipynb"
+                    outputs.append(
+                        write_tmdwf_plot_notebook(
+                            notebook_path=notebook_path,
+                            notebook_output_dir=notebook_generated,
+                            ratio_tables=eta_ratio_tables,
+                            curve_tables=eta_curve_tables,
+                            fit_tables=eta_fit_tables,
+                            title=title,
+                            gm=gm,
+                            eta=eta,
+                        )
+                    )
     return outputs

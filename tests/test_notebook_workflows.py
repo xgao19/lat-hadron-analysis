@@ -171,6 +171,12 @@ class NotebookWorkflowTests(unittest.TestCase):
         self.assertIn("min_fit_dof 2", text)
         self.assertIn("results_dir examples/outputs/tmdwf_demo", text)
 
+    def test_render_tmdwf_text_preserves_qtmdwf_gm_placeholder(self) -> None:
+        config = dict(self.tmdwf_config)
+        config["qtmdwf_h5"] = "/tmp/qtmdwf_pz{pz}_O{gm}.h5"
+        text = render_tmdwf_fit_input_text(config)
+        self.assertIn("qtmdwf_h5 /tmp/qtmdwf_pz{pz}_O{gm}.h5", text)
+
     def test_render_tmdwf_text_without_tsrange(self) -> None:
         config = dict(self.tmdwf_config)
         config.pop("tsrange")

@@ -247,6 +247,8 @@ def render_tmdwf_fit_input_text(config: dict[str, Any]) -> str:
                 if "tmax" in config and config["tmax"] is not None
                 else []
             ),
+            # qtmdwf_h5 is passed through unchanged so notebook configs may use
+            # either {pz}/{gm} placeholders or the legacy * pz wildcard.
             f"qtmdwf_h5 {_as_scalar_string(config['qtmdwf_h5'])}",
             f"dataset_path_template {_as_scalar_string(config['dataset_path_template'])}",
             f"two_point_plateau_table {_as_scalar_string(config['two_point_plateau_table'])}",

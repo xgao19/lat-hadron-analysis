@@ -23,6 +23,13 @@ def expand_template(pattern: str, **kwargs: object) -> str:
     return text
 
 
+def resolve_qtmdwf_h5_path(path_pattern: str | Path, *, pz: int, gm: str) -> Path:
+    resolved = Path(expand_template(str(path_pattern), pz=pz, gm=gm))
+    if not resolved.exists():
+        raise FileNotFoundError(resolved)
+    return resolved
+
+
 def load_two_point_plateau_values(path: str | Path, nstates: int) -> tuple[np.ndarray, np.ndarray]:
     table = np.loadtxt(path, ndmin=2)
     row = np.atleast_2d(np.asarray(table, dtype=float))[0]
@@ -108,6 +115,20 @@ def fold_antisymmetric_complex(values: np.ndarray, nt: int) -> np.ndarray:
     return folded
 
 
+def fold_symmetric_complex(values: np.ndarray, nt: int) -> np.ndarray:
+    correlators = np.asarray(values, dtype=np.complex128)
+    if correlators.ndim != 2 or correlators.shape[1] != nt:
+        raise ValueError("complex correlators must have shape (n_cfg, Nt)")
+    folded_extent = nt // 2 + 1
+    folded = correlators[:, :folded_extent].copy()
+    for t in range(1, folded_extent):
+        partner = (nt - t) % nt
+        if partner == t:
+            continue
+        folded[:, t] = 0.5 * (correlators[:, t] + correlators[:, partner])
+    return folded
+
+
 def load_tmdwf_correlator(
     h5_path: str | Path,
     dataset_path_template: str,
@@ -181,4 +202,4 @@ def _load_tmdwf_correlator_from_handle(
         tdir_blocks.append(averaged_bz)
 
     averaged = np.mean(np.stack(tdir_blocks, axis=0), axis=0)
-    return fold_antisymmetric_complex(apply_tmdwf_preprocessing(averaged, nt, gm), nt)
+    return fold_symmetric_complex(apply_tmdwf_preprocessing(averaged, nt, gm), nt)
