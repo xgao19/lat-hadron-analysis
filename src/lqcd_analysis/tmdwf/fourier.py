@@ -6,7 +6,8 @@ from pathlib import Path
 import numpy as np
 from scipy.interpolate import interp1d
 
-from ..common.utils import robust_mean_and_error
+from .fit_nstate import _parse_int_list_or_range
+from .io import expand_template
 from ..two_point.plotting import prepare_matplotlib, save_plot_status
 
 DEFAULT_X_VALUES = np.linspace(-0.5, 1.5, 201)
@@ -16,16 +17,17 @@ DEFAULT_INTERPOLATION_KIND = "cubic"
 
 @dataclass(frozen=True)
 class TMDWFFourierInput:
-    title: str
-    stem: str
-    pz: int
+    title_pattern: str
+    input_root: Path
     ns: int
     lattice_spacing_fm: float
+    pzlist: tuple[int, ...]
+    gmlist: tuple[str, ...]
+    etalist: tuple[str, ...]
+    bTlist: tuple[int, ...]
     component: str
     nstates: int
-    bT: int
-    fit_table: Path
-    sample_table: Path
+    normalization_mode: str
     x_values: np.ndarray
     zstep_fm: float
     interpolation_kind: str
@@ -50,22 +52,29 @@ def parse_tmdwf_fourier_input(
             entries[tokens[0]] = tokens[1:]
 
     required = {
-        "pz",
+        "title_pattern",
+        "input_root",
         "ns",
         "lattice_spacing_fm",
+        "pzlist",
+        "gmlist",
+        "etalist",
         "component",
         "nstates",
-        "bT",
-        "fit_table",
-        "sample_table",
+        "normalization_mode",
     }
     missing = required - entries.keys()
     if missing:
         raise ValueError(f"missing required keys in {file_path}: {sorted(missing)}")
+    if "bTlist" not in entries and "bTrange" not in entries:
+        raise ValueError(f"missing required key in {file_path}: bTlist or bTrange")
 
     component = entries["component"][0].lower()
     if component not in {"real", "imag"}:
         raise ValueError("component must be one of: real, imag")
+    normalization_mode = entries["normalization_mode"][0].lower()
+    if normalization_mode not in {"raw", "mode1", "mode2", "mode3"}:
+        raise ValueError("normalization_mode must be one of: raw, mode1, mode2, mode3")
 
     if "x_values" in entries:
         x_values = np.array([float(token) for token in entries["x_values"]], dtype=float)
@@ -84,33 +93,63 @@ def parse_tmdwf_fourier_input(
     if zstep_fm <= 0.0:
         raise ValueError("zstep_fm must be positive")
 
-    fit_table = Path(entries["fit_table"][0])
-    sample_table = Path(entries["sample_table"][0])
-    if not fit_table.exists():
-        raise FileNotFoundError(f"TMDWF Fourier fit table does not exist: {fit_table}")
-    if not sample_table.exists():
-        raise FileNotFoundError(f"TMDWF Fourier sample table does not exist: {sample_table}")
+    input_root = Path(entries["input_root"][0])
+    if not input_root.exists():
+        raise FileNotFoundError(f"TMDWF Fourier input_root does not exist: {input_root}")
 
-    stem = entries.get("stem", [f"{entries.get('title', ['tmdwf'])[0]}_bT{int(entries['bT'][0])}"])[0]
-    title = entries.get("title", [stem])[0]
     output_root = Path(results_dir) if results_dir is not None else Path(entries.get("results_dir", [file_path.parent / "results_tmdwf_fourier"])[0])
 
     return TMDWFFourierInput(
-        title=title,
-        stem=stem,
-        pz=int(entries["pz"][0]),
+        title_pattern=entries["title_pattern"][0],
+        input_root=input_root,
         ns=int(entries["ns"][0]),
         lattice_spacing_fm=float(entries["lattice_spacing_fm"][0]),
+        pzlist=tuple(int(item) for item in entries["pzlist"]),
+        gmlist=tuple(entries["gmlist"]),
+        etalist=tuple(entries["etalist"]),
+        bTlist=_parse_int_list_or_range(entries, "bTlist", "bTrange"),
         component=component,
         nstates=int(entries["nstates"][0]),
-        bT=int(entries["bT"][0]),
-        fit_table=fit_table,
-        sample_table=sample_table,
+        normalization_mode=normalization_mode,
         x_values=x_values,
         zstep_fm=zstep_fm,
         interpolation_kind=entries.get("interpolation_kind", [DEFAULT_INTERPOLATION_KIND])[0],
         make_plots=entries.get("plot", ["true"])[0].lower() not in {"false", "0", "no"},
         results_dir=output_root,
+    )
+
+
+def _resolve_fit_sample_paths(
+    input_root: Path,
+    title: str,
+    gm: str,
+    eta: str,
+    bT: int,
+    component: str,
+    nstates: int,
+    normalization_mode: str,
+) -> tuple[Path, Path]:
+    title_root = input_root / title
+    tables_dir = title_root / "tables"
+    samples_dir = title_root / "samples"
+    if not tables_dir.exists():
+        raise FileNotFoundError(f"TMDWF Fourier tables directory does not exist: {tables_dir}")
+    if not samples_dir.exists():
+        raise FileNotFoundError(f"TMDWF Fourier samples directory does not exist: {samples_dir}")
+
+    if normalization_mode == "raw":
+        exact_stem = f"{title}_{gm}_{eta}_bT{bT}_{component}_{nstates}state"
+    else:
+        exact_stem = f"{title}_{gm}_{eta}_bT{bT}_{normalization_mode}_{component}_{nstates}state"
+    exact_fit = tables_dir / f"{exact_stem}_fit.txt"
+    exact_sample = samples_dir / f"{exact_stem}_samples.txt"
+    if exact_fit.exists() and exact_sample.exists():
+        return exact_fit, exact_sample
+    raise FileNotFoundError(
+        "TMDWF Fourier "
+        f"{normalization_mode} fit/sample outputs do not exist for "
+        f"title={title}, gm={gm}, eta={eta}, bT={bT}, component={component}, nstates={nstates}: "
+        f"expected {exact_fit} and {exact_sample}"
     )
 
 
@@ -403,19 +442,39 @@ def run_tmdwf_fourier_workflow(
     results_dir: str | Path | None = None,
 ) -> list[Path]:
     spec = parse_tmdwf_fourier_input(input_file, results_dir=results_dir)
-    return run_tmdwf_fourier_from_fit_outputs(
-        output_root=spec.results_dir,
-        stem=spec.stem,
-        fit_table=spec.fit_table,
-        sample_table=spec.sample_table,
-        pz=spec.pz,
-        ns=spec.ns,
-        lattice_spacing_fm=spec.lattice_spacing_fm,
-        bT=spec.bT,
-        component=spec.component,
-        nstates=spec.nstates,
-        x_values=spec.x_values,
-        zstep_fm=spec.zstep_fm,
-        interpolation_kind=spec.interpolation_kind,
-        make_plots=spec.make_plots,
-    )
+    outputs: list[Path] = []
+    for pz in spec.pzlist:
+        title = expand_template(spec.title_pattern, pz=pz)
+        dataset_root = spec.results_dir / title
+        for gm in spec.gmlist:
+            for eta in spec.etalist:
+                for bT in spec.bTlist:
+                    fit_table, sample_table = _resolve_fit_sample_paths(
+                        spec.input_root,
+                        title,
+                        gm,
+                        eta,
+                        bT,
+                        spec.component,
+                        spec.nstates,
+                        spec.normalization_mode,
+                    )
+                    outputs.extend(
+                        run_tmdwf_fourier_from_fit_outputs(
+                            output_root=dataset_root,
+                            stem=f"{title}_{gm}_{eta}_bT{bT}",
+                            fit_table=fit_table,
+                            sample_table=sample_table,
+                            pz=pz,
+                            ns=spec.ns,
+                            lattice_spacing_fm=spec.lattice_spacing_fm,
+                            bT=bT,
+                            component=spec.component,
+                            nstates=spec.nstates,
+                            x_values=spec.x_values,
+                            zstep_fm=spec.zstep_fm,
+                            interpolation_kind=spec.interpolation_kind,
+                            make_plots=spec.make_plots,
+                        )
+                    )
+    return outputs

@@ -3,26 +3,28 @@
 # TMDWF fit/sample outputs that already exist.
 #
 # Suggested intent:
-#   first run the TMDWF N-state fit workflow
-#   then point this file at the grouped fit/sample tables for one (bT, component, nstates)
+#   first run the TMDWF N-state fit workflow, or the normalization workflow
+#   then point this file at the directory containing those grouped outputs
 
 # Data / metadata block
-# These fields identify the extracted matrix element h(z, bT) = m0(bT, bz)
-# and provide the lattice metadata needed for the cosine transform.
-title l64c64a076_m140_tmdwf_pz0_T5_eta0
-stem l64c64a076_m140_tmdwf_pz0_T5_eta0_bT0
-pz 0
+# These fields identify which grouped matrix-element outputs should be transformed.
+title_pattern l64c64a076_m140_tmdwf_pz*
+input_root examples/outputs/tmdwf_fit_notebook
 ns 64
 lattice_spacing_fm 0.076
+pzlist 0
+gmlist T5
+etalist eta0
+
+# Choose either:
+#   bTlist ...
+# or:
+#   bTrange bTmin bTmax
+bTlist 0
+
+# Select which grouped matrix-element outputs to transform.
 component real
 nstates 1
-bT 0
-
-# Existing grouped TMDWF outputs from the N-state fit workflow.
-# The Fourier step reads m0_mean / m0_err from fit_table and grouped bootstrap
-# m0 samples from sample_table. No refit is performed here.
-fit_table examples/outputs/tmdwf_fit_notebook/l64c64a076_m140_tmdwf_pz0/tables/l64c64a076_m140_tmdwf_pz0_T5_eta0_bT0_real_1state_fit.txt
-sample_table examples/outputs/tmdwf_fit_notebook/l64c64a076_m140_tmdwf_pz0/samples/l64c64a076_m140_tmdwf_pz0_T5_eta0_bT0_real_1state_samples.txt
 
 # Fourier-transform parameter block
 # Choose either:
@@ -42,7 +44,8 @@ plot true
 results_dir examples/outputs/tmdwf_fourier_example
 
 # Notes:
-# - This workflow consumes grouped TMDWF fit/sample outputs as input.
-# - It does not rerun the TMDWF N-state fit.
+# - This workflow consumes grouped fit/sample outputs from the TMDWF fit or normalization step.
+# - It does not rerun the nonlinear fit.
+# - The Fourier workflow resolves the grouped fit/sample paths automatically from:
+#     input_root, title_pattern, pzlist, gmlist, etalist, bTlist, component, nstates
 # - The transform uses the extracted matrix element m0(bT, bz) as h(z, bT).
-# - The default setup builds a refined z grid before integrating the cosine transform.

@@ -241,16 +241,17 @@ class NotebookWorkflowTests(unittest.TestCase):
     def test_render_tmdwf_fourier_text(self) -> None:
         text = render_tmdwf_fourier_input_text(
             {
-                "title": "demo_pz0_T5_eta0",
-                "stem": "demo_pz0_T5_eta0_bT0",
-                "pz": 0,
+                "title_pattern": "demo_pz*",
+                "input_root": "/tmp/tmdwf_fit",
                 "ns": 64,
                 "lattice_spacing_fm": 0.076,
+                "pzlist": [0],
+                "gmlist": ["T5"],
+                "etalist": ["eta0"],
+                "bTlist": [0],
                 "component": "real",
                 "nstates": 1,
-                "bT": 0,
-                "fit_table": "/tmp/fit.txt",
-                "sample_table": "/tmp/samples.txt",
+                "normalization_mode": "raw",
                 "x_range": [-0.5, 1.5],
                 "x_count": 101,
                 "zstep_fm": 0.01,
@@ -259,9 +260,12 @@ class NotebookWorkflowTests(unittest.TestCase):
                 "results_dir": "/tmp/fourier",
             }
         )
-        self.assertIn("stem demo_pz0_T5_eta0_bT0", text)
-        self.assertIn("fit_table /tmp/fit.txt", text)
-        self.assertIn("sample_table /tmp/samples.txt", text)
+        self.assertIn("title_pattern demo_pz*", text)
+        self.assertIn("input_root /tmp/tmdwf_fit", text)
+        self.assertIn("pzlist 0", text)
+        self.assertIn("gmlist T5", text)
+        self.assertIn("bTlist 0", text)
+        self.assertIn("normalization_mode raw", text)
         self.assertIn("x_range -0.5 1.5", text)
         self.assertIn("x_count 101", text)
         self.assertIn("interpolation_kind cubic", text)
@@ -271,30 +275,54 @@ class NotebookWorkflowTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
-            fit_table = tmp / "fit.txt"
-            sample_table = tmp / "samples.txt"
-            fit_table.write_text("bz\tm0_mean\tm0_err\n0\t1.0\t0.1\n", encoding="utf-8")
-            sample_table.write_text("bz\tsample_id\tsuccess\tm0\n0\t0\t1\t1.0\n", encoding="utf-8")
+            fit_dir = tmp / "demo_pz1" / "tables"
+            sample_dir = tmp / "demo_pz1" / "samples"
+            fit_dir.mkdir(parents=True)
+            sample_dir.mkdir(parents=True)
+            (fit_dir / "demo_pz1_T5_eta0_bT0_real_2state_fit.txt").write_text("bz\tm0_mean\tm0_err\n0\t1.0\t0.1\n", encoding="utf-8")
+            (sample_dir / "demo_pz1_T5_eta0_bT0_real_2state_samples.txt").write_text("bz\tsample_id\tsuccess\tm0\n0\t0\t1\t1.0\n", encoding="utf-8")
             validated = validate_tmdwf_fourier_notebook_config(
                 {
-                    "title": "demo",
-                    "pz": 1,
+                    "title_pattern": "demo_pz*",
+                    "input_root": str(tmp),
                     "ns": 64,
                     "lattice_spacing_fm": 0.076,
+                    "pzlist": [1],
+                    "gmlist": ["T5"],
+                    "etalist": ["eta0"],
+                    "bTlist": [0],
                     "component": "real",
                     "nstates": 2,
-                    "bT": 0,
-                    "fit_table": str(fit_table),
-                    "sample_table": str(sample_table),
+                    "normalization_mode": "raw",
                     "x_range": [-0.25, 1.25],
                     "x_count": 51,
                     "zstep_fm": 0.02,
                 }
             )
-        self.assertEqual(validated["stem"], "demo_bT0")
+        self.assertEqual(validated["title_pattern"], "demo_pz*")
+        self.assertEqual(validated["input_root"], tmp)
+        self.assertEqual(validated["pzlist"], (1,))
+        self.assertEqual(validated["bTlist"], (0,))
         self.assertEqual(validated["component"], "real")
+        self.assertEqual(validated["normalization_mode"], "raw")
         self.assertEqual(validated["x_values"].shape, (51,))
         self.assertAlmostEqual(validated["zstep_fm"], 0.02)
+
+    def test_tmdwf_fourier_notebook_config_rejects_old_single_job_shape(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            render_tmdwf_fourier_input_text(
+                {
+                    "pz": 0,
+                    "ns": 64,
+                    "lattice_spacing_fm": 0.076,
+                    "component": "real",
+                    "nstates": 1,
+                    "bT": 0,
+                    "fit_table": "/tmp/fit.txt",
+                    "sample_table": "/tmp/samples.txt",
+                }
+            )
+        self.assertIn("missing TMDWF Fourier notebook config keys", str(ctx.exception))
 
     def test_render_tmdwf_normalize_text(self) -> None:
         text = render_tmdwf_normalize_input_text(
@@ -367,21 +395,25 @@ class NotebookWorkflowTests(unittest.TestCase):
 
             with tempfile.TemporaryDirectory() as tmpdir:
                 tmp = Path(tmpdir)
-                fit_table = tmp / "fit.txt"
-                sample_table = tmp / "samples.txt"
-                fit_table.write_text("bz\tm0_mean\tm0_err\n0\t1.0\t0.1\n", encoding="utf-8")
-                sample_table.write_text("bz\tsample_id\tsuccess\tm0\n0\t0\t1\t1.0\n", encoding="utf-8")
+                fit_dir = tmp / "demo_pz0" / "tables"
+                sample_dir = tmp / "demo_pz0" / "samples"
+                fit_dir.mkdir(parents=True)
+                sample_dir.mkdir(parents=True)
+                (fit_dir / "demo_pz0_T5_eta0_bT0_real_1state_fit.txt").write_text("bz\tm0_mean\tm0_err\n0\t1.0\t0.1\n", encoding="utf-8")
+                (sample_dir / "demo_pz0_T5_eta0_bT0_real_1state_samples.txt").write_text("bz\tsample_id\tsuccess\tm0\n0\t0\t1\t1.0\n", encoding="utf-8")
                 run_tmdwf_fourier_from_notebook(
                     {
-                        "stem": "demo_bT0",
-                        "pz": 0,
+                        "title_pattern": "demo_pz*",
+                        "input_root": str(tmp),
                         "ns": 64,
                         "lattice_spacing_fm": 0.076,
+                        "pzlist": [0],
+                        "gmlist": ["T5"],
+                        "etalist": ["eta0"],
+                        "bTlist": [0],
                         "component": "real",
                         "nstates": 1,
-                        "bT": 0,
-                        "fit_table": str(fit_table),
-                        "sample_table": str(sample_table),
+                        "normalization_mode": "raw",
                     },
                     results_dir="/tmp/explicit_tmdwf_fourier",
                 )
@@ -437,21 +469,25 @@ class NotebookWorkflowTests(unittest.TestCase):
 
                 with tempfile.TemporaryDirectory() as tmpdir:
                     tmp = Path(tmpdir)
-                    fit_table = tmp / "fit.txt"
-                    sample_table = tmp / "samples.txt"
-                    fit_table.write_text("bz\tm0_mean\tm0_err\n0\t1.0\t0.1\n", encoding="utf-8")
-                    sample_table.write_text("bz\tsample_id\tsuccess\tm0\n0\t0\t1\t1.0\n", encoding="utf-8")
+                    fit_dir = tmp / "demo_pz0" / "tables"
+                    sample_dir = tmp / "demo_pz0" / "samples"
+                    fit_dir.mkdir(parents=True)
+                    sample_dir.mkdir(parents=True)
+                    (fit_dir / "demo_pz0_T5_eta0_bT0_real_1state_fit.txt").write_text("bz\tm0_mean\tm0_err\n0\t1.0\t0.1\n", encoding="utf-8")
+                    (sample_dir / "demo_pz0_T5_eta0_bT0_real_1state_samples.txt").write_text("bz\tsample_id\tsuccess\tm0\n0\t0\t1\t1.0\n", encoding="utf-8")
                     run_tmdwf_fourier_from_notebook(
                         {
-                            "stem": "demo_bT0",
-                            "pz": 0,
+                            "title_pattern": "demo_pz*",
+                            "input_root": str(tmp),
                             "ns": 64,
                             "lattice_spacing_fm": 0.076,
+                            "pzlist": [0],
+                            "gmlist": ["T5"],
+                            "etalist": ["eta0"],
+                            "bTlist": [0],
                             "component": "real",
                             "nstates": 1,
-                            "bT": 0,
-                            "fit_table": str(fit_table),
-                            "sample_table": str(sample_table),
+                            "normalization_mode": "raw",
                         }
                     )
                 self.assertEqual(Path(mock_fourier.call_args.kwargs["results_dir"]), Path("/tmp/vscode").resolve())
@@ -504,8 +540,11 @@ class NotebookWorkflowTests(unittest.TestCase):
         self.assertIn("render_tmdwf_fourier_input_text", joined)
         self.assertIn("validate_tmdwf_fourier_notebook_config", joined)
         self.assertIn("run_tmdwf_fourier_from_notebook", joined)
-        self.assertIn("\"fit_table\":", joined)
-        self.assertIn("\"sample_table\":", joined)
+        self.assertIn("\"input_root\":", joined)
+        self.assertIn("\"title_pattern\":", joined)
+        self.assertIn("\"pzlist\": [0]", joined)
+        self.assertIn("\"bTlist\": [0]", joined)
+        self.assertIn("\"normalization_mode\": \"raw\"", joined)
         self.assertIn("\"x_range\": [-0.5, 1.5]", joined)
         self.assertIn("# Data / metadata settings", joined)
         self.assertIn("# Fourier-transform parameter settings", joined)

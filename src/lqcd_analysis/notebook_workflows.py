@@ -96,16 +96,18 @@ TMDWF_INPUT_KEYS = {
 }
 TMDWF_RUN_KEYS = {"results_dir"}
 TMDWF_FOURIER_KEYS = {
-    "title",
-    "stem",
-    "pz",
+    "title_pattern",
+    "input_root",
     "ns",
     "lattice_spacing_fm",
+    "pzlist",
+    "gmlist",
+    "etalist",
+    "bTlist",
+    "bTrange",
     "component",
     "nstates",
-    "bT",
-    "fit_table",
-    "sample_table",
+    "normalization_mode",
     "x_values",
     "x_range",
     "x_count",
@@ -321,34 +323,41 @@ def render_tmdwf_fit_input_text(config: dict[str, Any]) -> str:
 def render_tmdwf_fourier_input_text(config: dict[str, Any]) -> str:
     config = _subset_config(config, TMDWF_FOURIER_KEYS)
     required = [
-        "pz",
+        "title_pattern",
+        "input_root",
         "ns",
         "lattice_spacing_fm",
+        "pzlist",
+        "gmlist",
+        "etalist",
         "component",
         "nstates",
-        "bT",
-        "fit_table",
-        "sample_table",
+        "normalization_mode",
     ]
     missing = [key for key in required if key not in config]
     if missing:
         raise ValueError(f"missing TMDWF Fourier notebook config keys: {missing}")
+    if "bTlist" not in config and "bTrange" not in config:
+        raise ValueError("missing TMDWF Fourier notebook config key: bTlist or bTrange")
 
-    lines: list[str] = []
-    if "title" in config and config["title"] is not None:
-        lines.append(f"title {_as_scalar_string(config['title'])}")
-    if "stem" in config and config["stem"] is not None:
-        lines.append(f"stem {_as_scalar_string(config['stem'])}")
+    lines = [
+        f"title_pattern {_as_scalar_string(config['title_pattern'])}",
+        f"input_root {_as_scalar_string(config['input_root'])}",
+        f"ns {_as_scalar_string(config['ns'])}",
+        f"lattice_spacing_fm {_as_scalar_string(config['lattice_spacing_fm'])}",
+        f"pzlist {_as_scalar_string(config['pzlist'])}",
+        f"gmlist {_as_scalar_string(config['gmlist'])}",
+        f"etalist {_as_scalar_string(config['etalist'])}",
+    ]
+    if "bTlist" in config and config["bTlist"] is not None:
+        lines.append(f"bTlist {_as_scalar_string(config['bTlist'])}")
+    elif "bTrange" in config and config["bTrange"] is not None:
+        lines.append(f"bTrange {_as_scalar_string(config['bTrange'])}")
     lines.extend(
         [
-            f"pz {_as_scalar_string(config['pz'])}",
-            f"ns {_as_scalar_string(config['ns'])}",
-            f"lattice_spacing_fm {_as_scalar_string(config['lattice_spacing_fm'])}",
             f"component {_as_scalar_string(config['component'])}",
             f"nstates {_as_scalar_string(config['nstates'])}",
-            f"bT {_as_scalar_string(config['bT'])}",
-            f"fit_table {_as_scalar_string(config['fit_table'])}",
-            f"sample_table {_as_scalar_string(config['sample_table'])}",
+            f"normalization_mode {_as_scalar_string(config['normalization_mode'])}",
         ]
     )
     if "x_values" in config and config["x_values"] is not None:
@@ -463,16 +472,17 @@ def validate_tmdwf_fourier_notebook_config(config: dict[str, Any]) -> dict[str, 
     input_path = _materialize_input_text(render_tmdwf_fourier_input_text(config), "input_tmdwf_fourier.txt")
     parsed = parse_tmdwf_fourier_input(input_path)
     validated = {
-        "title": parsed.title,
-        "stem": parsed.stem,
-        "pz": parsed.pz,
+        "title_pattern": parsed.title_pattern,
+        "input_root": parsed.input_root,
         "ns": parsed.ns,
         "lattice_spacing_fm": parsed.lattice_spacing_fm,
+        "pzlist": parsed.pzlist,
+        "gmlist": parsed.gmlist,
+        "etalist": parsed.etalist,
+        "bTlist": parsed.bTlist,
         "component": parsed.component,
         "nstates": parsed.nstates,
-        "bT": parsed.bT,
-        "fit_table": parsed.fit_table,
-        "sample_table": parsed.sample_table,
+        "normalization_mode": parsed.normalization_mode,
         "x_values": parsed.x_values,
         "zstep_fm": parsed.zstep_fm,
         "interpolation_kind": parsed.interpolation_kind,

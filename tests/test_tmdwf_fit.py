@@ -41,6 +41,7 @@ from lqcd_analysis.tmdwf.fourier import (
     load_tmdwf_m0_fit_table,
     load_tmdwf_m0_sample_table,
     run_tmdwf_fourier_from_fit_outputs,
+    run_tmdwf_fourier_workflow,
     summarize_tmdwf_fourier_samples,
 )
 from lqcd_analysis.tmdwf.normalize import run_tmdwf_normalization
@@ -1893,6 +1894,190 @@ class TMDWFFitTests(unittest.TestCase):
         self.assertIn("interpolation_kind linear", summary)
         self.assertIn("x\tq_mean\tq_err\tq_p16\tq_p84", summary)
         self.assertIn("sample_id\tx\tq_sample", samples)
+
+    def test_tmdwf_fourier_batch_workflow_resolves_paths_for_multiple_pz_and_bt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            input_root = tmp / "fit_outputs"
+            for title in ("demo_pz0", "demo_pz2"):
+                for bT in (0, 1):
+                    self._write_tmdwf_m0_outputs(
+                        input_root,
+                        title,
+                        "T5",
+                        "eta0",
+                        bT,
+                        "real",
+                        1,
+                        fit_rows=[(0, 1.0 + 0.1 * bT, 0.1), (1, 1.2 + 0.1 * bT, 0.1)],
+                        sample_rows=[
+                            (0, 0, 1, 1.0 + 0.1 * bT),
+                            (1, 0, 1, 1.2 + 0.1 * bT),
+                            (0, 1, 1, 0.9 + 0.1 * bT),
+                            (1, 1, 1, 1.1 + 0.1 * bT),
+                        ],
+                    )
+            input_path = tmp / "fourier.txt"
+            input_path.write_text(
+                "\n".join(
+                    [
+                        "title_pattern demo_pz*",
+                        f"input_root {input_root}",
+                        "ns 64",
+                        "lattice_spacing_fm 0.076",
+                        "pzlist 0 2",
+                        "gmlist T5",
+                        "etalist eta0",
+                        "bTlist 0 1",
+                        "component real",
+                        "nstates 1",
+                        "normalization_mode raw",
+                        "x_range -0.5 1.5",
+                        "x_count 11",
+                        "zstep_fm 0.02",
+                        "interpolation_kind linear",
+                        "plot false",
+                        f"results_dir {tmp / 'fourier_outputs'}",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            outputs = run_tmdwf_fourier_workflow(input_path)
+
+            expected = [
+                tmp / "fourier_outputs" / "demo_pz0" / "tables" / "demo_pz0_T5_eta0_bT0_real_1state_fourier.txt",
+                tmp / "fourier_outputs" / "demo_pz0" / "tables" / "demo_pz0_T5_eta0_bT1_real_1state_fourier.txt",
+                tmp / "fourier_outputs" / "demo_pz2" / "tables" / "demo_pz2_T5_eta0_bT0_real_1state_fourier.txt",
+                tmp / "fourier_outputs" / "demo_pz2" / "tables" / "demo_pz2_T5_eta0_bT1_real_1state_fourier.txt",
+            ]
+            expected_exist = all(path.exists() for path in expected)
+            fourier_txt_count = len([path for path in outputs if path.suffix == ".txt" and "fourier" in path.name])
+
+        self.assertTrue(expected_exist)
+        self.assertEqual(fourier_txt_count, 8)
+
+    def test_tmdwf_fourier_resolves_raw_vs_normalized_outputs_explicitly(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            input_root = tmp / "fit_outputs"
+            self._write_tmdwf_m0_outputs(
+                input_root,
+                "demo_pz2",
+                "T5",
+                "eta0",
+                0,
+                "real",
+                1,
+                fit_rows=[(0, 1.0, 0.1)],
+                sample_rows=[(0, 0, 1, 1.0)],
+            )
+            normalized_root = tmp / "normalized"
+            norm_title_root = normalized_root / "demo_pz2"
+            (norm_title_root / "tables").mkdir(parents=True)
+            (norm_title_root / "samples").mkdir(parents=True)
+            (norm_title_root / "tables" / "demo_pz2_T5_eta0_bT0_mode1_real_1state_fit.txt").write_text(
+                "normalization_mode mode1\nbz\tm0_mean\tm0_err\n0\t2.0\t0.1\n",
+                encoding="utf-8",
+            )
+            (norm_title_root / "samples" / "demo_pz2_T5_eta0_bT0_mode1_real_1state_samples.txt").write_text(
+                "normalization_mode mode1\nbz\tsample_id\tsuccess\tm0\n0\t0\t1\t2.0\n",
+                encoding="utf-8",
+            )
+
+            raw_input = tmp / "fourier_raw.txt"
+            raw_input.write_text(
+                "\n".join(
+                    [
+                        "title_pattern demo_pz*",
+                        f"input_root {input_root}",
+                        "ns 64",
+                        "lattice_spacing_fm 0.076",
+                        "pzlist 2",
+                        "gmlist T5",
+                        "etalist eta0",
+                        "bTlist 0",
+                        "component real",
+                        "nstates 1",
+                        "normalization_mode raw",
+                        "x_range -0.5 1.5",
+                        "x_count 5",
+                        "plot false",
+                        f"results_dir {tmp / 'raw_outputs'}",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            norm_input = tmp / "fourier_mode1.txt"
+            norm_input.write_text(
+                "\n".join(
+                    [
+                        "title_pattern demo_pz*",
+                        f"input_root {normalized_root}",
+                        "ns 64",
+                        "lattice_spacing_fm 0.076",
+                        "pzlist 2",
+                        "gmlist T5",
+                        "etalist eta0",
+                        "bTlist 0",
+                        "component real",
+                        "nstates 1",
+                        "normalization_mode mode1",
+                        "x_range -0.5 1.5",
+                        "x_count 5",
+                        "plot false",
+                        f"results_dir {tmp / 'norm_outputs'}",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            run_tmdwf_fourier_workflow(raw_input)
+            run_tmdwf_fourier_workflow(norm_input)
+
+            raw_summary = (tmp / "raw_outputs" / "demo_pz2" / "tables" / "demo_pz2_T5_eta0_bT0_real_1state_fourier.txt").read_text(encoding="utf-8")
+            norm_summary = (tmp / "norm_outputs" / "demo_pz2" / "tables" / "demo_pz2_T5_eta0_bT0_real_1state_fourier.txt").read_text(encoding="utf-8")
+
+        self.assertIn("q_mean", raw_summary)
+        self.assertIn("q_mean", norm_summary)
+
+    def test_tmdwf_fourier_missing_requested_normalization_mode_raises_clear_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            input_root = tmp / "normalized"
+            title_root = input_root / "demo_pz2"
+            (title_root / "tables").mkdir(parents=True)
+            (title_root / "samples").mkdir(parents=True)
+            (title_root / "tables" / "demo_pz2_T5_eta0_bT0_mode1_real_1state_fit.txt").write_text(
+                "normalization_mode mode1\nbz\tm0_mean\tm0_err\n0\t2.0\t0.1\n",
+                encoding="utf-8",
+            )
+            (title_root / "samples" / "demo_pz2_T5_eta0_bT0_mode1_real_1state_samples.txt").write_text(
+                "normalization_mode mode1\nbz\tsample_id\tsuccess\tm0\n0\t0\t1\t2.0\n",
+                encoding="utf-8",
+            )
+            input_path = tmp / "fourier_mode2.txt"
+            input_path.write_text(
+                "\n".join(
+                    [
+                        "title_pattern demo_pz*",
+                        f"input_root {input_root}",
+                        "ns 64",
+                        "lattice_spacing_fm 0.076",
+                        "pzlist 2",
+                        "gmlist T5",
+                        "etalist eta0",
+                        "bTlist 0",
+                        "component real",
+                        "nstates 1",
+                        "normalization_mode mode2",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaises(FileNotFoundError) as ctx:
+                run_tmdwf_fourier_workflow(input_path)
+        self.assertIn("mode2 fit/sample outputs do not exist", str(ctx.exception))
 
     def test_tmdwf_normalization_mode1_mode2_mode3(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
