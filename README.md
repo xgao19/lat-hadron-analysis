@@ -280,6 +280,145 @@ A matching notebook template is also provided in:
 
 - `templates/tmdwf/tmdwf_fourier_template.ipynb`
 
+## TMDWF CS-Kernel Extraction
+
+The repository also provides a downstream Collins-Soper kernel extraction
+workflow that reads already-generated TMDWF Fourier outputs:
+
+```bash
+lqcd-analysis tmdwf-cs-kernel input_tmdwf_cs_kernel.txt
+```
+
+This CS-kernel workflow:
+
+- reads one Fourier bootstrap sample table for each requested `(gm, eta, bT, pz, component, nstates, normalization_mode)` combination
+- converts lattice momentum integers into physical momenta using the ensemble metadata
+- preserves the legacy type-2 estimator logic, including the absolute value inside the logarithm
+- preserves the legacy constant-in-`P2` fit across all larger comparison momenta for each chosen reference `P1`
+- writes bootstrap samples, 16/50/84 summary bands, and chi2/dof diagnostics
+- currently supports only the legacy `CG` matching scheme for type-2 extraction, with clean validation
+
+Expected key input fields include:
+
+```text
+title_pattern demo_tmdwf_cs_kernel
+input_root /path/to/tmdwf_fourier_outputs
+ns 64
+lattice_spacing_fm 0.076
+gmlist T5
+etalist eta0
+component real
+nstates 1
+normalization_mode raw
+mu 2.0
+scheme CG
+extraction_type type2
+kernel_labels LO NLO NLL
+bTrange 0 4
+pzrange 2 6
+x_window 0.2 0.8
+plot true
+```
+
+Option guide:
+
+- `title_pattern`:
+  same per-`pz` title pattern used upstream by the TMDWF fit/Fourier workflows, for example `l64c64a076_m140_tmdwf_pz*`.
+- `input_root`:
+  root directory containing existing TMDWF Fourier outputs. The CS workflow resolves the usual Fourier table/sample filenames automatically from the repository naming convention.
+- `ns`, `lattice_spacing_fm`:
+  ensemble metadata. `ns` and `lattice_spacing_fm` determine the physical momentum unit `2*pi/(Ns*a*fmGeV)`.
+- `gmlist`, `etalist`:
+  select which operator/insertion channels to read from the existing Fourier outputs.
+- `component`, `nstates`:
+  select which Fourier output family to consume.
+- `normalization_mode`:
+  one of `raw`, `mode1`, `mode2`, or `mode3`. This matches the upstream Fourier-output mode and is recorded explicitly in the CS-kernel outputs.
+- `mu`:
+  perturbative matching scale in GeV passed into the legacy `CS_Dgamma` correction object.
+- `scheme`:
+  matching-scheme selector. The current type-2 implementation supports only `CG`, and invalid choices raise a clear error.
+- `extraction_type`:
+  keep this as `type2` for the legacy qTMDWF CS-kernel method.
+- `kernel_labels`:
+  one or more perturbative labels to run in batch. The legacy order mapping is preserved exactly:
+  `LO -> 0`, `NLO/NLL -> 1`, `NNLO/NNLL -> 2`.
+- `bTlist` / `bTrange`:
+  which transverse separations to process.
+- `pzlist` / `pzrange`:
+  which lattice momentum integers to process. For each reference `P1`, the workflow automatically uses all larger requested `P2` values in the constant fit.
+- `x_window`:
+  `x` range used in the extraction fit. The default `[0.2, 0.8]` reproduces the legacy script.
+- `plot`:
+  whether to also write a quick summary PDF band plot for each output group.
+- `results_dir`:
+  output root for summaries, band tables, bootstrap samples, diagnostics, and optional plots.
+
+Expected input table format:
+
+- The workflow reads the repository-native Fourier sample table format:
+  one row per `(sample_id, x)` with a `q_sample` column.
+- Internally those long-form rows are regrouped into a bootstrap matrix with shape `(n_samples, n_x)` before the CS estimator and constant fit are applied.
+
+For each `(kernel_label, bT, reference_pz)` combination, the workflow writes:
+
+- `*_summary.txt`
+- `tables/*_band.txt`
+- `samples/*_samples.txt`
+- `diagnostics/*_diagnostics.txt`
+- `plots/*_band.pdf` when `plot true`
+
+Template inputs are provided in:
+
+- `templates/input_files/tmdwf/tmdwf_cs_kernel_example.txt`
+- `templates/input_files/tmdwf/tmdwf_cs_kernel_example_annotated.txt`
+
+A matching notebook template is also provided in:
+
+- `templates/tmdwf/tmdwf_cs_kernel_template.ipynb`
+
+## Recommended TMDWF Downstream Chain
+
+The intended downstream chain is now:
+
+1. `tmdwf-nstate-fit`
+2. optional `tmdwf-normalize`
+3. `tmdwf-fourier`
+4. `tmdwf-cs-kernel`
+
+The data products passed between these steps are:
+
+- `tmdwf-nstate-fit`:
+  writes grouped matrix-element outputs in `m0(bT, bz)`, including grouped fit tables and grouped bootstrap sample tables.
+- `tmdwf-normalize`:
+  reads those grouped `m0` outputs and writes normalized grouped `m0` outputs with the same general structure.
+- `tmdwf-fourier`:
+  reads either raw grouped `m0` outputs or normalized grouped `m0` outputs, then writes Fourier-space `q(x; pz, bT)` tables and bootstrap samples.
+- `tmdwf-cs-kernel`:
+  reads those Fourier-space bootstrap outputs and performs the legacy type-2 multi-`Pz` CS-kernel extraction.
+
+Practical choices:
+
+- If you want the CS kernel from the unnormalized matrix element chain:
+  run `tmdwf-fourier` with `normalization_mode raw`, then run `tmdwf-cs-kernel` with `normalization_mode raw`.
+- If you want the CS kernel from one of the normalized matrix-element chains:
+  first run `tmdwf-normalize` with `mode1`, `mode2`, or `mode3`, then run `tmdwf-fourier` with the same mode, then run `tmdwf-cs-kernel` with that same mode.
+
+The key convention is:
+
+- `normalization_mode` must stay consistent across the downstream chain.
+- `raw` means:
+  read original TMDWF fit outputs.
+- `mode1` / `mode2` / `mode3` mean:
+  read the corresponding normalized outputs derived from the normalization workflow.
+
+This means the repository now supports these two common chains cleanly:
+
+- raw chain:
+  `fit -> fourier(raw) -> cs-kernel(raw)`
+- normalized chain:
+  `fit -> normalize(modeX) -> fourier(modeX) -> cs-kernel(modeX)`
+
 ## Workflows
 
 Both workflows are supported:
@@ -296,6 +435,7 @@ Current notebook templates:
 - `templates/tmdwf/tmdwf_nstate_template.ipynb`
 - `templates/tmdwf/tmdwf_normalize_template.ipynb`
 - `templates/tmdwf/tmdwf_fourier_template.ipynb`
+- `templates/tmdwf/tmdwf_cs_kernel_template.ipynb`
 - `templates/two_point/plot_2pt_template.ipynb`
 
 Notebook templates are thin wrappers around the existing analysis code. They are intended for clarity and interactive use, while the plain-text input-file workflow remains the stable batch-style interface.
@@ -320,10 +460,12 @@ and plain-text example inputs under:
 - `templates/input_files/tmdwf/tmdwf_nstate_example.txt`
 - `templates/input_files/tmdwf/tmdwf_normalize_example.txt`
 - `templates/input_files/tmdwf/tmdwf_fourier_example.txt`
+- `templates/input_files/tmdwf/tmdwf_cs_kernel_example.txt`
 - `templates/input_files/two_point/plot_2pt_example_command.txt`
 - `templates/input_files/two_point/tgevp_example_realdata_annotated.txt`
 - `templates/input_files/two_point/nstate_fit_example_realdata_annotated.txt`
 - `templates/input_files/tmdwf/tmdwf_nstate_example_annotated.txt`
+- `templates/input_files/tmdwf/tmdwf_cs_kernel_example_annotated.txt`
 - `templates/tmdwf/tmdwf_nstate_template.ipynb`
 
 These examples use repository-relative paths, so they can be run directly from the repository root.

@@ -8,17 +8,20 @@ from unittest.mock import patch
 from lqcd_analysis.notebook_workflows import (
     _guess_notebook_dir,
     render_nstate_fit_input_text,
+    render_tmdwf_cs_kernel_input_text,
     render_tmdwf_fourier_input_text,
     render_tmdwf_fit_input_text,
     render_tmdwf_normalize_input_text,
     render_tgevp_input_text,
     run_nstate_fit_from_notebook,
+    run_tmdwf_cs_kernel_from_notebook,
     run_tmdwf_fourier_from_notebook,
     run_tmdwf_fit_from_notebook,
     run_tmdwf_normalize_from_notebook,
     run_tgevp_from_notebook,
     validate_nstate_notebook_config,
     validate_plot_2pt_notebook_config,
+    validate_tmdwf_cs_kernel_notebook_config,
     validate_tmdwf_fourier_notebook_config,
     validate_tmdwf_notebook_config,
     validate_tmdwf_normalize_notebook_config,
@@ -96,6 +99,24 @@ class NotebookWorkflowTests(unittest.TestCase):
             "component": "real",
             "nstates": 1,
             "normalization_mode": "mode1",
+        }
+        self.tmdwf_cs_kernel_config = {
+            "title_pattern": "demo_pz*",
+            "input_root": "/tmp/tmdwf_fourier",
+            "ns": 64,
+            "lattice_spacing_fm": 0.076,
+            "gmlist": ["T5"],
+            "etalist": ["eta0"],
+            "component": "real",
+            "nstates": 1,
+            "normalization_mode": "raw",
+            "mu": 2.0,
+            "scheme": "CG",
+            "extraction_type": "type2",
+            "kernel_labels": ["LO", "NLO"],
+            "bTlist": [0, 2],
+            "pzlist": [2, 3, 4],
+            "x_window": [0.2, 0.8],
         }
 
     def test_render_tgevp_text(self) -> None:
@@ -270,6 +291,25 @@ class NotebookWorkflowTests(unittest.TestCase):
         self.assertIn("x_count 101", text)
         self.assertIn("interpolation_kind cubic", text)
 
+    def test_render_tmdwf_cs_kernel_text(self) -> None:
+        text = render_tmdwf_cs_kernel_input_text(
+            {
+                **self.tmdwf_cs_kernel_config,
+                "results_dir": "/tmp/tmdwf_cs",
+                "plot": True,
+            }
+        )
+        self.assertIn("title_pattern demo_pz*", text)
+        self.assertIn("scheme CG", text)
+        self.assertIn("extraction_type type2", text)
+        self.assertIn("kernel_labels LO NLO", text)
+        self.assertIn("gmlist T5", text)
+        self.assertIn("etalist eta0", text)
+        self.assertIn("component real", text)
+        self.assertIn("normalization_mode raw", text)
+        self.assertIn("x_window 0.2 0.8", text)
+        self.assertIn("results_dir /tmp/tmdwf_cs", text)
+
     def test_validate_tmdwf_fourier_notebook_config(self) -> None:
         import tempfile
 
@@ -307,6 +347,35 @@ class NotebookWorkflowTests(unittest.TestCase):
         self.assertEqual(validated["normalization_mode"], "raw")
         self.assertEqual(validated["x_values"].shape, (51,))
         self.assertAlmostEqual(validated["zstep_fm"], 0.02)
+
+    def test_validate_tmdwf_cs_kernel_notebook_config(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            sample_text = "sample_id\tx\tq_sample\n0\t1.0000000000e-01\t1.0\n0\t3.0000000000e-01\t1.1\n1\t1.0000000000e-01\t1.2\n1\t3.0000000000e-01\t1.3\n"
+            for bT in (0, 2):
+                for pz in (2, 3, 4):
+                    title = f"demo_pz{pz}"
+                    tables_dir = tmp / title / "tables"
+                    samples_dir = tmp / title / "samples"
+                    tables_dir.mkdir(parents=True, exist_ok=True)
+                    samples_dir.mkdir(parents=True, exist_ok=True)
+                    (tables_dir / f"{title}_T5_eta0_bT{bT}_real_1state_fourier.txt").write_text(
+                        "normalization_mode raw\nx\tq_mean\tq_err\tq_p16\tq_p84\n1.0000000000e-01\t1.0\t0.1\t0.9\t1.1\n3.0000000000e-01\t1.1\t0.1\t1.0\t1.2\n",
+                        encoding="utf-8",
+                    )
+                    (samples_dir / f"{title}_T5_eta0_bT{bT}_real_1state_fourier_samples.txt").write_text(sample_text, encoding="utf-8")
+            validated = validate_tmdwf_cs_kernel_notebook_config(
+                {
+                    **self.tmdwf_cs_kernel_config,
+                    "input_root": str(tmp),
+                }
+            )
+        self.assertEqual(validated["scheme"], "CG")
+        self.assertEqual(validated["kernel_labels"], ("LO", "NLO"))
+        self.assertEqual(validated["bTlist"], (0, 2))
+        self.assertEqual(validated["pzlist"], (2, 3, 4))
 
     def test_tmdwf_fourier_notebook_config_rejects_old_single_job_shape(self) -> None:
         with self.assertRaises(ValueError) as ctx:
@@ -419,6 +488,33 @@ class NotebookWorkflowTests(unittest.TestCase):
                 )
         self.assertEqual(Path(mock_fourier.call_args.kwargs["results_dir"]), Path("/tmp/explicit_tmdwf_fourier"))
 
+        with patch("lqcd_analysis.notebook_workflows.run_tmdwf_cs_kernel_workflow", return_value=[] ) as mock_cs:
+            import tempfile
+
+            with tempfile.TemporaryDirectory() as tmpdir:
+                tmp = Path(tmpdir)
+                sample_text = "sample_id\tx\tq_sample\n0\t1.0000000000e-01\t1.0\n0\t3.0000000000e-01\t1.1\n1\t1.0000000000e-01\t1.2\n1\t3.0000000000e-01\t1.3\n"
+                for bT in (0, 2):
+                    for pz in (2, 3, 4):
+                        title = f"demo_pz{pz}"
+                        tables_dir = tmp / title / "tables"
+                        samples_dir = tmp / title / "samples"
+                        tables_dir.mkdir(parents=True, exist_ok=True)
+                        samples_dir.mkdir(parents=True, exist_ok=True)
+                        (tables_dir / f"{title}_T5_eta0_bT{bT}_real_1state_fourier.txt").write_text(
+                            "normalization_mode raw\nx\tq_mean\tq_err\tq_p16\tq_p84\n1.0000000000e-01\t1.0\t0.1\t0.9\t1.1\n3.0000000000e-01\t1.1\t0.1\t1.0\t1.2\n",
+                            encoding="utf-8",
+                        )
+                        (samples_dir / f"{title}_T5_eta0_bT{bT}_real_1state_fourier_samples.txt").write_text(sample_text, encoding="utf-8")
+                run_tmdwf_cs_kernel_from_notebook(
+                    {
+                        **self.tmdwf_cs_kernel_config,
+                        "input_root": str(tmp),
+                    },
+                    results_dir="/tmp/explicit_tmdwf_cs",
+                )
+        self.assertEqual(Path(mock_cs.call_args.kwargs["results_dir"]), Path("/tmp/explicit_tmdwf_cs"))
+
         with patch("lqcd_analysis.notebook_workflows.run_tmdwf_normalization", return_value=[] ) as mock_normalize:
             import tempfile
 
@@ -493,6 +589,33 @@ class NotebookWorkflowTests(unittest.TestCase):
                 self.assertEqual(Path(mock_fourier.call_args.kwargs["results_dir"]), Path("/tmp/vscode").resolve())
 
         with patch.dict(sys.modules, {"IPython": fake_ipython}):
+            with patch("lqcd_analysis.notebook_workflows.run_tmdwf_cs_kernel_workflow", return_value=[] ) as mock_cs:
+                import tempfile
+
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    tmp = Path(tmpdir)
+                    sample_text = "sample_id\tx\tq_sample\n0\t1.0000000000e-01\t1.0\n0\t3.0000000000e-01\t1.1\n1\t1.0000000000e-01\t1.2\n1\t3.0000000000e-01\t1.3\n"
+                    for bT in (0, 2):
+                        for pz in (2, 3, 4):
+                            title = f"demo_pz{pz}"
+                            tables_dir = tmp / title / "tables"
+                            samples_dir = tmp / title / "samples"
+                            tables_dir.mkdir(parents=True, exist_ok=True)
+                            samples_dir.mkdir(parents=True, exist_ok=True)
+                            (tables_dir / f"{title}_T5_eta0_bT{bT}_real_1state_fourier.txt").write_text(
+                                "normalization_mode raw\nx\tq_mean\tq_err\tq_p16\tq_p84\n1.0000000000e-01\t1.0\t0.1\t0.9\t1.1\n3.0000000000e-01\t1.1\t0.1\t1.0\t1.2\n",
+                                encoding="utf-8",
+                            )
+                            (samples_dir / f"{title}_T5_eta0_bT{bT}_real_1state_fourier_samples.txt").write_text(sample_text, encoding="utf-8")
+                    run_tmdwf_cs_kernel_from_notebook(
+                        {
+                            **self.tmdwf_cs_kernel_config,
+                            "input_root": str(tmp),
+                        }
+                    )
+                self.assertEqual(Path(mock_cs.call_args.kwargs["results_dir"]), Path("/tmp/vscode").resolve())
+
+        with patch.dict(sys.modules, {"IPython": fake_ipython}):
             with patch("lqcd_analysis.notebook_workflows.run_tmdwf_normalization", return_value=[] ) as mock_normalize:
                 import tempfile
 
@@ -525,6 +648,7 @@ class NotebookWorkflowTests(unittest.TestCase):
             "templates/tmdwf/tmdwf_nstate_template.ipynb",
             "templates/tmdwf/tmdwf_fourier_template.ipynb",
             "templates/tmdwf/tmdwf_normalize_template.ipynb",
+            "templates/tmdwf/tmdwf_cs_kernel_template.ipynb",
             "templates/two_point/plot_2pt_template.ipynb",
         ):
             path = Path(relative)
@@ -560,12 +684,30 @@ class NotebookWorkflowTests(unittest.TestCase):
         self.assertIn("# Data / metadata settings", joined)
         self.assertIn("# Normalization settings", joined)
 
+    def test_tmdwf_cs_kernel_template_contains_expected_workflow_hooks(self) -> None:
+        path = Path("templates/tmdwf/tmdwf_cs_kernel_template.ipynb")
+        notebook = json.loads(path.read_text(encoding="utf-8"))
+        joined = "\n".join("".join(cell.get("source", [])) for cell in notebook["cells"])
+        self.assertIn("render_tmdwf_cs_kernel_input_text", joined)
+        self.assertIn("validate_tmdwf_cs_kernel_notebook_config", joined)
+        self.assertIn("run_tmdwf_cs_kernel_from_notebook", joined)
+        self.assertIn("\"scheme\": \"CG\"", joined)
+        self.assertIn("\"kernel_labels\": [\"LO\", \"NLO\", \"NLL\"]", joined)
+        self.assertIn("## Option Guide", joined)
+        self.assertIn("\"normalization_mode\": \"raw\"", joined)
+        self.assertIn("\"component\": \"real\"", joined)
+        self.assertIn("Expected input data shape", joined)
+        self.assertIn("# Data / metadata settings", joined)
+        self.assertIn("# CS-kernel extraction settings", joined)
+
     def test_example_input_files_parse(self) -> None:
         tgevp_input = Path("templates/input_files/two_point/tgevp_example_realdata.txt")
         nstate_input = Path("templates/input_files/two_point/nstate_fit_example_realdata.txt")
         tmdwf_input = Path("templates/input_files/tmdwf/tmdwf_nstate_example.txt")
         tmdwf_fourier_input = Path("templates/input_files/tmdwf/tmdwf_fourier_example.txt")
         tmdwf_fourier_annotated = Path("templates/input_files/tmdwf/tmdwf_fourier_example_annotated.txt")
+        tmdwf_cs_input = Path("templates/input_files/tmdwf/tmdwf_cs_kernel_example.txt")
+        tmdwf_cs_annotated = Path("templates/input_files/tmdwf/tmdwf_cs_kernel_example_annotated.txt")
         tmdwf_normalize_input = Path("templates/input_files/tmdwf/tmdwf_normalize_example.txt")
         tmdwf_normalize_annotated = Path("templates/input_files/tmdwf/tmdwf_normalize_example_annotated.txt")
         self.assertTrue(tgevp_input.exists())
@@ -573,6 +715,8 @@ class NotebookWorkflowTests(unittest.TestCase):
         self.assertTrue(tmdwf_input.exists())
         self.assertTrue(tmdwf_fourier_input.exists())
         self.assertTrue(tmdwf_fourier_annotated.exists())
+        self.assertTrue(tmdwf_cs_input.exists())
+        self.assertTrue(tmdwf_cs_annotated.exists())
         self.assertTrue(tmdwf_normalize_input.exists())
         self.assertTrue(tmdwf_normalize_annotated.exists())
         parsed_tgevp = parse_tgevp_input(tgevp_input)

@@ -35,6 +35,11 @@ class TMDWFFourierInput:
     results_dir: Path
 
 
+def _fourier_mode_suffix(normalization_mode: str) -> str:
+    normalized = str(normalization_mode).lower()
+    return "" if normalized == "raw" else f"_{normalized}"
+
+
 def parse_tmdwf_fourier_input(
     path: str | Path,
     *,
@@ -151,6 +156,31 @@ def _resolve_fit_sample_paths(
         f"title={title}, gm={gm}, eta={eta}, bT={bT}, component={component}, nstates={nstates}: "
         f"expected {exact_fit} and {exact_sample}"
     )
+
+
+def resolve_tmdwf_fourier_output_paths(
+    output_root: str | Path,
+    *,
+    title: str,
+    gm: str,
+    eta: str,
+    bT: int,
+    component: str,
+    nstates: int,
+    normalization_mode: str = "raw",
+) -> tuple[Path, Path]:
+    root = Path(output_root) / title
+    tables_dir = root / "tables"
+    samples_dir = root / "samples"
+    mode_suffix = _fourier_mode_suffix(normalization_mode)
+    stem = f"{title}_{gm}_{eta}_bT{bT}{mode_suffix}_{component}_{nstates}state"
+    table_path = tables_dir / f"{stem}_fourier.txt"
+    sample_path = samples_dir / f"{stem}_fourier_samples.txt"
+    if not table_path.exists():
+        raise FileNotFoundError(f"TMDWF Fourier table does not exist: {table_path}")
+    if not sample_path.exists():
+        raise FileNotFoundError(f"TMDWF Fourier sample table does not exist: {sample_path}")
+    return table_path, sample_path
 
 
 def _parse_grouped_table(path: str | Path) -> tuple[list[str], list[list[str]]]:
@@ -286,6 +316,49 @@ def summarize_tmdwf_fourier_samples(samples: np.ndarray) -> tuple[np.ndarray, np
     return mean, err, p16, p84
 
 
+def load_tmdwf_fourier_table(path: str | Path) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    header, rows = _parse_grouped_table(path)
+    index = {name: idx for idx, name in enumerate(header)}
+    required = {"x", "q_mean", "q_err", "q_p16", "q_p84"}
+    missing = required - index.keys()
+    if missing:
+        raise ValueError(f"TMDWF Fourier table is missing columns: {sorted(missing)}")
+    x = np.array([float(row[index["x"]]) for row in rows], dtype=float)
+    q_mean = np.array([float(row[index["q_mean"]]) for row in rows], dtype=float)
+    q_err = np.array([float(row[index["q_err"]]) for row in rows], dtype=float)
+    q_p16 = np.array([float(row[index["q_p16"]]) for row in rows], dtype=float)
+    q_p84 = np.array([float(row[index["q_p84"]]) for row in rows], dtype=float)
+    return x, q_mean, q_err, q_p16, q_p84
+
+
+def load_tmdwf_fourier_sample_table(path: str | Path) -> tuple[np.ndarray, np.ndarray]:
+    header, rows = _parse_grouped_table(path)
+    index = {name: idx for idx, name in enumerate(header)}
+    required = {"sample_id", "x", "q_sample"}
+    missing = required - index.keys()
+    if missing:
+        raise ValueError(f"TMDWF Fourier sample table is missing columns: {sorted(missing)}")
+    x_values = sorted({float(row[index["x"]]) for row in rows})
+    sample_maps: dict[int, dict[float, float]] = {}
+    for row in rows:
+        sample_id = int(row[index["sample_id"]])
+        x_value = float(row[index["x"]])
+        q_value = float(row[index["q_sample"]])
+        sample_maps.setdefault(sample_id, {})[x_value] = q_value
+    valid_sample_ids = sorted(
+        sample_id
+        for sample_id, by_x in sample_maps.items()
+        if all(x_value in by_x and np.isfinite(by_x[x_value]) for x_value in x_values)
+    )
+    samples = np.array(
+        [[sample_maps[sample_id][x_value] for x_value in x_values] for sample_id in valid_sample_ids],
+        dtype=float,
+    )
+    if samples.size == 0:
+        samples = np.empty((0, len(x_values)), dtype=float)
+    return np.array(x_values, dtype=float), samples
+
+
 def plot_tmdwf_fourier_transform(
     output_path: str | Path,
     x_values: np.ndarray,
@@ -336,6 +409,7 @@ def run_tmdwf_fourier_from_fit_outputs(
     x_values: np.ndarray | None = None,
     zstep_fm: float = DEFAULT_ZSTEP_FM,
     interpolation_kind: str = DEFAULT_INTERPOLATION_KIND,
+    normalization_mode: str = "raw",
     make_plots: bool = False,
     plot_figsize: tuple[float, float] = (6.5, 4.5),
     plot_xlim: tuple[float, float] | None = None,
@@ -384,15 +458,17 @@ def run_tmdwf_fourier_from_fit_outputs(
         q_p84 = np.full_like(q_mean, np.nan)
         q_samples = np.empty((0, x_grid.size), dtype=float)
 
-    table_path = tables_dir / f"{stem}_{component}_{nstates}state_fourier.txt"
-    sample_path = samples_dir / f"{stem}_{component}_{nstates}state_fourier_samples.txt"
-    plot_path = plots_dir / f"{stem}_{component}_{nstates}state_fourier.pdf"
+    mode_suffix = _fourier_mode_suffix(normalization_mode)
+    table_path = tables_dir / f"{stem}{mode_suffix}_{component}_{nstates}state_fourier.txt"
+    sample_path = samples_dir / f"{stem}{mode_suffix}_{component}_{nstates}state_fourier_samples.txt"
+    plot_path = plots_dir / f"{stem}{mode_suffix}_{component}_{nstates}state_fourier.pdf"
 
     with table_path.open("w", encoding="utf-8") as handle:
         handle.write(f"pz {pz}\n")
         handle.write(f"bT {bT}\n")
         handle.write(f"component {component}\n")
         handle.write(f"nstates {nstates}\n")
+        handle.write(f"normalization_mode {normalization_mode}\n")
         handle.write(f"lattice_spacing_fm {lattice_spacing_fm:.10e}\n")
         handle.write(f"zstep_fm {zstep_fm:.10e}\n")
         handle.write(f"interpolation_kind {_resolve_interpolation_kind(interpolation_kind, bz_fit.size)}\n")
@@ -474,6 +550,7 @@ def run_tmdwf_fourier_workflow(
                             x_values=spec.x_values,
                             zstep_fm=spec.zstep_fm,
                             interpolation_kind=spec.interpolation_kind,
+                            normalization_mode=spec.normalization_mode,
                             make_plots=spec.make_plots,
                         )
                     )

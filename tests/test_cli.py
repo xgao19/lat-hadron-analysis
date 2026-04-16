@@ -13,6 +13,7 @@ class CLITests(unittest.TestCase):
         help_text = parser.format_help()
         self.assertIn("tmdwf-normalize", help_text)
         self.assertIn("tmdwf-fourier", help_text)
+        self.assertIn("tmdwf-cs-kernel", help_text)
 
     def test_tmdwf_normalize_cli_dispatches_to_workflow(self) -> None:
         output_buffer = io.StringIO()
@@ -39,6 +40,19 @@ class CLITests(unittest.TestCase):
         printed = output_buffer.getvalue()
         self.assertIn("/tmp/fourier.txt", printed)
         self.assertIn("/tmp/fourier.pdf", printed)
+
+    def test_tmdwf_cs_kernel_cli_dispatches_to_workflow(self) -> None:
+        output_buffer = io.StringIO()
+        fake_outputs = [Path("/tmp/cs_band.txt"), Path("/tmp/cs_samples.txt")]
+        with patch("lqcd_analysis.cli.run_tmdwf_cs_kernel_workflow", return_value=fake_outputs) as mock_run:
+            with redirect_stdout(output_buffer):
+                main(["tmdwf-cs-kernel", "cs_input.txt", "--results-dir", "/tmp/cs_results"])
+
+        self.assertEqual(mock_run.call_args.args[0], "cs_input.txt")
+        self.assertEqual(mock_run.call_args.kwargs["results_dir"], "/tmp/cs_results")
+        printed = output_buffer.getvalue()
+        self.assertIn("/tmp/cs_band.txt", printed)
+        self.assertIn("/tmp/cs_samples.txt", printed)
 
 
 if __name__ == "__main__":

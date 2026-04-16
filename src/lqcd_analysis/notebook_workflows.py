@@ -5,6 +5,10 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from .tmdwf.cs_kernel_extract import (
+    parse_tmdwf_cs_kernel_input,
+    run_tmdwf_cs_kernel_workflow,
+)
 from .tmdwf.fourier import (
     parse_tmdwf_fourier_input,
     run_tmdwf_fourier_workflow,
@@ -117,6 +121,30 @@ TMDWF_FOURIER_KEYS = {
     "results_dir",
 }
 TMDWF_FOURIER_RUN_KEYS = {"results_dir"}
+TMDWF_CS_KERNEL_KEYS = {
+    "title_pattern",
+    "input_root",
+    "ns",
+    "lattice_spacing_fm",
+    "gmlist",
+    "etalist",
+    "component",
+    "nstates",
+    "normalization_mode",
+    "mu",
+    "scheme",
+    "extraction_type",
+    "kernel_labels",
+    "kernel",
+    "bTlist",
+    "bTrange",
+    "pzlist",
+    "pzrange",
+    "x_window",
+    "plot",
+    "results_dir",
+}
+TMDWF_CS_KERNEL_RUN_KEYS = {"results_dir"}
 TMDWF_NORMALIZE_KEYS = {
     "title_pattern",
     "input_root",
@@ -372,6 +400,61 @@ def render_tmdwf_fourier_input_text(config: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def render_tmdwf_cs_kernel_input_text(config: dict[str, Any]) -> str:
+    config = _subset_config(config, TMDWF_CS_KERNEL_KEYS)
+    required = [
+        "title_pattern",
+        "input_root",
+        "ns",
+        "lattice_spacing_fm",
+        "gmlist",
+        "etalist",
+        "component",
+        "nstates",
+        "normalization_mode",
+        "mu",
+    ]
+    missing = [key for key in required if key not in config]
+    if missing:
+        raise ValueError(f"missing TMDWF CS-kernel notebook config keys: {missing}")
+    if "bTlist" not in config and "bTrange" not in config:
+        raise ValueError("missing TMDWF CS-kernel notebook config key: bTlist or bTrange")
+    if "pzlist" not in config and "pzrange" not in config:
+        raise ValueError("missing TMDWF CS-kernel notebook config key: pzlist or pzrange")
+    if "kernel_labels" not in config and "kernel" not in config:
+        raise ValueError("missing TMDWF CS-kernel notebook config key: kernel_labels")
+
+    lines = [
+        f"title_pattern {_as_scalar_string(config['title_pattern'])}",
+        f"input_root {_as_scalar_string(config['input_root'])}",
+        f"ns {_as_scalar_string(config['ns'])}",
+        f"lattice_spacing_fm {_as_scalar_string(config['lattice_spacing_fm'])}",
+        f"gmlist {_as_scalar_string(config['gmlist'])}",
+        f"etalist {_as_scalar_string(config['etalist'])}",
+        f"component {_as_scalar_string(config['component'])}",
+        f"nstates {_as_scalar_string(config['nstates'])}",
+        f"normalization_mode {_as_scalar_string(config['normalization_mode'])}",
+        f"mu {_as_scalar_string(config['mu'])}",
+        f"scheme {_as_scalar_string(config.get('scheme', 'CG'))}",
+        f"extraction_type {_as_scalar_string(config.get('extraction_type', 'type2'))}",
+        f"kernel_labels {_as_scalar_string(config.get('kernel_labels', config.get('kernel')))}",
+    ]
+    if "bTlist" in config and config["bTlist"] is not None:
+        lines.append(f"bTlist {_as_scalar_string(config['bTlist'])}")
+    elif "bTrange" in config and config["bTrange"] is not None:
+        lines.append(f"bTrange {_as_scalar_string(config['bTrange'])}")
+    if "pzlist" in config and config["pzlist"] is not None:
+        lines.append(f"pzlist {_as_scalar_string(config['pzlist'])}")
+    elif "pzrange" in config and config["pzrange"] is not None:
+        lines.append(f"pzrange {_as_scalar_string(config['pzrange'])}")
+    if "x_window" in config and config["x_window"] is not None:
+        lines.append(f"x_window {_as_scalar_string(config['x_window'])}")
+    for optional_key in ("plot", "results_dir"):
+        if optional_key in config and config[optional_key] is not None:
+            lines.append(f"{optional_key} {_as_scalar_string(config[optional_key])}")
+    return "\n".join(lines) + "\n"
+
+
 def render_tmdwf_normalize_input_text(config: dict[str, Any]) -> str:
     config = _subset_config(config, TMDWF_NORMALIZE_KEYS)
     required = [
@@ -493,6 +576,33 @@ def validate_tmdwf_fourier_notebook_config(config: dict[str, Any]) -> dict[str, 
     return validated
 
 
+def validate_tmdwf_cs_kernel_notebook_config(config: dict[str, Any]) -> dict[str, Any]:
+    input_path = _materialize_input_text(render_tmdwf_cs_kernel_input_text(config), "input_tmdwf_cs_kernel.txt")
+    parsed = parse_tmdwf_cs_kernel_input(input_path)
+    validated = {
+        "title_pattern": parsed.title_pattern,
+        "input_root": parsed.input_root,
+        "ns": parsed.ns,
+        "lattice_spacing_fm": parsed.lattice_spacing_fm,
+        "gmlist": parsed.gmlist,
+        "etalist": parsed.etalist,
+        "component": parsed.component,
+        "nstates": parsed.nstates,
+        "normalization_mode": parsed.normalization_mode,
+        "mu": parsed.mu,
+        "scheme": parsed.scheme,
+        "extraction_type": parsed.extraction_type,
+        "kernel_labels": parsed.kernel_labels,
+        "bTlist": parsed.bTlist,
+        "pzlist": parsed.pzlist,
+        "x_window": parsed.x_window,
+        "plot": parsed.make_plots,
+    }
+    if "results_dir" in config and config["results_dir"] is not None:
+        validated["results_dir"] = Path(config["results_dir"])
+    return validated
+
+
 def validate_tmdwf_normalize_notebook_config(config: dict[str, Any]) -> dict[str, Any]:
     input_path = _materialize_input_text(render_tmdwf_normalize_input_text(config), "input_tmdwf_normalize.txt")
     parsed = parse_tmdwf_normalize_input(input_path)
@@ -579,6 +689,19 @@ def run_tmdwf_fourier_from_notebook(
         run_config["results_dir"] = _guess_notebook_dir()
     input_path = _materialize_input_text(render_tmdwf_fourier_input_text(config), "input_tmdwf_fourier.txt")
     return run_tmdwf_fourier_workflow(input_path, results_dir=run_config["results_dir"])
+
+
+def run_tmdwf_cs_kernel_from_notebook(
+    config: dict[str, Any],
+    **overrides: Any,
+) -> list[Path]:
+    run_config = {"results_dir": None}
+    run_config.update(_subset_config(config, TMDWF_CS_KERNEL_RUN_KEYS))
+    run_config.update({key: value for key, value in overrides.items() if value is not None})
+    if run_config["results_dir"] is None:
+        run_config["results_dir"] = _guess_notebook_dir()
+    input_path = _materialize_input_text(render_tmdwf_cs_kernel_input_text(config), "input_tmdwf_cs_kernel.txt")
+    return run_tmdwf_cs_kernel_workflow(input_path, results_dir=run_config["results_dir"])
 
 
 def run_tmdwf_normalize_from_notebook(

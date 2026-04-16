@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from .tmdwf.cs_kernel_extract import run_tmdwf_cs_kernel_workflow
 from .tmdwf.fourier import run_tmdwf_fourier_workflow
 from .tmdwf.fit_nstate import run_tmdwf_nstate_fit
 from .tmdwf.normalize import run_tmdwf_normalization
@@ -98,6 +99,20 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Directory for TMDWF Fourier tables, sample outputs, and plots",
     )
+
+    tmdwf_cs_kernel_parser = subparsers.add_parser(
+        "tmdwf-cs-kernel",
+        help="Run downstream TMDWF Collins-Soper kernel extraction from a text input file.",
+    )
+    tmdwf_cs_kernel_parser.add_argument(
+        "input_file",
+        help="Input control file for the TMDWF CS-kernel extraction workflow",
+    )
+    tmdwf_cs_kernel_parser.add_argument(
+        "--results-dir",
+        default=None,
+        help="Directory for TMDWF CS-kernel tables, bootstrap samples, diagnostics, and plots",
+    )
     return parser
 
 
@@ -147,6 +162,15 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.command == "tmdwf-fourier":
         outputs = run_tmdwf_fourier_workflow(
+            args.input_file,
+            results_dir=args.results_dir,
+        )
+        for output in outputs:
+            print(output)
+        return
+
+    if args.command == "tmdwf-cs-kernel":
+        outputs = run_tmdwf_cs_kernel_workflow(
             args.input_file,
             results_dir=args.results_dir,
         )

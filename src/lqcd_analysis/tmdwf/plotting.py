@@ -306,6 +306,45 @@ def plot_tmdwf_m0_from_fit_tables(
     )
 
 
+def plot_tmdwf_cs_kernel_band(
+    output_path: str | Path,
+    *,
+    x_values: np.ndarray,
+    band_p16: np.ndarray,
+    band_p50: np.ndarray,
+    band_p84: np.ndarray,
+    title: str,
+    scheme: str,
+    kernel_label: str,
+    bT: int,
+    reference_pz: int,
+    figsize: tuple[float, float] = (6.8, 4.5),
+    xlim: tuple[float, float] | None = None,
+    ylim: tuple[float, float] | None = None,
+) -> Path:
+    output_path = Path(output_path)
+    plt = prepare_matplotlib()
+    if plt is None:
+        return save_plot_status(output_path.with_suffix(".txt"), "matplotlib not installed; plot was skipped")
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.fill_between(x_values, band_p16, band_p84, color="C0", alpha=0.2, linewidth=0)
+    ax.plot(x_values, band_p50, color="C0", linewidth=1.2, label=f"{scheme} {kernel_label}")
+    ax.set_xlabel("x")
+    ax.set_ylabel(r"$\gamma_\zeta$")
+    if xlim is not None:
+        ax.set_xlim(*xlim)
+    if ylim is not None:
+        ax.set_ylim(*ylim)
+    ax.set_title(f"{title} bT={bT} ref pz={reference_pz}")
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(output_path)
+    plt.close(fig)
+    return output_path
+
+
 def write_tmdwf_plot_notebook(
     notebook_path: str | Path,
     notebook_output_dir: str | Path,

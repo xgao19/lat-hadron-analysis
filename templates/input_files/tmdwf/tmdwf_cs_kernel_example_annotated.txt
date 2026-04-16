@@ -1,0 +1,55 @@
+# Standalone downstream TMDWF Collins-Soper kernel extraction.
+# This workflow reads already-generated TMDWF Fourier outputs and
+# extracts the type-2 CS kernel without rerunning the TMDWF fit or Fourier step.
+
+# Output title / analysis tag.
+title_pattern demo_tmdwf_cs_kernel
+
+# Root directory that holds the existing Fourier outputs.
+# The workflow automatically resolves the usual Fourier table/sample filenames
+# from title_pattern, gmlist, etalist, bTlist, component, nstates, and normalization_mode.
+input_root /path/to/tmdwf_fourier_outputs
+
+# Ensemble metadata.
+ns 64
+lattice_spacing_fm 0.076
+gmlist T5
+etalist eta0
+component real
+nstates 1
+normalization_mode raw
+mu 2.0
+
+# Legacy-compatible extraction controls.
+scheme CG
+extraction_type type2
+kernel_labels LO NLO NLL NNLO NNLL
+
+# Batch ranges.
+bTrange 0 4
+pzrange 2 6
+
+# Fourier-output selectors:
+# - gmlist / etalist pick which operator/insertion channels to read
+# - component / nstates pick which Fourier output family to read
+# - normalization_mode tells the workflow whether to read raw or normalized Fourier outputs
+#   and is recorded explicitly in the CS-kernel outputs
+
+# Legacy default x window for the constant-in-P2 fit.
+# Only x values inside this window are used when fitting the estimator
+# built from one reference P1 and all larger comparison P2 values.
+x_window 0.2 0.8
+
+# Optional plot output.
+# When true, also write one quick-look PDF band plot for each
+# (kernel_label, bT, reference_pz) output group.
+plot true
+
+# Optional explicit output root.
+# The workflow writes:
+# - <results_dir>/<title_pattern with pz->multiPz>/*_summary.txt
+# - <results_dir>/<title_pattern with pz->multiPz>/tables/*_band.txt
+# - <results_dir>/<title_pattern with pz->multiPz>/samples/*_samples.txt
+# - <results_dir>/<title_pattern with pz->multiPz>/diagnostics/*_diagnostics.txt
+# - <results_dir>/<title_pattern with pz->multiPz>/plots/*_band.pdf   (when plot=true)
+results_dir results_tmdwf_cs_kernel

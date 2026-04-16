@@ -2036,7 +2036,7 @@ class TMDWFFitTests(unittest.TestCase):
             run_tmdwf_fourier_workflow(norm_input)
 
             raw_summary = (tmp / "raw_outputs" / "demo_pz2" / "tables" / "demo_pz2_T5_eta0_bT0_real_1state_fourier.txt").read_text(encoding="utf-8")
-            norm_summary = (tmp / "norm_outputs" / "demo_pz2" / "tables" / "demo_pz2_T5_eta0_bT0_real_1state_fourier.txt").read_text(encoding="utf-8")
+            norm_summary = (tmp / "norm_outputs" / "demo_pz2" / "tables" / "demo_pz2_T5_eta0_bT0_mode1_real_1state_fourier.txt").read_text(encoding="utf-8")
 
         self.assertIn("q_mean", raw_summary)
         self.assertIn("q_mean", norm_summary)
