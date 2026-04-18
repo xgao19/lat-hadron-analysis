@@ -96,7 +96,12 @@ Expected extra input keys:
 model symmetric
 nstates 1 2 3
 fold_t periodic
-tmax auto
+pz0_ground_energy 0.42
+fix_ground_energy_from_dispersion true
+# notebook workflow_config: fit_window = {0: [4, 12], 5: [6, 12]}
+# plain-text input: fit_window /path/to/2pt_fit_windows.txt
+# advanced / experimental:
+# auto_search_plateau_from_fit_window true
 binsize 1
 bootstrap_samples auto
 bootstrap_size auto
@@ -108,6 +113,27 @@ Optional input:
 
 - `pz0_ground_energy <value>`:
   provide the pz=0 ground-state energy in lattice units. When present, the 1-state plateau search uses the lattice dispersion target `sqrt(E0_pz0^2 + (2*pi*pz/Ns)^2)` to pre-filter plateau candidates before the usual plateau ranking. This affects only plateau selection, not the nonlinear fit model.
+- `fix_ground_energy_from_dispersion true|false`:
+  when `true`, the nonlinear 2pt fit fixes the ground-state energy to the same lattice-dispersion target derived from `pz0_ground_energy`. This is the closest repository-native analogue to the legacy fixed-`E0` setup while preserving the current plateau-table outputs.
+- `fit_window <path>`:
+  preferred plain-text fit-window table with rows of the form `pz tmin tmax`.
+  After folding, the correlator is clipped directly to that window for the
+  requested momentum.
+- `auto_search_plateau_from_fit_window true|false`:
+  advanced / experimental option. When `true`, the code first clips the folded
+  correlator to the requested fit window and then runs automatic plateau
+  suggestion inside that retained window instead of using the full window
+  directly.
+
+Recommended default usage:
+
+- fix trusted fit windows explicitly per momentum with notebook `fit_window`
+  or plain-text `fit_window`
+- provide `pz0_ground_energy`
+- set `fix_ground_energy_from_dispersion true`
+
+This is the repository’s current legacy-aligned default path for production
+analysis.
 
 `fold_t` options:
 
@@ -125,12 +151,20 @@ Meaning:
 
 Notes on the workflow:
 
-- `tmax auto` is chosen as the first time slice where the effective-mass relative error reaches 50%, or `Nt/2 - 7`, whichever is smaller.
 - The 2-state fit is initialized from the suggested 1-state plateau.
 - The 3-state fit is initialized from the suggested 2-state plateau.
 - Plateau suggestion looks for the longest contiguous `tmin` window where adjacent ground-state energies are statistically consistent and the fits remain reasonably well behaved.
 - If `matplotlib` is unavailable, the code writes a small text note instead of a plot file.
 - Plotting is now handled by a reusable module in `src/lqcd_analysis/two_point/plotting.py`.
+
+Advanced / experimental note:
+
+- `auto_search_plateau_from_fit_window`
+- compatibility fallback paths that still use automatic `tmax`
+
+These automatic plateau-oriented choices are useful for exploratory testing and
+workflow development, but should currently be treated as testing options rather
+than the primary recommended default when you already have trusted fit windows.
 - Plot outputs convert fitted energies and effective masses from lattice units `E*a` into physical units in MeV using the provided lattice spacing.
 - After each 2pt fit run, an editable notebook is written under `results_dir/notebook_plots/`. The notebook calls the reusable plotting module so you can tweak paths, styles, and which state to draw.
 
@@ -165,7 +199,13 @@ fit_target ratio
 fit_component both
 nstates 1 2
 gmlist T5
-tmax auto
+# notebook workflow_config: fit_window = {5: [6, 12], 6: [6, 12]}
+# plain-text input: fit_window /path/to/tmdwf_fit_windows.txt
+# advanced / experimental:
+# auto_search_shared_window_from_fit_window true
+# tmax_scan_radius 1
+# decay_constant 0.11 0.03
+# min_fit_dof 4
 qtmdwf_h5 /path/to/file_or_pattern.h5
 dataset_path_template {gm}/{eta}/pz{pz}/{Tdir}/bT{bT}/bz{bz}
 two_point_plateau_table /path/to/2pt_plateau_pz*_tmax#_plateau.txt
@@ -177,8 +217,8 @@ tsrange 0 20
 The TMDWF workflow:
 
 - expands HDF5 dataset paths using `{gm}`, `{eta}`, `{pz}`, `{Tdir}`, `{bT}`, and `{bz}`
-- resolves `tmax` from the two-point plateau filename token `_tmax<digits>_plateau.txt` when `tmax` is omitted or set to `auto`
-- lets an explicit integer `tmax` override any inferred filename value
+- resolves `tmax` from the two-point plateau filename token `_tmax<digits>_plateau.txt`
+- can scan a bounded local `tmax` neighborhood around the retained fit-window upper edge during shared-window selection when `tmax_scan_radius > 0`
 - averages over the requested `Tdir` entries
 - combines `+bz` and `-bz` when `bz != 0`
 - applies the phase factor `exp(-i * phase * bz / 2)` with `phase = 2*pi*pz/Ns`
@@ -191,6 +231,7 @@ The TMDWF workflow:
 - folds the time dependence after preprocessing
 - writes outputs grouped by `bT` rather than one file per `bz`
 - stores one parseable `bz` block per grouped summary file
+- records whether the final fit window came from `fit_window` or `fit_window_auto_search`
 - records two-point provenance in each summary block:
   - `two_point_plateau_table_resolved`
   - `two_point_tmax_source`
@@ -219,6 +260,52 @@ A matching notebook template is also provided in:
 
 - `templates/tmdwf/tmdwf_nstate_template.ipynb`
 
+Recommended default usage:
+
+- use explicit per-momentum fit windows as the default path
+- in notebooks, prefer `fit_window`
+- in plain-text inputs, use `fit_window`
+- treat this as the repository’s current production-style recommendation when
+  you already have trusted `trange` choices from prior analysis or inspection
+
+Useful extra TMDWF fit controls:
+
+- `auto_search_shared_window_from_fit_window true|false`:
+  advanced / experimental option. When `true`, the workflow first treats the
+  requested fit window as a bounded search region, then runs shared-window
+  selection inside that region instead of using the full fit window directly.
+- `decay_constant <value> <error>`:
+  required when automatic shared-window search is enabled. The automatic
+  reference-window scan keeps the existing decay-constant / reference-value
+  philosophy.
+- `tmax_scan_radius <int>`:
+  optional bounded `tmax` scan radius for automatic shared-window selection.
+  `0` keeps the search at the retained fit-window upper edge; `1` scans
+  `fit_window_tmax-1`, `fit_window_tmax`, and `fit_window_tmax+1` after
+  clipping to valid bounds.
+- `fit_window <path>`:
+  preferred plain-text fit-window table. Supported row formats are
+  `pz tmin tmax` and `gm pz tmin tmax`.
+- `fit_window` in notebook `workflow_config`:
+  preferred default notebook-facing fit-window form. Use a dictionary like
+  `{5: [6, 12], 6: [6, 12]}` to fix the fit window per momentum, or a nested
+  form like `{"T5": {5: [6, 12]}}` when you want `gm`-specific windows. The
+  notebook helper materializes this into the backend fit-window table format
+  automatically.
+- `min_fit_dof <int>`:
+  shared-window scans still enforce the hard floor `max(4, min_fit_dof)`.
+
+Advanced / experimental note:
+
+- `auto_search_shared_window_from_fit_window`
+- `tmax_scan_radius`
+- `decay_constant`
+- `min_fit_dof`
+
+These support automated reference-based window selection, but they are still in
+an early testing stage. They are useful for exploratory studies, not yet the
+primary recommended default for production analysis.
+
 These TMDWF templates are intentionally example workflow templates rather than
 fully runnable tracked examples, because they depend on user-local HDF5 data.
 
@@ -236,6 +323,7 @@ This normalization workflow:
 
 - reads grouped `..._fit.txt` and `..._samples.txt` outputs from the TMDWF fit workflow
 - normalizes the matrix element sample-by-sample before summarizing
+- when both grouped `real` and `imag` sample tables are available, it first forms complex bootstrap samples, performs the normalization in the complex plane, and only then writes the requested component
 - writes grouped normalized outputs that keep the familiar `m0_mean`, `m0_err`, and `m0` columns
 - can be used as an intermediate step before the downstream Fourier workflow
 
@@ -294,7 +382,8 @@ This CS-kernel workflow:
 - reads one Fourier bootstrap sample table for each requested `(gm, eta, bT, pz, component, nstates, normalization_mode)` combination
 - converts lattice momentum integers into physical momenta using the ensemble metadata
 - preserves the legacy type-2 estimator logic, including the absolute value inside the logarithm
-- preserves the legacy constant-in-`P2` fit across all larger comparison momenta for each chosen reference `P1`
+- by default uses the full requested `pzlist` in one extraction group: `P1 = pzmin`, `P2 = all larger requested momenta`
+- also supports `pair_mode adjacent` for neighboring pairs like `5-6`, `6-7`, `7-8`
 - writes bootstrap samples, 16/50/84 summary bands, and chi2/dof diagnostics
 - currently supports only the legacy `CG` matching scheme for type-2 extraction, with clean validation
 
@@ -313,6 +402,7 @@ normalization_mode raw
 mu 2.0
 scheme CG
 extraction_type type2
+pair_mode all
 kernel_labels LO NLO NLL
 bTrange 0 4
 pzrange 2 6
@@ -340,17 +430,23 @@ Option guide:
   matching-scheme selector. The current type-2 implementation supports only `CG`, and invalid choices raise a clear error.
 - `extraction_type`:
   keep this as `type2` for the legacy qTMDWF CS-kernel method.
+- `pair_mode`:
+  controls which momentum combinations are fit.
+  `all` means a single extraction group per `bT` using `pzmin` as `P1` and all larger requested momenta as `P2`.
+  `adjacent` means one extraction group per neighboring pair, e.g. `5-6`, `6-7`, `7-8`.
 - `kernel_labels`:
   one or more perturbative labels to run in batch. The legacy order mapping is preserved exactly:
   `LO -> 0`, `NLO/NLL -> 1`, `NNLO/NNLL -> 2`.
 - `bTlist` / `bTrange`:
   which transverse separations to process.
 - `pzlist` / `pzrange`:
-  which lattice momentum integers to process. For each reference `P1`, the workflow automatically uses all larger requested `P2` values in the constant fit.
+  which lattice momentum integers to process. How they are grouped into `P1/P2` combinations is controlled explicitly by `pair_mode`.
 - `x_window`:
   `x` range used in the extraction fit. The default `[0.2, 0.8]` reproduces the legacy script.
 - `plot`:
   whether to also write a quick summary PDF band plot for each output group.
+  When `pair_mode adjacent`, the workflow also writes an automatic breakdown plot showing
+  the data log-ratio term, the matching correction, and the total estimator for all adjacent pairs.
 - `results_dir`:
   output root for summaries, band tables, bootstrap samples, diagnostics, and optional plots.
 
@@ -360,13 +456,14 @@ Expected input table format:
   one row per `(sample_id, x)` with a `q_sample` column.
 - Internally those long-form rows are regrouped into a bootstrap matrix with shape `(n_samples, n_x)` before the CS estimator and constant fit are applied.
 
-For each `(kernel_label, bT, reference_pz)` combination, the workflow writes:
+For each `(kernel_label, bT, pair-group)` combination, the workflow writes:
 
 - `*_summary.txt`
 - `tables/*_band.txt`
 - `samples/*_samples.txt`
 - `diagnostics/*_diagnostics.txt`
 - `plots/*_band.pdf` when `plot true`
+- `plots/*_adjacent_breakdown.pdf` when `plot true` and `pair_mode adjacent`
 
 Template inputs are provided in:
 

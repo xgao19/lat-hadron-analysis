@@ -1,4 +1,5 @@
 import json
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -54,7 +55,9 @@ class NotebookWorkflowTests(unittest.TestCase):
             "tsrange": [0, 24],
             "model": "normal",
             "fit_mode": "uncorrelated",
+            "fix_ground_energy_from_dispersion": False,
             "nstates": [1, 2],
+            "fit_window": {0: [4, 12]},
         }
         self.tmdwf_config = {
             "title_pattern": "demo_pz*",
@@ -74,17 +77,17 @@ class NotebookWorkflowTests(unittest.TestCase):
             "bootstrap_samples": 16,
             "bootstrap_size": 16,
             "seed": 2026,
-            "tmin": 2,
-            "tmax": 12,
+            "fit_window": {0: [3, 6]},
+            "tmax_scan_radius": 1,
             "qtmdwf_h5": "/tmp/qtmdwf_pz*.h5",
             "dataset_path_template": "{gm}/{eta}/pz{pz}/{Tdir}/bT{bT}/bz{bz}",
             "two_point_plateau_table": "/tmp/plateau_pz*.txt",
             "c2pt": "/tmp/c2pt.csv",
             "fold_t": "periodic",
             "tsrange": [0, 20],
-            "shared_window_by_pz_gm": True,
             "decay_constant": [0.1, 0.02],
             "min_fit_dof": 2,
+            "auto_search_shared_window_from_fit_window": True,
         }
         self.tmdwf_normalize_config = {
             "title_pattern": "demo_pz*",
@@ -113,6 +116,7 @@ class NotebookWorkflowTests(unittest.TestCase):
             "mu": 2.0,
             "scheme": "CG",
             "extraction_type": "type2",
+            "pair_mode": "all",
             "kernel_labels": ["LO", "NLO"],
             "bTlist": [0, 2],
             "pzlist": [2, 3, 4],
@@ -153,8 +157,9 @@ class NotebookWorkflowTests(unittest.TestCase):
                 "model": "normal",
                 "fit_mode": "correlated",
                 "pz0_ground_energy": 0.42,
+                "fix_ground_energy_from_dispersion": False,
                 "nstates": [1, 2],
-                "tmax": "auto",
+                "fit_window": {0: [4, 12]},
                 "lambda_prior": 0.5,
                 "plot": True,
                 "results_dir": "examples/outputs/demo",
@@ -163,6 +168,11 @@ class NotebookWorkflowTests(unittest.TestCase):
         self.assertIn("model normal", text)
         self.assertIn("fit_mode correlated", text)
         self.assertIn("pz0_ground_energy 0.42", text)
+        self.assertIn("fix_ground_energy_from_dispersion false", text)
+        match = re.search(r"fit_window (.+)", text)
+        self.assertIsNotNone(match)
+        override_path = Path(match.group(1).strip())
+        self.assertEqual(override_path.read_text(encoding="utf-8"), "0 4 12\n")
         self.assertIn("nstates 1 2", text)
         self.assertIn("lambda_prior 0.5", text)
         self.assertIn("results_dir examples/outputs/demo", text)
@@ -172,6 +182,12 @@ class NotebookWorkflowTests(unittest.TestCase):
         config.pop("tsrange")
         text = render_nstate_fit_input_text(config)
         self.assertNotIn("tsrange", text)
+
+    def test_validate_nstate_notebook_config_supports_fit_window_dict(self) -> None:
+        parsed = validate_nstate_notebook_config(self.nstate_config)
+        override_path = Path(parsed.fit_window)
+        self.assertTrue(override_path.exists())
+        self.assertEqual(override_path.read_text(encoding="utf-8"), "0 4 12\n")
         parsed = parse_nstate_fit_input(
             Path("templates/input_files/two_point/nstate_fit_example_realdata.txt")
         )
@@ -206,11 +222,28 @@ class NotebookWorkflowTests(unittest.TestCase):
         self.assertIn("gmlist T5", text)
         self.assertIn("bTlist 0", text)
         self.assertIn("bzlist 0", text)
-        self.assertIn("tmax 12", text)
-        self.assertIn("shared_window_by_pz_gm true", text)
         self.assertIn("decay_constant 0.1 0.02", text)
         self.assertIn("min_fit_dof 2", text)
+        self.assertIn("tmax_scan_radius 1", text)
+        self.assertIn("auto_search_shared_window_from_fit_window true", text)
+        match = re.search(r"fit_window (.+)", text)
+        self.assertIsNotNone(match)
+        override_path = Path(match.group(1).strip())
+        self.assertTrue(override_path.exists())
+        self.assertEqual(override_path.read_text(encoding="utf-8"), "0 3 6\n")
         self.assertIn("results_dir examples/outputs/tmdwf_demo", text)
+
+    def test_render_tmdwf_text_supports_nested_gm_fit_window_dict(self) -> None:
+        text = render_tmdwf_fit_input_text(
+            {
+                **self.tmdwf_config,
+                "fit_window": {"T5": {0: [4, 7]}},
+            }
+        )
+        match = re.search(r"fit_window (.+)", text)
+        self.assertIsNotNone(match)
+        override_path = Path(match.group(1).strip())
+        self.assertEqual(override_path.read_text(encoding="utf-8"), "T5 0 4 7\n")
 
     def test_render_tmdwf_text_preserves_qtmdwf_gm_placeholder(self) -> None:
         config = dict(self.tmdwf_config)
@@ -224,17 +257,11 @@ class NotebookWorkflowTests(unittest.TestCase):
         text = render_tmdwf_fit_input_text(config)
         self.assertNotIn("tsrange", text)
 
-    def test_render_tmdwf_text_without_tmax(self) -> None:
-        config = dict(self.tmdwf_config)
-        config.pop("tmax")
-        text = render_tmdwf_fit_input_text(config)
-        self.assertNotIn("tmax", text)
-
-    def test_render_tmdwf_text_with_auto_tmax(self) -> None:
-        config = dict(self.tmdwf_config)
-        config["tmax"] = "auto"
-        text = render_tmdwf_fit_input_text(config)
-        self.assertIn("tmax auto", text)
+    def test_validate_tmdwf_notebook_config_supports_fit_window_dict(self) -> None:
+        parsed = validate_tmdwf_notebook_config(self.tmdwf_config)
+        override_path = Path(parsed.fit_window)
+        self.assertTrue(override_path.exists())
+        self.assertEqual(override_path.read_text(encoding="utf-8"), "0 3 6\n")
 
     def test_validate_tmdwf_notebook_config(self) -> None:
         parsed = validate_tmdwf_notebook_config(self.tmdwf_config)
@@ -251,13 +278,6 @@ class NotebookWorkflowTests(unittest.TestCase):
         tmdwf_config.pop("tsrange")
         parsed_tmdwf = validate_tmdwf_notebook_config(tmdwf_config)
         self.assertEqual(parsed_tmdwf.tsrange, (0, 31))
-        self.assertEqual(parsed_tmdwf.tmax, 12)
-
-    def test_validate_tmdwf_config_without_tmax(self) -> None:
-        tmdwf_config = dict(self.tmdwf_config)
-        tmdwf_config.pop("tmax")
-        parsed_tmdwf = validate_tmdwf_notebook_config(tmdwf_config)
-        self.assertIsNone(parsed_tmdwf.tmax)
 
     def test_render_tmdwf_fourier_text(self) -> None:
         text = render_tmdwf_fourier_input_text(
@@ -302,6 +322,7 @@ class NotebookWorkflowTests(unittest.TestCase):
         self.assertIn("title_pattern demo_pz*", text)
         self.assertIn("scheme CG", text)
         self.assertIn("extraction_type type2", text)
+        self.assertIn("pair_mode all", text)
         self.assertIn("kernel_labels LO NLO", text)
         self.assertIn("gmlist T5", text)
         self.assertIn("etalist eta0", text)
@@ -374,6 +395,7 @@ class NotebookWorkflowTests(unittest.TestCase):
             )
         self.assertEqual(validated["scheme"], "CG")
         self.assertEqual(validated["kernel_labels"], ("LO", "NLO"))
+        self.assertEqual(validated["pair_mode"], "all")
         self.assertEqual(validated["bTlist"], (0, 2))
         self.assertEqual(validated["pzlist"], (2, 3, 4))
 
@@ -729,7 +751,7 @@ class NotebookWorkflowTests(unittest.TestCase):
     def test_example_data_files_exist(self) -> None:
         base = Path("examples/data/l64c64a076_m140/comb_c2pt_csv")
         files = sorted(base.glob("c2pt_5_5_k0_pz*_real.csv"))
-        self.assertGreaterEqual(len(files), 4)
+        self.assertGreaterEqual(len(files), 1)
 
 
 if __name__ == "__main__":

@@ -34,8 +34,10 @@ class NStateFitInput:
     model: str
     fit_mode: str
     pz0_ground_energy: float | None
+    fix_ground_energy_from_dispersion: bool
     nstates: tuple[int, ...]
-    tmax: int | None
+    fit_window: str
+    auto_search_plateau_from_fit_window: bool
     binsize: int
     bootstrap_samples: int | None
     bootstrap_size: int | None
@@ -162,7 +164,7 @@ def parse_nstate_fit_input(path: str | Path, results_dir: str | Path | None = No
     if first_tokens is None or len(first_tokens) < 4:
         raise ValueError("the first non-empty line must be: title Ns Nt a_fm")
 
-    required = {"c2pt", "pzlist", "model", "nstates"}
+    required = {"c2pt", "pzlist", "model", "nstates", "fit_window"}
     missing = required - entries.keys()
     if missing:
         raise ValueError(f"missing required keys in {file_path}: {sorted(missing)}")
@@ -179,6 +181,12 @@ def parse_nstate_fit_input(path: str | Path, results_dir: str | Path | None = No
     if not nstates or any(state not in {1, 2, 3} for state in nstates):
         raise ValueError("nstates must contain only 1, 2, and/or 3")
 
+    fix_ground_energy_from_dispersion = parse_bool(
+        entries.get("fix_ground_energy_from_dispersion", ["false"])[0]
+    )
+    if fix_ground_energy_from_dispersion and "pz0_ground_energy" not in entries:
+        raise ValueError("pz0_ground_energy is required when fix_ground_energy_from_dispersion is true")
+
     input_path = file_path.resolve()
     return NStateFitInput(
         title_pattern=first_tokens[0],
@@ -194,8 +202,12 @@ def parse_nstate_fit_input(path: str | Path, results_dir: str | Path | None = No
         pz0_ground_energy=(
             float(entries["pz0_ground_energy"][0]) if "pz0_ground_energy" in entries else None
         ),
+        fix_ground_energy_from_dispersion=fix_ground_energy_from_dispersion,
         nstates=nstates,
-        tmax=parse_optional_int(entries.get("tmax", ["auto"])[0]),
+        fit_window=entries["fit_window"][0],
+        auto_search_plateau_from_fit_window=parse_bool(
+            entries.get("auto_search_plateau_from_fit_window", ["false"])[0]
+        ),
         binsize=int(entries.get("binsize", ["1"])[0]),
         bootstrap_samples=parse_optional_int(entries.get("bootstrap_samples", ["auto"])[0]),
         bootstrap_size=parse_optional_int(entries.get("bootstrap_size", ["auto"])[0]),
@@ -208,6 +220,35 @@ def parse_nstate_fit_input(path: str | Path, results_dir: str | Path | None = No
             else ((input_path.parent / "results_nstate_fit") if results_dir is None else Path(results_dir))
         ),
     )
+
+
+def _load_fit_window_table(
+    path: str | Path,
+) -> dict[int, tuple[int, int]]:
+    file_path = Path(path)
+    overrides: dict[int, tuple[int, int]] = {}
+    with file_path.open("r", encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            tokens = stripped.split()
+            if tokens[0].lower() == "pz":
+                continue
+            if len(tokens) < 3:
+                raise ValueError(
+                    f"invalid fit_window row at {file_path}:{line_number}; "
+                    "expected: pz tmin tmax"
+                )
+            pz = int(tokens[0])
+            tmin = int(tokens[1])
+            tmax = int(tokens[2])
+            if tmax < tmin:
+                raise ValueError(
+                    f"invalid fit window at {file_path}:{line_number}; tmax must be >= tmin"
+                )
+            overrides[pz] = (tmin, tmax)
+    return overrides
 
 
 def parse_optional_int(value: str) -> int | None:
@@ -568,6 +609,46 @@ def unpack_fit_parameters(theta: np.ndarray, nstates: int) -> tuple[np.ndarray, 
     return amps, energies
 
 
+def pack_fit_parameters_with_fixed_ground_energy(
+    amplitudes: np.ndarray,
+    energies: np.ndarray,
+    *,
+    fixed_ground_energy: float | None,
+) -> np.ndarray:
+    if fixed_ground_energy is None:
+        return pack_fit_parameters(amplitudes, energies)
+
+    amps = np.clip(np.asarray(amplitudes, dtype=float), 1e-16, None)
+    ordered = np.maximum.accumulate(np.clip(np.asarray(energies, dtype=float), 1e-12, None))
+    ground_energy = max(float(fixed_ground_energy), 1e-12)
+    theta = [*np.log(amps)]
+    previous_energy = ground_energy
+    for idx in range(1, len(ordered)):
+        theta.append(np.log(max(ordered[idx] - previous_energy, 1e-12)))
+        previous_energy = ordered[idx]
+    return np.array(theta, dtype=float)
+
+
+def unpack_fit_parameters_with_fixed_ground_energy(
+    theta: np.ndarray,
+    nstates: int,
+    *,
+    fixed_ground_energy: float | None,
+) -> tuple[np.ndarray, np.ndarray]:
+    if fixed_ground_energy is None:
+        return unpack_fit_parameters(theta, nstates)
+
+    amps = np.exp(theta[:nstates])
+    gap_parts = theta[nstates:]
+    energies = np.empty(nstates, dtype=float)
+    energies[0] = max(float(fixed_ground_energy), 1e-12)
+    previous_energy = energies[0]
+    for idx in range(1, nstates):
+        previous_energy = previous_energy + np.exp(gap_parts[idx - 1])
+        energies[idx] = previous_energy
+    return amps, energies
+
+
 def fit_residuals(
     theta: np.ndarray,
     times: np.ndarray,
@@ -579,8 +660,13 @@ def fit_residuals(
     priors: tuple[EnergyPrior, ...] = (),
     lambda_prior: float = 1.0,
     residual_model: ResidualModel | None = None,
+    fixed_ground_energy: float | None = None,
 ) -> np.ndarray:
-    amplitudes, energies = unpack_fit_parameters(theta, nstates)
+    amplitudes, energies = unpack_fit_parameters_with_fixed_ground_energy(
+        theta,
+        nstates,
+        fixed_ground_energy=fixed_ground_energy,
+    )
     model_values = evaluate_model(times, amplitudes, energies, nt, model)
     delta = model_values - data
     if residual_model is None or residual_model.fit_mode == "uncorrelated":
@@ -628,6 +714,7 @@ def fit_nstate_sample(
     lambda_prior: float = 1.0,
     residual_model: ResidualModel | None = None,
     covariance: np.ndarray | None = None,
+    fixed_ground_energy: float | None = None,
 ) -> FitResult:
     primary_amplitudes = np.asarray(initial_amplitudes, dtype=float)
     primary_energies = np.asarray(initial_energies, dtype=float)
@@ -638,15 +725,34 @@ def fit_nstate_sample(
         active_sigma: np.ndarray,
         active_model: ResidualModel | None,
     ) -> FitResult:
-        theta0 = pack_fit_parameters(amp_guess, energy_guess)
+        theta0 = pack_fit_parameters_with_fixed_ground_energy(
+            amp_guess,
+            energy_guess,
+            fixed_ground_energy=fixed_ground_energy,
+        )
         result = least_squares(
             fit_residuals,
             theta0,
             method="trf",
             max_nfev=8000,
-            args=(times, data, active_sigma, nt, model, nstates, priors, lambda_prior, active_model),
+            args=(
+                times,
+                data,
+                active_sigma,
+                nt,
+                model,
+                nstates,
+                priors,
+                lambda_prior,
+                active_model,
+                fixed_ground_energy,
+            ),
         )
-        amplitudes, energies = unpack_fit_parameters(result.x, nstates)
+        amplitudes, energies = unpack_fit_parameters_with_fixed_ground_energy(
+            result.x,
+            nstates,
+            fixed_ground_energy=fixed_ground_energy,
+        )
         residual = fit_residuals(
             result.x,
             times,
@@ -658,6 +764,7 @@ def fit_nstate_sample(
             priors,
             lambda_prior,
             active_model,
+            fixed_ground_energy,
         )
         chi2_value = float(np.dot(residual, residual))
         dof = max(len(residual) - len(result.x), 1)
@@ -1056,6 +1163,8 @@ def run_sliding_fits(
     covariance: np.ndarray | None = None,
     priors: tuple[EnergyPrior, ...] = (),
     lambda_prior: float = 1.0,
+    fixed_ground_energy: float | None = None,
+    time_offset: int = 0,
 ) -> tuple[list[FitSummaryRow], dict[int, np.ndarray], dict[int, FitResult]]:
     rows: list[FitSummaryRow] = []
     sample_tables: dict[int, np.ndarray] = {}
@@ -1065,7 +1174,9 @@ def run_sliding_fits(
     previous_meanfit: FitResult | None = None
     previous_sample_fits: list[FitResult | None] = [None] * len(bootstrap_means)
     for tmin in tmin_values:
-        times = np.arange(tmin, tmax + 1)
+        label_tmin = int(tmin + time_offset)
+        label_tmax = int(tmax + time_offset)
+        times = np.arange(label_tmin, label_tmax + 1)
         data_mean = mean_correlator[tmin : tmax + 1]
         sigma_slice = np.clip(sigma[tmin : tmax + 1], 1e-12, None)
         residual_model_note: str | None = None
@@ -1075,14 +1186,14 @@ def run_sliding_fits(
             if residual_model is None:
                 residual_model = build_residual_model("uncorrelated", sigma_slice)
                 residual_model_note = (
-                    f"correlated window covariance setup failed for tmin={tmin}, tmax={tmax}; "
+                    f"correlated window covariance setup failed for tmin={label_tmin}, tmax={label_tmax}; "
                     "no usable shrinkage_lambda found"
                 )
                 print(f"[nstate-fit] {residual_model_note}")
             elif chosen_lambda is not None and chosen_lambda > 0.0:
                 residual_model_note = (
                     f"correlated window covariance setup used shrinkage_lambda={chosen_lambda:.2f} "
-                    f"for tmin={tmin}, tmax={tmax}"
+                    f"for tmin={label_tmin}, tmax={label_tmax}"
                 )
                 print(f"[nstate-fit] {residual_model_note}")
         else:
@@ -1110,6 +1221,7 @@ def run_sliding_fits(
             lambda_prior=lambda_prior,
             residual_model=residual_model,
             covariance=covariance_slice,
+            fixed_ground_energy=fixed_ground_energy,
         )
         if residual_model_note is not None and not meanfit.success:
             meanfit = FitResult(
@@ -1120,7 +1232,7 @@ def run_sliding_fits(
                 success=meanfit.success,
                 message=f"{residual_model_note}; {meanfit.message}",
             )
-        meanfit_results[tmin] = meanfit
+        meanfit_results[label_tmin] = meanfit
         previous_meanfit = meanfit if meanfit.success and np.all(np.isfinite(meanfit.params)) else None
 
         sample_rows = np.full((len(bootstrap_means), 5 + 2 * nstates), np.nan, dtype=float)
@@ -1146,11 +1258,12 @@ def run_sliding_fits(
                 lambda_prior=lambda_prior,
                 residual_model=residual_model,
                 covariance=covariance_slice,
+                fixed_ground_energy=fixed_ground_energy,
             )
             previous_sample_fits[sample_id] = (
                 fit_result if fit_result.success and np.all(np.isfinite(fit_result.params)) else None
             )
-            sample_rows[sample_id, 0] = tmin
+            sample_rows[sample_id, 0] = label_tmin
             sample_rows[sample_id, 1] = sample_id
             sample_rows[sample_id, 2] = 1.0 if fit_result.success else 0.0
             sample_rows[sample_id, 3] = fit_result.chi2_dof
@@ -1171,8 +1284,8 @@ def run_sliding_fits(
         rows.append(
             FitSummaryRow(
                 nstates=nstates,
-                tmin=tmin,
-                tmax=tmax,
+                tmin=label_tmin,
+                tmax=label_tmax,
                 success_meanfit=1 if meanfit.success else 0,
                 bootstrap_successes=len(success_params),
                 bootstrap_total=len(bootstrap_means),
@@ -1527,8 +1640,19 @@ def run_single_dataset(spec: NStateFitInput, pz: int) -> list[Path]:
         raise ValueError(f"{csv_path} has Nt={correlators.shape[1]}, expected {spec.nt}")
 
     processed = apply_fold_t(correlators, spec.nt, spec.fold_t)
-    t0, t1 = spec.tsrange
-    selected = processed[:, t0 : t1 + 1]
+    full_t0, full_t1 = spec.tsrange
+    processed = processed[:, full_t0 : full_t1 + 1]
+    fit_windows = _load_fit_window_table(spec.fit_window)
+    fit_window = fit_windows.get(pz)
+    if fit_window is None:
+        raise ValueError(f"missing fit_window entry for pz={pz}")
+    fit_start, fit_end = fit_window
+    if fit_start < full_t0 or fit_end > full_t1:
+        raise ValueError(
+            f"fit window for pz={pz} lies outside the retained folded range [{full_t0}, {full_t1}]"
+        )
+    selected = processed[:, fit_start - full_t0 : fit_end - full_t0 + 1]
+    time_offset = fit_start
     binned = bin_correlators(selected, binsize=spec.binsize)
     bootstrap_means = bootstrap_correlator_means(
         binned,
@@ -1541,11 +1665,12 @@ def run_single_dataset(spec: NStateFitInput, pz: int) -> list[Path]:
     covariance = compute_bootstrap_covariance(bootstrap_means) if spec.fit_mode == "correlated" else None
 
     meff_mean, meff_err = effective_mass_with_bootstrap(bootstrap_means, spec.model, nt=spec.nt)
-    tmax = (
-        spec.tmax
-        if spec.tmax is not None
-        else choose_default_tmax(meff_mean, meff_err, spec.nt, selected.shape[1] - 2)
+    fit_window_source = (
+        "fit_window_auto_search" if spec.auto_search_plateau_from_fit_window else "fit_window"
     )
+    window_global_tmin, window_global_tmax = fit_window
+    fit_tmax_local = selected.shape[1] - 1
+    fit_tmax_output = fit_tmax_local + time_offset
 
     dataset_dir = spec.results_dir / title
     tables_dir = dataset_dir / "tables"
@@ -1558,15 +1683,15 @@ def run_single_dataset(spec: NStateFitInput, pz: int) -> list[Path]:
     correlator_table = tables_dir / f"{title}_{spec.model}_correlator_mean.txt"
     np.savetxt(
         correlator_table,
-        np.column_stack([np.arange(selected.shape[1]), np.mean(bootstrap_means, axis=0), sigma]),
+        np.column_stack([np.arange(time_offset, time_offset + selected.shape[1]), np.mean(bootstrap_means, axis=0), sigma]),
         header="t corr_mean corr_err",
         fmt="%.10e",
     )
     outputs.append(correlator_table)
-    meff_table = tables_dir / f"{title}_{spec.model}_effective_mass_tmax{tmax}.txt"
+    meff_table = tables_dir / f"{title}_{spec.model}_effective_mass_tmax{fit_tmax_output}.txt"
     np.savetxt(
         meff_table,
-        np.column_stack([np.arange(len(meff_mean)), meff_mean, meff_err]),
+        np.column_stack([np.arange(time_offset, time_offset + len(meff_mean)), meff_mean, meff_err]),
         header="t meff_mean meff_err",
         fmt="%.10e",
     )
@@ -1590,37 +1715,48 @@ def run_single_dataset(spec: NStateFitInput, pz: int) -> list[Path]:
             return
 
         if nstates == 1:
-            tmin_start = 2
-            tmin_stop = tmax - 1
+            if not spec.auto_search_plateau_from_fit_window:
+                tmin_start = 0
+                tmin_stop = 1
+            else:
+                tmin_start = 0
+                tmin_stop = max(1, fit_tmax_local)
             initial_guess = current_guess
             priors: tuple[EnergyPrior, ...] = ()
         else:
             previous_state = nstates - 1
             previous_artifact = state_artifacts.get(previous_state)
             if previous_artifact is None:
-                cached_artifact = _load_cached_state_artifacts(spec, title, previous_state, tmax)
-                if cached_artifact is not None:
-                    state_artifacts[previous_state] = cached_artifact
-                    previous_artifact = cached_artifact
-                    print(
-                        f"[nstate-fit] Reusing cached {previous_state}-state plateau for "
-                        f"{title} at tmax={tmax}."
-                    )
-                else:
-                    print(
-                        f"[nstate-fit] No cached {previous_state}-state plateau found for "
-                        f"{title} at tmax={tmax}; computing it now."
-                    )
-                    compute_state(previous_state)
-                    previous_artifact = state_artifacts[previous_state]
+                compute_state(previous_state)
+                previous_artifact = state_artifacts[previous_state]
 
-            tmin_start = 2
-            tmin_stop = max(2, min(previous_artifact.plateau.start_tmin, tmax - 2)) + 1
+            if not spec.auto_search_plateau_from_fit_window:
+                tmin_start = 0
+                tmin_stop = 1
+            else:
+                tmin_start = 0
+                tmin_stop = max(1, min(previous_artifact.plateau.start_tmin - time_offset, fit_tmax_local - 2)) + 1
             initial_guess = build_initial_guess_from_plateau(previous_artifact.plateau, nstates)
             priors = build_energy_priors_from_plateau_summary(previous_artifact.plateau_summary, nstates)
             current_guess = initial_guess
 
+        fixed_ground_energy = None
+        if spec.fix_ground_energy_from_dispersion and spec.pz0_ground_energy is not None:
+            fixed_ground_energy = target_ground_energy_from_pz0(spec.pz0_ground_energy, pz, spec.ns)
+            if initial_guess[1].size > 0:
+                fixed_energies = np.asarray(initial_guess[1], dtype=float).copy()
+                fixed_energies[0] = fixed_ground_energy
+                initial_guess = (np.asarray(initial_guess[0], dtype=float), fixed_energies)
+
         tmin_values = range(tmin_start, tmin_stop)
+        sliding_fit_kwargs = dict(
+            covariance=covariance,
+            priors=priors,
+            lambda_prior=spec.lambda_prior,
+            fixed_ground_energy=fixed_ground_energy,
+        )
+        if time_offset != 0:
+            sliding_fit_kwargs["time_offset"] = time_offset
         rows, sample_tables, meanfit_results = run_sliding_fits(
             bootstrap_means,
             sigma,
@@ -1629,28 +1765,38 @@ def run_single_dataset(spec: NStateFitInput, pz: int) -> list[Path]:
             spec.model,
             nstates,
             tmin_values,
-            tmax,
+            fit_tmax_local,
             initial_guess[0],
             initial_guess[1],
-            covariance=covariance,
-            priors=priors,
-            lambda_prior=spec.lambda_prior,
+            **sliding_fit_kwargs,
         )
         target_energy = None
         if nstates == 1 and spec.pz0_ground_energy is not None:
             target_energy = target_ground_energy_from_pz0(spec.pz0_ground_energy, pz, spec.ns)
-        plateau = suggest_plateau(
-            rows,
-            energy_index=0,
-            allow_relaxed_fallback=True,
-            target_energy=target_energy,
-        )
+        if not spec.auto_search_plateau_from_fit_window:
+            representative_row = rows[0] if rows else None
+            if representative_row is None:
+                raise ValueError(f"fit window for pz={pz} produced no fit row")
+            plateau = PlateauWindow(
+                start_tmin=representative_row.tmin,
+                end_tmin=representative_row.tmin,
+                representative_tmin=representative_row.tmin,
+                energy_mean=representative_row.params_mean[nstates],
+                amplitude_mean=representative_row.params_mean[0],
+            )
+        else:
+            plateau = suggest_plateau(
+                rows,
+                energy_index=0,
+                allow_relaxed_fallback=True,
+                target_energy=target_energy,
+            )
         rows = mark_plateau(rows, plateau)
         plateau_summary = compute_plateau_parameter_summary(rows, sample_tables, plateau)
         state_artifacts[nstates] = _write_state_outputs(
             spec=spec,
             title=title,
-            tmax=tmax,
+            tmax=fit_tmax_output,
             nstates=nstates,
             rows=rows,
             sample_tables=sample_tables,
@@ -1668,12 +1814,20 @@ def run_single_dataset(spec: NStateFitInput, pz: int) -> list[Path]:
         handle.write(f"title {title}\n")
         handle.write(f"model {spec.model}\n")
         handle.write(f"fit_mode {spec.fit_mode}\n")
-        handle.write(f"tmax {tmax}\n")
+        handle.write(f"tmax {fit_tmax_output}\n")
+        handle.write(f"fit_window_source {fit_window_source}\n")
+        handle.write(f"fit_window {window_global_tmin} {window_global_tmax}\n")
+        handle.write(
+            f"auto_search_plateau_from_fit_window {int(spec.auto_search_plateau_from_fit_window)}\n"
+        )
         if spec.pz0_ground_energy is not None:
             handle.write(f"pz0_ground_energy {spec.pz0_ground_energy:.10e}\n")
             handle.write(
                 f"1state_target_energy_pz{pz} {target_ground_energy_from_pz0(spec.pz0_ground_energy, pz, spec.ns):.10e}\n"
             )
+        handle.write(
+            f"fix_ground_energy_from_dispersion {int(spec.fix_ground_energy_from_dispersion)}\n"
+        )
         for nstates in sorted(state_artifacts):
             artifact = state_artifacts[nstates]
             plateau = artifact.plateau

@@ -23,6 +23,7 @@ mu 2.0
 # Legacy-compatible extraction controls.
 scheme CG
 extraction_type type2
+pair_mode all
 kernel_labels LO NLO NLL NNLO NNLL
 
 # Batch ranges.
@@ -35,21 +36,28 @@ pzrange 2 6
 # - normalization_mode tells the workflow whether to read raw or normalized Fourier outputs
 #   and is recorded explicitly in the CS-kernel outputs
 
+# Pair construction mode:
+# - all: use pzmin as P1 and all larger requested momenta as the shared P2 set
+#        so one output group is produced for the full pz window
+# - adjacent: build one output group per neighboring pair, e.g. 5-6, 6-7, 7-8
+
 # Legacy default x window for the constant-in-P2 fit.
 # Only x values inside this window are used when fitting the estimator
-# built from one reference P1 and all larger comparison P2 values.
+# built from the pair_mode-selected P1/P2 combinations.
 x_window 0.2 0.8
 
 # Optional plot output.
 # When true, also write one quick-look PDF band plot for each
-# (kernel_label, bT, reference_pz) output group.
+# (kernel_label, bT, pair-group) output group.
+# In pair_mode adjacent, this also writes one combined breakdown plot
+# showing data log-ratio, matching correction, and total estimator.
 plot true
 
 # Optional explicit output root.
 # The workflow writes:
 # - <results_dir>/<title_pattern with pz->multiPz>/*_summary.txt
-# - <results_dir>/<title_pattern with pz->multiPz>/tables/*_band.txt
-# - <results_dir>/<title_pattern with pz->multiPz>/samples/*_samples.txt
-# - <results_dir>/<title_pattern with pz->multiPz>/diagnostics/*_diagnostics.txt
+# - <results_dir>/<title_pattern with pz->multiPz>/tables/*_refpz<pzmin-pzmax>_type2_band.txt
+# - <results_dir>/<title_pattern with pz->multiPz>/samples/*_refpz<pzmin-pzmax>_type2_samples.txt
+# - <results_dir>/<title_pattern with pz->multiPz>/diagnostics/*_refpz<pzmin-pzmax>_type2_diagnostics.txt
 # - <results_dir>/<title_pattern with pz->multiPz>/plots/*_band.pdf   (when plot=true)
 results_dir results_tmdwf_cs_kernel

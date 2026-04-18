@@ -1,16 +1,19 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 
 from lqcd_analysis.tmdwf.cs_kernel_extract import (
+    build_cs_kernel_pair_jobs,
     compute_pairwise_type2_estimators,
     extract_cs_kernel_for_reference,
     load_cs_kernel_dataset,
     load_cs_kernel_observable,
     parse_tmdwf_cs_kernel_input,
     run_tmdwf_cs_kernel_workflow,
+    summarize_cs_kernel_adjacent_breakdown,
 )
 from lqcd_analysis.tmdwf.cs_kernel_matching import build_cs_dgamma, perturbative_order_from_label
 
@@ -92,6 +95,33 @@ class TMDWFCSKernelTests(unittest.TestCase):
         self.assertEqual(len(p2_gevs), 2)
         self.assertEqual(chi2_samples.shape, (2, 3))
 
+    def test_summarize_cs_kernel_adjacent_breakdown_separates_components(self) -> None:
+        x_grid = np.array([0.1, 0.3, 0.5, 0.9], dtype=float)
+        gamma_by_sample = np.array([0.2, 0.25, 0.3], dtype=float)
+        dataset = {}
+        for pz in (5, 6):
+            samples = []
+            for sample_gamma, base_offset in zip(gamma_by_sample, (1.0, 1.5, 2.0), strict=True):
+                base = base_offset + x_grid
+                samples.append(base * (float(pz) ** sample_gamma))
+            dataset[(0, pz)] = type("Obs", (), {"x": x_grid, "samples": np.asarray(samples, dtype=float)})()
+        breakdown = summarize_cs_kernel_adjacent_breakdown(
+            dataset,
+            bT=0,
+            reference_pz=5,
+            comparison_pz=6,
+            kernel_label="LO",
+            mu=2.0,
+            scheme="CG",
+            ns=64,
+            lattice_spacing_fm=0.076,
+            x_window=(0.2, 0.8),
+        )
+        self.assertEqual(breakdown.label, "5-6")
+        self.assertTrue(np.allclose(breakdown.x_values, [0.3, 0.5]))
+        self.assertTrue(np.allclose(breakdown.matching, 0.0))
+        self.assertTrue(np.allclose(breakdown.total_p50, breakdown.log_ratio_p50))
+
     def test_parse_tmdwf_cs_kernel_input(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
@@ -126,6 +156,14 @@ class TMDWFCSKernelTests(unittest.TestCase):
         self.assertEqual(parsed.pzlist, (2, 3, 4))
         self.assertEqual(parsed.scheme, "CG")
         self.assertEqual(parsed.normalization_mode, "raw")
+        self.assertEqual(parsed.pair_mode, "all")
+
+    def test_build_cs_kernel_pair_jobs_supports_all_and_adjacent(self) -> None:
+        self.assertEqual(build_cs_kernel_pair_jobs((5, 6, 7, 8), "all"), [(5, [6, 7, 8], "5-8")])
+        self.assertEqual(
+            build_cs_kernel_pair_jobs((5, 6, 7, 8), "adjacent"),
+            [(5, [6], "5-6"), (6, [7], "6-7"), (7, [8], "7-8")],
+        )
 
     def test_run_tmdwf_cs_kernel_workflow_writes_batch_outputs(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -198,11 +236,11 @@ class TMDWFCSKernelTests(unittest.TestCase):
             )
             outputs = run_tmdwf_cs_kernel_workflow(input_path, results_dir=tmp / "results")
 
-            self.assertEqual(len(outputs), 16)
+            self.assertEqual(len(outputs), 8)
             output_title = "demo_pzmultiPz"
-            band_path = tmp / "results" / output_title / "tables" / f"{output_title}_T5_eta0_raw_real_1state_CG_LO_bT0_refpz2_type2_band.txt"
-            diagnostics_path = tmp / "results" / output_title / "diagnostics" / f"{output_title}_T5_eta0_raw_real_1state_CG_LO_bT0_refpz2_type2_diagnostics.txt"
-            sample_path = tmp / "results" / output_title / "samples" / f"{output_title}_T5_eta0_raw_real_1state_CG_LO_bT0_refpz2_type2_samples.txt"
+            band_path = tmp / "results" / output_title / "tables" / f"{output_title}_T5_eta0_raw_real_1state_CG_LO_bT0_refpz2-4_type2_band.txt"
+            diagnostics_path = tmp / "results" / output_title / "diagnostics" / f"{output_title}_T5_eta0_raw_real_1state_CG_LO_bT0_refpz2-4_type2_diagnostics.txt"
+            sample_path = tmp / "results" / output_title / "samples" / f"{output_title}_T5_eta0_raw_real_1state_CG_LO_bT0_refpz2-4_type2_samples.txt"
             self.assertTrue(band_path.exists())
             self.assertTrue(diagnostics_path.exists())
             self.assertTrue(sample_path.exists())
@@ -221,6 +259,183 @@ class TMDWFCSKernelTests(unittest.TestCase):
             first_sample = sample_rows[0].split("\t")
             self.assertEqual(first_sample[1], "0")
             self.assertAlmostEqual(float(first_sample[3]), 0.2, places=8)
+
+            summary_path = tmp / "results" / output_title / f"{output_title}_T5_eta0_raw_real_1state_CG_LO_bT0_refpz2-4_type2_summary.txt"
+            summary_text = summary_path.read_text(encoding="utf-8")
+            self.assertIn("pair_mode all", summary_text)
+            self.assertIn("reference_pz_label 2-4", summary_text)
+
+    def test_run_tmdwf_cs_kernel_workflow_supports_adjacent_pair_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            input_root = tmp / "inputs"
+            x_grid = np.array([0.1, 0.3, 0.5], dtype=float)
+            gamma_by_sample = np.array([0.2, 0.25, 0.3], dtype=float)
+            for pz in (5, 6, 7):
+                title = f"demo_pz{pz}"
+                tables_dir = input_root / title / "tables"
+                samples_dir = input_root / title / "samples"
+                tables_dir.mkdir(parents=True, exist_ok=True)
+                samples_dir.mkdir(parents=True, exist_ok=True)
+                samples = []
+                for x_value in x_grid:
+                    base = np.array([1.0 + x_value, 1.5 + x_value, 2.0 + x_value], dtype=float)
+                    samples.append(base * (float(pz) ** gamma_by_sample))
+                q_samples = np.asarray(samples, dtype=float).T
+                q_mean = np.mean(q_samples, axis=0)
+                q_p16 = np.percentile(q_samples, 16.0, axis=0)
+                q_p84 = np.percentile(q_samples, 84.0, axis=0)
+                q_err = 0.5 * (q_p84 - q_p16)
+                table_lines = [
+                    "x\tq_mean\tq_err\tq_p16\tq_p84",
+                    *[
+                        f"{x_value:.10e}\t{mean_value:.10e}\t{err_value:.10e}\t{p16_value:.10e}\t{p84_value:.10e}"
+                        for x_value, mean_value, err_value, p16_value, p84_value in zip(
+                            x_grid, q_mean, q_err, q_p16, q_p84, strict=True
+                        )
+                    ],
+                ]
+                (tables_dir / f"{title}_T5_eta0_bT0_real_1state_fourier.txt").write_text(
+                    "\n".join(table_lines) + "\n",
+                    encoding="utf-8",
+                )
+                sample_lines = ["sample_id\tx\tq_sample"]
+                for sample_id, sample_values in enumerate(q_samples):
+                    for x_value, q_value in zip(x_grid, sample_values, strict=True):
+                        sample_lines.append(f"{sample_id}\t{x_value:.10e}\t{q_value:.10e}")
+                (samples_dir / f"{title}_T5_eta0_bT0_real_1state_fourier_samples.txt").write_text(
+                    "\n".join(sample_lines) + "\n",
+                    encoding="utf-8",
+                )
+
+            input_path = tmp / "input_cs_adjacent.txt"
+            input_path.write_text(
+                "\n".join(
+                    [
+                        "title_pattern demo_pz*",
+                        f"input_root {input_root}",
+                        "ns 64",
+                        "lattice_spacing_fm 0.076",
+                        "gmlist T5",
+                        "etalist eta0",
+                        "component real",
+                        "nstates 1",
+                        "normalization_mode raw",
+                        "mu 2.0",
+                        "scheme CG",
+                        "extraction_type type2",
+                        "pair_mode adjacent",
+                        "kernel_labels LO",
+                        "bTlist 0",
+                        "pzlist 5 6 7",
+                        "x_window 0.2 0.8",
+                        "plot false",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            outputs = run_tmdwf_cs_kernel_workflow(input_path, results_dir=tmp / "results")
+
+            self.assertEqual(len(outputs), 8)
+            output_title = "demo_pzmultiPz"
+            pair1 = tmp / "results" / output_title / "tables" / f"{output_title}_T5_eta0_raw_real_1state_CG_LO_bT0_refpz5-6_type2_band.txt"
+            pair2 = tmp / "results" / output_title / "tables" / f"{output_title}_T5_eta0_raw_real_1state_CG_LO_bT0_refpz6-7_type2_band.txt"
+            self.assertTrue(pair1.exists())
+            self.assertTrue(pair2.exists())
+
+    def test_run_tmdwf_cs_kernel_workflow_writes_adjacent_breakdown_plot_when_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            input_root = tmp / "inputs"
+            x_grid = np.array([0.1, 0.3, 0.5], dtype=float)
+            gamma_by_sample = np.array([0.2, 0.25, 0.3], dtype=float)
+            for pz in (5, 6, 7):
+                title = f"demo_pz{pz}"
+                tables_dir = input_root / title / "tables"
+                samples_dir = input_root / title / "samples"
+                tables_dir.mkdir(parents=True, exist_ok=True)
+                samples_dir.mkdir(parents=True, exist_ok=True)
+                samples = []
+                for x_value in x_grid:
+                    base = np.array([1.0 + x_value, 1.5 + x_value, 2.0 + x_value], dtype=float)
+                    samples.append(base * (float(pz) ** gamma_by_sample))
+                q_samples = np.asarray(samples, dtype=float).T
+                q_mean = np.mean(q_samples, axis=0)
+                q_p16 = np.percentile(q_samples, 16.0, axis=0)
+                q_p84 = np.percentile(q_samples, 84.0, axis=0)
+                q_err = 0.5 * (q_p84 - q_p16)
+                table_lines = [
+                    "x\tq_mean\tq_err\tq_p16\tq_p84",
+                    *[
+                        f"{x_value:.10e}\t{mean_value:.10e}\t{err_value:.10e}\t{p16_value:.10e}\t{p84_value:.10e}"
+                        for x_value, mean_value, err_value, p16_value, p84_value in zip(
+                            x_grid, q_mean, q_err, q_p16, q_p84, strict=True
+                        )
+                    ],
+                ]
+                (tables_dir / f"{title}_T5_eta0_bT0_real_1state_fourier.txt").write_text(
+                    "\n".join(table_lines) + "\n",
+                    encoding="utf-8",
+                )
+                sample_lines = ["sample_id\tx\tq_sample"]
+                for sample_id, sample_values in enumerate(q_samples):
+                    for x_value, q_value in zip(x_grid, sample_values, strict=True):
+                        sample_lines.append(f"{sample_id}\t{x_value:.10e}\t{q_value:.10e}")
+                (samples_dir / f"{title}_T5_eta0_bT0_real_1state_fourier_samples.txt").write_text(
+                    "\n".join(sample_lines) + "\n",
+                    encoding="utf-8",
+                )
+
+            input_path = tmp / "input_cs_adjacent_plot.txt"
+            input_path.write_text(
+                "\n".join(
+                    [
+                        "title_pattern demo_pz*",
+                        f"input_root {input_root}",
+                        "ns 64",
+                        "lattice_spacing_fm 0.076",
+                        "gmlist T5",
+                        "etalist eta0",
+                        "component real",
+                        "nstates 1",
+                        "normalization_mode raw",
+                        "mu 2.0",
+                        "scheme CG",
+                        "extraction_type type2",
+                        "pair_mode adjacent",
+                        "kernel_labels LO",
+                        "bTlist 0",
+                        "pzlist 5 6 7",
+                        "x_window 0.2 0.8",
+                        "plot true",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            def _touch_plot(path, *args, **kwargs):
+                plot_path = Path(path)
+                plot_path.parent.mkdir(parents=True, exist_ok=True)
+                plot_path.write_text("plot", encoding="utf-8")
+                return plot_path
+
+            with (
+                patch("lqcd_analysis.tmdwf.cs_kernel_extract.plot_tmdwf_cs_kernel_band", side_effect=_touch_plot),
+                patch("lqcd_analysis.tmdwf.cs_kernel_extract.plot_tmdwf_cs_kernel_adjacent_breakdown", side_effect=_touch_plot),
+            ):
+                outputs = run_tmdwf_cs_kernel_workflow(input_path, results_dir=tmp / "results")
+
+            output_title = "demo_pzmultiPz"
+            breakdown_path = (
+                tmp
+                / "results"
+                / output_title
+                / "plots"
+                / f"{output_title}_T5_eta0_raw_real_1state_CG_LO_bT0_type2_adjacent_breakdown.pdf"
+            )
+            self.assertTrue(breakdown_path.exists())
+            self.assertIn(breakdown_path, outputs)
 
     def test_load_cs_kernel_dataset_rejects_inconsistent_sample_count(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

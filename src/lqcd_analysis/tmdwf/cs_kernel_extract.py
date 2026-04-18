@@ -16,7 +16,7 @@ from .cs_kernel_matching import (
 from .fourier import load_tmdwf_fourier_sample_table, resolve_tmdwf_fourier_output_paths
 from .fit_nstate import _parse_int_list_or_range
 from .io import expand_template
-from .plotting import plot_tmdwf_cs_kernel_band
+from .plotting import CSKernelBreakdownSeries, plot_tmdwf_cs_kernel_adjacent_breakdown, plot_tmdwf_cs_kernel_band
 
 
 @dataclass(frozen=True)
@@ -33,6 +33,7 @@ class TMDWFCSKernelInput:
     mu: float
     scheme: str
     extraction_type: str
+    pair_mode: str
     kernel_labels: tuple[str, ...]
     bTlist: tuple[int, ...]
     pzlist: tuple[int, ...]
@@ -107,6 +108,9 @@ def parse_tmdwf_cs_kernel_input(
     extraction_type = entries.get("extraction_type", ["type2"])[0].lower()
     if extraction_type != "type2":
         raise ValueError("TMDWF CS-kernel extraction currently supports only extraction_type type2")
+    pair_mode = entries.get("pair_mode", ["all"])[0].lower()
+    if pair_mode not in {"all", "adjacent"}:
+        raise ValueError("pair_mode must be one of: all, adjacent")
 
     output_root = (
         Path(results_dir)
@@ -126,6 +130,7 @@ def parse_tmdwf_cs_kernel_input(
         mu=float(entries["mu"][0]),
         scheme=scheme,
         extraction_type=extraction_type,
+        pair_mode=pair_mode,
         kernel_labels=tuple(kernel_tokens),
         bTlist=_parse_int_list_or_range(entries, "bTlist", "bTrange"),
         pzlist=_parse_int_list_or_range(entries, "pzlist", "pzrange"),
@@ -301,6 +306,80 @@ def extract_cs_kernel_for_reference(
     )
 
 
+def build_cs_kernel_pair_jobs(pzlist: tuple[int, ...], pair_mode: str) -> list[tuple[int, list[int], str]]:
+    if len(pzlist) < 2:
+        raise ValueError("TMDWF CS-kernel extraction requires at least two pz values")
+    if pair_mode == "all":
+        return [(pzlist[0], list(pzlist[1:]), f"{pzlist[0]}-{pzlist[-1]}")]
+    if pair_mode == "adjacent":
+        return [(pz1, [pz2], f"{pz1}-{pz2}") for pz1, pz2 in zip(pzlist[:-1], pzlist[1:], strict=True)]
+    raise ValueError(f"unsupported pair_mode '{pair_mode}'")
+
+
+def summarize_cs_kernel_adjacent_breakdown(
+    dataset: dict[tuple[int, int], CSKernelObservable],
+    *,
+    bT: int,
+    reference_pz: int,
+    comparison_pz: int,
+    kernel_label: str,
+    mu: float,
+    scheme: str,
+    ns: int,
+    lattice_spacing_fm: float,
+    x_window: tuple[float, float],
+) -> CSKernelBreakdownSeries:
+    reference = dataset[(bT, reference_pz)]
+    comparison = dataset[(bT, comparison_pz)]
+    x_mask = (reference.x >= x_window[0]) & (reference.x <= x_window[1])
+    x_values = np.asarray(reference.x[x_mask], dtype=float)
+    d_p = momentum_unit_gev(ns, lattice_spacing_fm)
+    p1_gev = reference_pz * d_p
+    p2_gev = comparison_pz * d_p
+
+    log_ratio_p16: list[float] = []
+    log_ratio_p50: list[float] = []
+    log_ratio_p84: list[float] = []
+    total_p16: list[float] = []
+    total_p50: list[float] = []
+    total_p84: list[float] = []
+    matching_values: list[float] = []
+    for local_index, x_value in zip(np.where(x_mask)[0], x_values, strict=True):
+        reference_samples = reference.samples[:, local_index]
+        comparison_samples = comparison.samples[:, local_index]
+        log_ratio = 1.0 / np.log(p1_gev / p2_gev) * np.log(np.abs(reference_samples / comparison_samples))
+        correction = evaluate_type2_matching_correction(
+            scheme=scheme,
+            kernel_label=kernel_label,
+            mu=mu,
+            p1=p1_gev,
+            p2=p2_gev,
+            x=float(x_value),
+            component="real",
+        )
+        total = log_ratio + correction
+        l16, l50, l84 = _legacy_quantile_triplet(log_ratio)
+        t16, t50, t84 = _legacy_quantile_triplet(total)
+        log_ratio_p16.append(l16)
+        log_ratio_p50.append(l50)
+        log_ratio_p84.append(l84)
+        total_p16.append(t16)
+        total_p50.append(t50)
+        total_p84.append(t84)
+        matching_values.append(float(correction))
+    return CSKernelBreakdownSeries(
+        label=f"{reference_pz}-{comparison_pz}",
+        x_values=x_values,
+        log_ratio_p16=np.asarray(log_ratio_p16, dtype=float),
+        log_ratio_p50=np.asarray(log_ratio_p50, dtype=float),
+        log_ratio_p84=np.asarray(log_ratio_p84, dtype=float),
+        matching=np.asarray(matching_values, dtype=float),
+        total_p16=np.asarray(total_p16, dtype=float),
+        total_p50=np.asarray(total_p50, dtype=float),
+        total_p84=np.asarray(total_p84, dtype=float),
+    )
+
+
 def _write_cs_kernel_outputs(
     output_root: Path,
     stem: str,
@@ -386,12 +465,14 @@ def run_tmdwf_cs_kernel_workflow(
             )
             output_root = spec.results_dir / output_title
             output_root.mkdir(parents=True, exist_ok=True)
+            pair_jobs = build_cs_kernel_pair_jobs(spec.pzlist, spec.pair_mode)
+            adjacent_breakdown_series: list[CSKernelBreakdownSeries] = []
             for kernel_label in spec.kernel_labels:
                 perturbative_order_from_label(kernel_label)
                 correction = build_cs_dgamma(spec.mu, kernel_label)
+                adjacent_breakdown_series.clear()
                 for bT in spec.bTlist:
-                    for index, reference_pz in enumerate(spec.pzlist[:-1]):
-                        comparison_pz_list = list(spec.pzlist[index + 1 :])
+                    for reference_pz, comparison_pz_list, pz_label in pair_jobs:
                         x_values, gamma_samples, chi2_samples, p2_gevs = extract_cs_kernel_for_reference(
                             dataset,
                             bT=bT,
@@ -406,7 +487,7 @@ def run_tmdwf_cs_kernel_workflow(
                         )
                         stem = (
                             f"{output_title}_{gm}_{eta}_{spec.normalization_mode}_{spec.component}_{spec.nstates}state_"
-                            f"{spec.scheme}_{kernel_label}_bT{bT}_refpz{reference_pz}_{spec.extraction_type}"
+                            f"{spec.scheme}_{kernel_label}_bT{bT}_refpz{pz_label}_{spec.extraction_type}"
                         )
                         metadata_lines = [
                             f"title_pattern {spec.title_pattern}",
@@ -419,10 +500,12 @@ def run_tmdwf_cs_kernel_workflow(
                             f"scheme {spec.scheme}",
                             f"kernel_label {kernel_label}",
                             f"extraction_type {spec.extraction_type}",
+                            f"pair_mode {spec.pair_mode}",
                             f"mu {spec.mu:.10e}",
                             f"alphas_mu {correction.alphas(spec.mu):.10e}",
                             f"reference_bT {bT}",
                             f"reference_pz {reference_pz}",
+                            f"reference_pz_label {pz_label}",
                             f"x_window {spec.x_window[0]:.10e} {spec.x_window[1]:.10e}",
                             f"dP_GeV {momentum_unit_gev(spec.ns, spec.lattice_spacing_fm):.10e}",
                             f"comparison_p2_GeV {' '.join(f'{value:.10e}' for value in p2_gevs)}",
@@ -456,4 +539,33 @@ def run_tmdwf_cs_kernel_workflow(
                                 reference_pz=reference_pz,
                             )
                             outputs.append(plot_path)
+                            if spec.pair_mode == "adjacent" and len(comparison_pz_list) == 1:
+                                adjacent_breakdown_series.append(
+                                    summarize_cs_kernel_adjacent_breakdown(
+                                        dataset,
+                                        bT=bT,
+                                        reference_pz=reference_pz,
+                                        comparison_pz=comparison_pz_list[0],
+                                        kernel_label=kernel_label,
+                                        mu=spec.mu,
+                                        scheme=spec.scheme,
+                                        ns=spec.ns,
+                                        lattice_spacing_fm=spec.lattice_spacing_fm,
+                                        x_window=spec.x_window,
+                                    )
+                                )
+                    if spec.make_plots and spec.pair_mode == "adjacent" and adjacent_breakdown_series:
+                        breakdown_path = (
+                            output_root
+                            / "plots"
+                            / f"{output_title}_{gm}_{eta}_{spec.normalization_mode}_{spec.component}_{spec.nstates}state_"
+                              f"{spec.scheme}_{kernel_label}_bT{bT}_{spec.extraction_type}_adjacent_breakdown.pdf"
+                        )
+                        plot_tmdwf_cs_kernel_adjacent_breakdown(
+                            breakdown_path,
+                            tuple(adjacent_breakdown_series),
+                            title=f"{output_title} {gm} {eta} bT={bT} {kernel_label} adjacent breakdown",
+                        )
+                        outputs.append(breakdown_path)
+                        adjacent_breakdown_series.clear()
     return outputs

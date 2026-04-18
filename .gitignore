@@ -42,3 +42,5 @@ templates/input_files/*.log
 /*/plots/
 /*/plateau_recommendation.txt
 /*/*_summary.txt
+# Local run symlinks and transient local-run folders
+local_runs/

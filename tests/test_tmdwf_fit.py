@@ -126,8 +126,7 @@ class TMDWFFitTests(unittest.TestCase):
                         "bootstrap_samples 12",
                         "bootstrap_size 8",
                         "seed 7",
-                        "tmin 2",
-                        "tmax 6",
+                        "fit_window /tmp/fit_windows.txt",
                         "qtmdwf_h5 /tmp/tmdwf_pz*.h5",
                         "dataset_path_template {gm}/{eta}/pz{pz}/{Tdir}/bT{bT}/bz{bz}",
                         "two_point_plateau_table /tmp/plateau_pz*.txt",
@@ -150,12 +149,12 @@ class TMDWFFitTests(unittest.TestCase):
         self.assertEqual(parsed.fit_component, "both")
         self.assertEqual(parsed.results_dir, Path("/tmp/tmdwf_results"))
         self.assertEqual(parsed.fold_t, "periodic")
-        self.assertEqual(parsed.tmax, 6)
-        self.assertFalse(parsed.shared_window_by_pz_gm)
+        self.assertEqual(parsed.fit_window, "/tmp/fit_windows.txt")
+        self.assertEqual(parsed.tmax_scan_radius, 0)
         self.assertIsNone(parsed.decay_constant)
         self.assertEqual(parsed.min_fit_dof, 1)
 
-    def test_parse_input_file_with_shared_window_options(self) -> None:
+    def test_parse_input_file_with_auto_search_options(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             input_file = Path(tmpdir) / "input_tmdwf.txt"
             input_file.write_text(
@@ -171,10 +170,11 @@ class TMDWFFitTests(unittest.TestCase):
                         "Tdirlist plus minus",
                         "bTlist 0 1",
                         "bzlist 0",
-                        "tmin 2",
-                        "shared_window_by_pz_gm true",
+                        "fit_window /tmp/fit_windows.txt",
+                        "auto_search_shared_window_from_fit_window true",
                         "decay_constant 0.12 0.03",
                         "min_fit_dof 2",
+                        "tmax_scan_radius 1",
                         "qtmdwf_h5 /tmp/tmdwf_pz*.h5",
                         "dataset_path_template {gm}/{eta}/pz{pz}/{Tdir}/bT{bT}/bz{bz}",
                         "two_point_plateau_table /tmp/plateau_pz*.txt",
@@ -185,9 +185,40 @@ class TMDWFFitTests(unittest.TestCase):
                 encoding="utf-8",
             )
             parsed = parse_tmdwf_fit_input(input_file)
-        self.assertTrue(parsed.shared_window_by_pz_gm)
+        self.assertTrue(parsed.auto_search_shared_window_from_fit_window)
         self.assertEqual(parsed.decay_constant, (0.12, 0.03))
         self.assertEqual(parsed.min_fit_dof, 2)
+        self.assertEqual(parsed.tmax_scan_radius, 1)
+        self.assertEqual(parsed.fit_window, "/tmp/fit_windows.txt")
+
+    def test_parse_input_file_supports_fit_window_without_tmin(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            input_file = Path(tmpdir) / "input_tmdwf.txt"
+            input_file.write_text(
+                "\n".join(
+                    [
+                        "demo_pz* 32 16 0.076",
+                        "fit_target ratio",
+                        "fit_component real",
+                        "nstates 1",
+                        "pzlist 0",
+                        "gmlist T5",
+                        "etalist eta0",
+                        "Tdirlist plus minus",
+                        "bTlist 0",
+                        "bzlist 0",
+                        "fit_window /tmp/fit_windows.txt",
+                        "qtmdwf_h5 /tmp/tmdwf_pz*.h5",
+                        "dataset_path_template {gm}/{eta}/pz{pz}/{Tdir}/bT{bT}/bz{bz}",
+                        "two_point_plateau_table /tmp/plateau_pz*.txt",
+                        "c2pt /tmp/c2pt_pz*.csv",
+                        "fold_t periodic",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            parsed = parse_tmdwf_fit_input(input_file)
+        self.assertEqual(parsed.fit_window, "/tmp/fit_windows.txt")
 
     def test_parse_input_file_normalizes_fold_t_aliases(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -205,8 +236,7 @@ class TMDWFFitTests(unittest.TestCase):
                         "Tdirlist plus minus",
                         "bTlist 0",
                         "bzlist 0",
-                        "tmin 2",
-                        "tmax 6",
+                        "fit_window /tmp/fit_windows.txt",
                         "qtmdwf_h5 /tmp/tmdwf_pz*.h5",
                         "dataset_path_template {gm}/{eta}/pz{pz}/{Tdir}/bT{bT}/bz{bz}",
                         "two_point_plateau_table /tmp/plateau_pz*.txt",
@@ -238,8 +268,7 @@ class TMDWFFitTests(unittest.TestCase):
                         "Tdirlist plus minus",
                         "bTlist 0",
                         "bzlist 0",
-                        "tmin 2",
-                        "tmax 6",
+                        "fit_window /tmp/fit_windows.txt",
                         "qtmdwf_h5 /tmp/tmdwf_pz*.h5",
                         "dataset_path_template {gm}/{eta}/pz{pz}/{Tdir}/bT{bT}/bz{bz}",
                         "two_point_plateau_table /tmp/plateau_pz*.txt",
@@ -253,7 +282,7 @@ class TMDWFFitTests(unittest.TestCase):
 
         self.assertEqual(parsed.tsrange, (0, 7))
 
-    def test_parse_input_file_defaults_tmax_to_auto_when_missing(self) -> None:
+    def test_parse_input_file_accepts_fit_window_without_extra_t_bounds(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             input_file = Path(tmpdir) / "input_tmdwf.txt"
             input_file.write_text(
@@ -269,7 +298,7 @@ class TMDWFFitTests(unittest.TestCase):
                         "Tdirlist plus minus",
                         "bTlist 0",
                         "bzlist 0",
-                        "tmin 2",
+                        "fit_window /tmp/fit_windows.txt",
                         "qtmdwf_h5 /tmp/tmdwf_pz*.h5",
                         "dataset_path_template {gm}/{eta}/pz{pz}/{Tdir}/bT{bT}/bz{bz}",
                         "two_point_plateau_table /tmp/plateau_pz*.txt",
@@ -281,7 +310,7 @@ class TMDWFFitTests(unittest.TestCase):
             )
             parsed = parse_tmdwf_fit_input(input_file)
 
-        self.assertIsNone(parsed.tmax)
+        self.assertEqual(parsed.fit_window, "/tmp/fit_windows.txt")
 
     def test_expand_template_and_load_hdf5_correlator(self) -> None:
         self.assertEqual(
@@ -556,6 +585,7 @@ class TMDWFFitTests(unittest.TestCase):
                 two_point_plateau_table_resolved="plateau.txt",
                 two_point_tmax_source="explicit",
                 two_point_tmax_inferred="none",
+                fit_window_source="fit_window",
                 tsrange_start=0,
                 tsrange_end=2,
                 ratio_samples=np.ones((2, 3), dtype=np.complex128),
@@ -610,6 +640,7 @@ class TMDWFFitTests(unittest.TestCase):
                 two_point_plateau_table_resolved="plateau.txt",
                 two_point_tmax_source="explicit",
                 two_point_tmax_inferred="none",
+                fit_window_source="fit_window",
                 tsrange_start=0,
                 tsrange_end=2,
                 ratio_samples=np.ones((2, 3), dtype=np.complex128),
@@ -676,7 +707,7 @@ class TMDWFFitTests(unittest.TestCase):
         self.assertTrue(meanfit.success)
         self.assertAlmostEqual(meanfit.params[0], matrix_elements[0], delta=0.05)
 
-    def test_scan_reference_tmin_rows_uses_mean_fits_only(self) -> None:
+    def test_scan_reference_tmin_rows_reports_m0_errors(self) -> None:
         nt = 16
         amplitudes = np.array([2.5])
         energies = np.array([0.35])
@@ -686,24 +717,53 @@ class TMDWFFitTests(unittest.TestCase):
         rng = np.random.default_rng(7)
         ratio_samples = model[None, :] + 0.002 * rng.normal(size=(24, times.size))
 
-        with patch("lqcd_analysis.tmdwf.fit_nstate.fit_tmdwf_component", side_effect=AssertionError("full fit should not be used")):
-            rows = scan_reference_tmin_rows(
-                ratio_samples,
-                amplitudes,
-                energies,
-                nt=nt,
-                pz=0,
-                ns=32,
-                gm="T5",
-                tmin_start=2,
-                tmax=6,
-                nstates=1,
-                min_fit_dof=1,
-                component="real",
-            )
+        rows = scan_reference_tmin_rows(
+            ratio_samples,
+            amplitudes,
+            energies,
+            nt=nt,
+            pz=0,
+            ns=32,
+            gm="T5",
+            tmin_start=2,
+            tmax=6,
+            nstates=1,
+            min_fit_dof=1,
+            component="real",
+        )
 
         self.assertTrue(rows)
         self.assertTrue(all(np.isfinite(row.m0_mean) for row in rows))
+        self.assertTrue(all(np.isfinite(row.m0_err) and row.m0_err >= 0.0 for row in rows))
+
+    def test_scan_reference_tmin_rows_scans_local_tmax_values(self) -> None:
+        nt = 16
+        amplitudes = np.array([2.5])
+        energies = np.array([0.35])
+        matrix_elements = np.array([1.2])
+        times = np.arange(0, nt // 2 + 1)
+        model = evaluate_tmdwf_ratio(times, amplitudes, energies, matrix_elements, nt, gm="T5", pz=0, ns=32)
+        rng = np.random.default_rng(7)
+        ratio_samples = model[None, :] + 0.002 * rng.normal(size=(24, times.size))
+
+        rows = scan_reference_tmin_rows(
+            ratio_samples,
+            amplitudes,
+            energies,
+            nt=nt,
+            pz=0,
+            ns=32,
+            gm="T5",
+            tmin_start=2,
+            tmax=6,
+            nstates=1,
+            min_fit_dof=1,
+            component="real",
+            tmax_values=(5, 6, 7),
+        )
+
+        self.assertTrue(rows)
+        self.assertEqual(sorted({row.tmax for row in rows}), [6, 7])
 
     def test_shared_window_min_fit_dof_has_hard_floor_of_four(self) -> None:
         self.assertEqual(_effective_shared_window_min_fit_dof(1), 4)
@@ -790,9 +850,11 @@ class TMDWFFitTests(unittest.TestCase):
                     row = ",".join([str(t)] + [f"{value:.12e}" for value in c2pt_data[t]])
                     handle.write(row + "\n")
 
-            plateau_path = tmp / "plateau_pz0.txt"
+            plateau_path = tmp / "plateau_pz0_tmax6_plateau.txt"
             np.savetxt(plateau_path, np.array([[amplitudes[0], energies[0], 0.05, 0.02]]))
 
+            fit_window_path = tmp / "fit_window.txt"
+            fit_window_path.write_text(f"0 2 {folded_times[-1]}\n", encoding="utf-8")
             h5_path = tmp / "tmdwf_pz0.h5"
             with h5py.File(h5_path, "w") as handle:
                 for gm in ("T5", "Z5"):
@@ -824,11 +886,10 @@ class TMDWFFitTests(unittest.TestCase):
                         "bootstrap_samples 12",
                         "bootstrap_size 10",
                         "seed 9",
-                        "tmin 2",
-                        f"tmax {folded_times[-1]}",
+                        f"fit_window {fit_window_path}",
                         f"qtmdwf_h5 {h5_path}",
                         "dataset_path_template {gm}/{eta}/pz{pz}/{Tdir}/bT{bT}/bz{bz}",
-                        f"two_point_plateau_table {tmp / 'plateau_pz*.txt'}",
+                        f"two_point_plateau_table {tmp / 'plateau_pz*_tmax#_plateau.txt'}",
                         f"c2pt {tmp / 'c2pt_pz*.csv'}",
                         "fold_t periodic",
                         f"tsrange 0 {folded_times[-1]}",
@@ -870,7 +931,7 @@ class TMDWFFitTests(unittest.TestCase):
                     row = ",".join([str(t)] + [f"{value:.12e}" for value in c2pt_data[t]])
                     handle.write(row + "\n")
 
-            plateau_path = tmp / "plateau_pz0.txt"
+            plateau_path = tmp / "plateau_pz0_tmax6_plateau.txt"
             np.savetxt(plateau_path, np.array([[amplitudes[0], energies[0], 0.05, 0.02]]))
 
             for gm in ("T5", "Z5"):
@@ -895,6 +956,8 @@ class TMDWFFitTests(unittest.TestCase):
                             data=dataset,
                         )
 
+            fit_window_path = tmp / "fit_window.txt"
+            fit_window_path.write_text(f"0 2 {folded_times[-1]}\n", encoding="utf-8")
             input_path = tmp / "input_tmdwf_gm_specific.txt"
             input_path.write_text(
                 "\n".join(
@@ -913,11 +976,10 @@ class TMDWFFitTests(unittest.TestCase):
                         "bootstrap_samples 12",
                         "bootstrap_size 10",
                         "seed 9",
-                        "tmin 2",
-                        f"tmax {folded_times[-1]}",
+                        f"fit_window {fit_window_path}",
                         f"qtmdwf_h5 {tmp / 'tmdwf_pz{pz}_O{gm}.h5'}",
                         "dataset_path_template {gm}/{eta}/pz{pz}/{Tdir}/bT{bT}/bz{bz}",
-                        f"two_point_plateau_table {tmp / 'plateau_pz*.txt'}",
+                        f"two_point_plateau_table {tmp / 'plateau_pz*_tmax#_plateau.txt'}",
                         f"c2pt {tmp / 'c2pt_pz*.csv'}",
                         "fold_t periodic",
                         f"tsrange 0 {folded_times[-1]}",
@@ -942,8 +1004,10 @@ class TMDWFFitTests(unittest.TestCase):
             tmp = Path(tmpdir)
             c2pt_csv = tmp / "c2pt_pz0.csv"
             c2pt_csv.write_text("t,cfg_0\n0,1.0\n1,0.9\n2,0.8\n3,0.7\n", encoding="utf-8")
-            plateau_path = tmp / "plateau_pz0.txt"
+            plateau_path = tmp / "plateau_pz0_tmax1_plateau.txt"
             np.savetxt(plateau_path, np.array([[1.0, 0.5, 0.05, 0.02]]))
+            fit_window_path = tmp / "fit_window.txt"
+            fit_window_path.write_text("0 0 1\n", encoding="utf-8")
 
             input_path = tmp / "input_missing_qtmdwf.txt"
             input_path.write_text(
@@ -959,11 +1023,10 @@ class TMDWFFitTests(unittest.TestCase):
                         "Tdirlist plus minus",
                         "bTlist 0",
                         "bzlist 0",
-                        "tmin 0",
-                        "tmax 1",
+                        f"fit_window {fit_window_path}",
                         f"qtmdwf_h5 {tmp / 'missing_pz{pz}_O{gm}.h5'}",
                         "dataset_path_template {gm}/{eta}/pz{pz}/{Tdir}/bT{bT}/bz{bz}",
-                        f"two_point_plateau_table {tmp / 'plateau_pz*.txt'}",
+                        f"two_point_plateau_table {tmp / 'plateau_pz*_tmax#_plateau.txt'}",
                         f"c2pt {tmp / 'c2pt_pz*.csv'}",
                         "fold_t none",
                     ]
@@ -976,65 +1039,7 @@ class TMDWFFitTests(unittest.TestCase):
 
         self.assertEqual(str(ctx.exception), str(tmp / "missing_pz0_OZ5.h5"))
 
-    def test_explicit_tmax_overrides_inferred_plateau_filename_tmax(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tmp = Path(tmpdir)
-            nt = 12
-            times = np.arange(nt)
-            amplitudes = np.array([2.8])
-            energies = np.array([0.42])
-            matrix_elements = np.array([1.1])
-            denominator = evaluate_two_point_symmetric(times, amplitudes, energies, nt)
-            numerator = evaluate_tmdwf_numerator(times, amplitudes, energies, matrix_elements, nt, gm="T5", pz=0, ns=16)
-
-            c2pt_csv = tmp / "c2pt_pz0.csv"
-            c2pt_data = np.column_stack([denominator for _ in range(8)])
-            with c2pt_csv.open("w", encoding="utf-8") as handle:
-                handle.write(",".join(["t"] + [f"cfg_{idx}" for idx in range(c2pt_data.shape[1])]) + "\n")
-                for t in range(nt):
-                    handle.write(str(t) + "," + ",".join(f"{value:.12e}" for value in c2pt_data[t]) + "\n")
-
-            plateau_path = tmp / "plateau_pz0_tmax9_plateau.txt"
-            np.savetxt(plateau_path, np.array([[amplitudes[0], energies[0], 0.05, 0.02]]))
-            h5_path = tmp / "tmdwf_pz0.h5"
-            with h5py.File(h5_path, "w") as handle:
-                for tdir in ("plus", "minus"):
-                    handle.create_dataset(f"T5/eta0/pz0/{tdir}/bT0/bz0", data=np.column_stack([numerator for _ in range(8)]).T)
-
-            input_path = tmp / "input_tmdwf.txt"
-            input_path.write_text(
-                "\n".join(
-                    [
-                        "demo_pz* 16 12 0.076",
-                        "fit_target ratio",
-                        "fit_component real",
-                        "nstates 1",
-                        "pzlist 0",
-                        "gmlist T5",
-                        "etalist eta0",
-                        "Tdirlist plus minus",
-                        "bTlist 0",
-                        "bzlist 0",
-                        "tmin 2",
-                        "tmax 5",
-                        f"qtmdwf_h5 {h5_path}",
-                        "dataset_path_template {gm}/{eta}/pz{pz}/{Tdir}/bT{bT}/bz{bz}",
-                        f"two_point_plateau_table {tmp / 'plateau_pz*_tmax#_plateau.txt'}",
-                        f"c2pt {tmp / 'c2pt_pz*.csv'}",
-                        "fold_t periodic",
-                        f"results_dir {tmp / 'results'}",
-                    ]
-                ),
-                encoding="utf-8",
-            )
-            run_tmdwf_nstate_fit(input_path)
-            summary = (tmp / "results" / "demo_pz0" / "demo_pz0_T5_eta0_bT0_real_1state_summary.txt").read_text(encoding="utf-8")
-        self.assertIn("tfit 2 5", summary)
-        self.assertIn("two_point_plateau_table_resolved", summary)
-        self.assertIn("two_point_tmax_source explicit", summary)
-        self.assertIn("two_point_tmax_inferred 9", summary)
-
-    def test_auto_or_missing_tmax_uses_inferred_plateau_filename_tmax(self) -> None:
+    def test_inferred_plateau_filename_tmax_is_recorded(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
             nt = 12
@@ -1054,47 +1059,45 @@ class TMDWFFitTests(unittest.TestCase):
 
             plateau_path = tmp / "plateau_pz0_tmax5_plateau.txt"
             np.savetxt(plateau_path, np.array([[amplitudes[0], energies[0], 0.05, 0.02]]))
+            fit_window_path = tmp / "fit_window.txt"
+            fit_window_path.write_text("0 2 5\n", encoding="utf-8")
             h5_path = tmp / "tmdwf_pz0.h5"
             with h5py.File(h5_path, "w") as handle:
                 for tdir in ("plus", "minus"):
                     handle.create_dataset(f"T5/eta0/pz0/{tdir}/bT0/bz0", data=np.column_stack([numerator for _ in range(8)]).T)
 
-            for include_tmax_line in (True, False):
-                input_path = tmp / ("input_auto.txt" if include_tmax_line else "input_missing.txt")
-                lines = [
-                    "demo_pz* 16 12 0.076",
-                    "fit_target ratio",
-                    "fit_component real",
-                    "nstates 1",
-                    "pzlist 0",
-                    "gmlist T5",
-                    "etalist eta0",
-                    "Tdirlist plus minus",
-                    "bTlist 0",
-                    "bzlist 0",
-                    "tmin 2",
-                ]
-                if include_tmax_line:
-                    lines.append("tmax auto")
-                lines.extend(
+            input_path = tmp / "input_inferred.txt"
+            input_path.write_text(
+                "\n".join(
                     [
+                        "demo_pz* 16 12 0.076",
+                        "fit_target ratio",
+                        "fit_component real",
+                        "nstates 1",
+                        "pzlist 0",
+                        "gmlist T5",
+                        "etalist eta0",
+                        "Tdirlist plus minus",
+                        "bTlist 0",
+                        "bzlist 0",
+                        f"fit_window {fit_window_path}",
                         f"qtmdwf_h5 {h5_path}",
                         "dataset_path_template {gm}/{eta}/pz{pz}/{Tdir}/bT{bT}/bz{bz}",
                         f"two_point_plateau_table {tmp / 'plateau_pz*_tmax#_plateau.txt'}",
                         f"c2pt {tmp / 'c2pt_pz*.csv'}",
                         "fold_t periodic",
-                        f"results_dir {tmp / ('results_auto' if include_tmax_line else 'results_missing')}",
+                        f"results_dir {tmp / 'results'}",
                     ]
-                )
-                input_path.write_text("\n".join(lines), encoding="utf-8")
-                run_tmdwf_nstate_fit(input_path)
+                ),
+                encoding="utf-8",
+            )
+            run_tmdwf_nstate_fit(input_path)
+            summary = (tmp / "results" / "demo_pz0" / "demo_pz0_T5_eta0_bT0_real_1state_summary.txt").read_text(encoding="utf-8")
+        self.assertIn("tfit 2 5", summary)
+        self.assertIn("two_point_tmax_source inferred", summary)
+        self.assertIn("two_point_tmax_inferred 5", summary)
 
-            auto_summary = (tmp / "results_auto" / "demo_pz0" / "demo_pz0_T5_eta0_bT0_real_1state_summary.txt").read_text(encoding="utf-8")
-            missing_summary = (tmp / "results_missing" / "demo_pz0" / "demo_pz0_T5_eta0_bT0_real_1state_summary.txt").read_text(encoding="utf-8")
-        self.assertIn("tfit 2 5", auto_summary)
-        self.assertIn("tfit 2 5", missing_summary)
-
-    def test_auto_or_missing_tmax_without_inferable_plateau_filename_raises(self) -> None:
+    def test_non_inferable_plateau_filename_raises(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
             nt = 12
@@ -1113,6 +1116,8 @@ class TMDWFFitTests(unittest.TestCase):
 
             plateau_path = tmp / "plateau_pz0_plateau.txt"
             np.savetxt(plateau_path, np.array([[amplitudes[0], energies[0], 0.05, 0.02]]))
+            fit_window_path = tmp / "fit_window.txt"
+            fit_window_path.write_text("0 2 5\n", encoding="utf-8")
             h5_path = tmp / "tmdwf_pz0.h5"
             with h5py.File(h5_path, "w") as handle:
                 for tdir in ("plus", "minus"):
@@ -1132,7 +1137,7 @@ class TMDWFFitTests(unittest.TestCase):
                         "Tdirlist plus minus",
                         "bTlist 0",
                         "bzlist 0",
-                        "tmin 2",
+                        f"fit_window {fit_window_path}",
                         f"qtmdwf_h5 {h5_path}",
                         "dataset_path_template {gm}/{eta}/pz{pz}/{Tdir}/bT{bT}/bz{bz}",
                         f"two_point_plateau_table {plateau_path}",
@@ -1145,7 +1150,7 @@ class TMDWFFitTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "could not infer tmax"):
                 run_tmdwf_nstate_fit(input_path)
 
-    def test_shared_window_by_pz_gm_reuses_reference_window(self) -> None:
+    def test_auto_search_from_fit_window_reuses_reference_window(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
             nt = 12
@@ -1182,6 +1187,8 @@ class TMDWFFitTests(unittest.TestCase):
                                 data=dataset,
                             )
 
+            fit_window_path = tmp / "fit_window.txt"
+            fit_window_path.write_text("0 2 6\n", encoding="utf-8")
             input_path = tmp / "input_tmdwf.txt"
             input_path.write_text(
                 "\n".join(
@@ -1199,8 +1206,8 @@ class TMDWFFitTests(unittest.TestCase):
                         "bootstrap_samples 12",
                         "bootstrap_size 10",
                         "seed 9",
-                        "tmin 2",
-                        "shared_window_by_pz_gm true",
+                        f"fit_window {fit_window_path}",
+                        "auto_search_shared_window_from_fit_window true",
                         "decay_constant 0.11 0.03",
                         "min_fit_dof 1",
                         f"qtmdwf_h5 {h5_path}",
@@ -1219,10 +1226,14 @@ class TMDWFFitTests(unittest.TestCase):
             shared_summary = tmp / "results" / "demo_pz0" / "demo_pz0_T5_1state_shared_window.txt"
             first_summary = tmp / "results" / "demo_pz0" / "demo_pz0_T5_eta0_bT0_real_1state_summary.txt"
             second_summary = tmp / "results" / "demo_pz0" / "demo_pz0_T5_eta1_bT1_real_1state_summary.txt"
+            ratio_table = tmp / "results" / "demo_pz0" / "tables" / "demo_pz0_T5_eta0_bT0_ratio.txt"
+            overview_candidates = sorted((tmp / "results").glob("*T5_1state_reference_windows.txt"))
             shared_exists = shared_summary.exists()
             shared_text = shared_summary.read_text(encoding="utf-8")
             first_text = first_summary.read_text(encoding="utf-8")
             second_text = second_summary.read_text(encoding="utf-8")
+            ratio_text = ratio_table.read_text(encoding="utf-8")
+            overview_text = overview_candidates[0].read_text(encoding="utf-8") if overview_candidates else ""
 
         self.assertTrue(shared_exists)
         self.assertIn("selection_basis reference_mean_fits_only", shared_text)
@@ -1230,16 +1241,109 @@ class TMDWFFitTests(unittest.TestCase):
         self.assertIn("decay_constant_target 1.1000000000e-01", shared_text)
         self.assertIn("decay_constant_error 3.0000000000e-02", shared_text)
         self.assertIn("decay_constant_source input", shared_text)
+        self.assertIn("selected_window_m0_error", shared_text)
+        self.assertIn("selected_window_local_roughness", shared_text)
         candidate_lines = shared_text.split("candidate_rows\n", 1)[1].splitlines()[1:]
         fit_dofs = [int(line.split()[-1]) for line in candidate_lines if line.strip()]
         self.assertEqual(fit_dofs, [4])
         self.assertIn("shared_tfit", first_text)
         self.assertIn("shared_tfit", second_text)
+        self.assertIn("fit_window_source fit_window_auto_search", first_text)
+        self.assertIn("fit_window_source fit_window_auto_search", second_text)
+        self.assertIn("fit_window_source fit_window_auto_search", ratio_text)
         self.assertIn("m0 ", first_text)
         self.assertEqual(
             next(line for line in first_text.splitlines() if line.startswith("shared_tfit ")),
             next(line for line in second_text.splitlines() if line.startswith("shared_tfit ")),
         )
+        self.assertEqual(len(overview_candidates), 1)
+        self.assertIn("fit_window_source", overview_text.splitlines()[0])
+        self.assertTrue(any(line.startswith("0\t") and "fit_window_auto_search" in line for line in overview_text.splitlines()[1:]))
+
+    def test_fit_window_is_used_directly(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            nt = 12
+            ns = 16
+            times = np.arange(nt)
+            amplitudes = np.array([2.8])
+            energies = np.array([0.42])
+            matrix_elements = np.array([0.11])
+            denominator = evaluate_two_point_symmetric(times, amplitudes, energies, nt)
+            c2pt_csv = tmp / "c2pt_pz0.csv"
+            c2pt_data = np.column_stack(
+                [denominator * (1.0 + 0.001 * np.cos(times + cfg)) for cfg in range(10)]
+            )
+            with c2pt_csv.open("w", encoding="utf-8") as handle:
+                handle.write(",".join(["t"] + [f"cfg_{idx}" for idx in range(c2pt_data.shape[1])]) + "\n")
+                for t in range(nt):
+                    handle.write(str(t) + "," + ",".join(f"{value:.12e}" for value in c2pt_data[t]) + "\n")
+
+            plateau_path = tmp / "plateau_pz0_tmax6_plateau.txt"
+            np.savetxt(plateau_path, np.array([[amplitudes[0], energies[0], 0.05, 0.02]]))
+            h5_path = tmp / "tmdwf_pz0.h5"
+            with h5py.File(h5_path, "w") as handle:
+                numerator = evaluate_tmdwf_numerator(
+                    times, amplitudes, energies, matrix_elements, nt, gm="T5", pz=0, ns=ns
+                )
+                for eta in ("eta0", "eta1"):
+                    for bT in (0, 1):
+                        for tdir in ("plus", "minus"):
+                            dataset = np.column_stack(
+                                [numerator * (1.0 + 0.001 * np.sin(times + cfg + bT)) for cfg in range(10)]
+                            ).T
+                            handle.create_dataset(f"T5/{eta}/pz0/{tdir}/bT{bT}/bz0", data=dataset)
+
+            override_path = tmp / "fit_windows.txt"
+            override_path.write_text("0 3 6\n", encoding="utf-8")
+            input_path = tmp / "input_tmdwf_override.txt"
+            input_path.write_text(
+                "\n".join(
+                    [
+                        "demo_pz* 16 12 0.076",
+                        "fit_target ratio",
+                        "fit_component real",
+                        "nstates 1",
+                        "pzlist 0",
+                        "gmlist T5",
+                        "etalist eta0 eta1",
+                        "Tdirlist plus minus",
+                        "bTlist 0 1",
+                        "bzlist 0",
+                        "bootstrap_samples 12",
+                        "bootstrap_size 10",
+                        "seed 9",
+                        f"fit_window {override_path}",
+                        f"qtmdwf_h5 {h5_path}",
+                        "dataset_path_template {gm}/{eta}/pz{pz}/{Tdir}/bT{bT}/bz{bz}",
+                        f"two_point_plateau_table {tmp / 'plateau_pz*_tmax#_plateau.txt'}",
+                        f"c2pt {tmp / 'c2pt_pz*.csv'}",
+                        "fold_t periodic",
+                        "tsrange 0 6",
+                        f"results_dir {tmp / 'results'}",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            run_tmdwf_nstate_fit(input_path)
+
+            summary_path = tmp / "results" / "demo_pz0" / "demo_pz0_T5_eta0_bT0_real_1state_summary.txt"
+            ratio_path = tmp / "results" / "demo_pz0" / "tables" / "demo_pz0_T5_eta0_bT0_ratio.txt"
+            overview_candidates = sorted((tmp / "results").glob("*T5_1state_reference_windows.txt"))
+            shared_candidates = sorted((tmp / "results" / "demo_pz0").glob("*shared_window.txt"))
+
+            summary_text = summary_path.read_text(encoding="utf-8")
+            ratio_text = ratio_path.read_text(encoding="utf-8")
+            overview_text = overview_candidates[0].read_text(encoding="utf-8") if overview_candidates else ""
+
+        self.assertIn("fit_window_source fit_window", summary_text)
+        self.assertIn("tfit 3 6", summary_text)
+        self.assertIn("fit_window_source fit_window", ratio_text)
+        self.assertIn("tfit 3 6", ratio_text)
+        self.assertEqual(len(shared_candidates), 0)
+        self.assertEqual(len(overview_candidates), 1)
+        self.assertTrue(any(line.startswith("0\t") and "fit_window" in line for line in overview_text.splitlines()[1:]))
 
     def test_grouped_outputs_by_bt_include_multiple_bz_rows_and_fit_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1285,8 +1389,7 @@ class TMDWFFitTests(unittest.TestCase):
                         "Tdirlist plus minus",
                         "bTlist 0",
                         "bzlist 0 1",
-                        "tmin 2",
-                        "tmax auto",
+                        f"fit_window {tmp / 'fit_windows.txt'}",
                         f"qtmdwf_h5 {h5_path}",
                         "dataset_path_template {gm}/{eta}/pz{pz}/{Tdir}/bT{bT}/bz{bz}",
                         f"two_point_plateau_table {tmp / 'plateau_pz*_tmax#_plateau.txt'}",
@@ -1297,6 +1400,7 @@ class TMDWFFitTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
+            (tmp / "fit_windows.txt").write_text("0 2 5\n", encoding="utf-8")
             run_tmdwf_nstate_fit(input_path)
             summary_path = tmp / "results" / "demo_pz0" / "demo_pz0_T5_eta0_bT0_real_1state_summary.txt"
             fit_path = tmp / "results" / "demo_pz0" / "tables" / "demo_pz0_T5_eta0_bT0_real_1state_fit.txt"
@@ -1317,10 +1421,12 @@ class TMDWFFitTests(unittest.TestCase):
         self.assertIn("plateau_tmax_used", fit_text.splitlines()[0])
         self.assertIn("tsrange 0 5", ratio_text)
         self.assertIn("tfit 2 5", ratio_text)
+        self.assertIn("fit_window_source fit_window", ratio_text)
         self.assertIn("shared_window_flag 0", ratio_text)
         self.assertIn("two_point_plateau_table_resolved", ratio_text)
         self.assertIn("two_point_tmax_source inferred", ratio_text)
         self.assertIn("two_point_tmax_inferred 5", ratio_text)
+        self.assertIn("fit_window_source fit_window", summary_text)
         ratio_header = next(line for line in ratio_text.splitlines() if line.startswith("bz\t"))
         self.assertEqual(
             ratio_header.split("\t"),
@@ -1370,6 +1476,8 @@ class TMDWFFitTests(unittest.TestCase):
                             data=np.column_stack([numerator for _ in range(8)]).T,
                         )
 
+            fit_window_path = tmp / "fit_window.txt"
+            fit_window_path.write_text("0 2 5\n", encoding="utf-8")
             input_path = tmp / "input_tmdwf_plot.txt"
             input_path.write_text(
                 "\n".join(
@@ -1384,8 +1492,7 @@ class TMDWFFitTests(unittest.TestCase):
                         "Tdirlist plus minus",
                         "bTlist 0",
                         "bzlist 0 1",
-                        "tmin 2",
-                        "tmax auto",
+                        f"fit_window {fit_window_path}",
                         f"qtmdwf_h5 {h5_path}",
                         "dataset_path_template {gm}/{eta}/pz{pz}/{Tdir}/bT{bT}/bz{bz}",
                         f"two_point_plateau_table {tmp / 'plateau_pz*_tmax#_plateau.txt'}",
@@ -2176,6 +2283,94 @@ class TMDWFFitTests(unittest.TestCase):
         self.assertIn("1\t1\t1\t6.0000000000e+00", samples_mode2)
         self.assertIn("1\t0\t1\t2.0000000000e+00", samples_mode3)
 
+    def test_tmdwf_normalization_uses_complex_samples_when_both_components_exist(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            input_root = tmp / "fit_outputs"
+            # target: (1 + i) / (1 - i) = i, so real output should be 0 and imag output should be 1
+            self._write_tmdwf_m0_outputs(
+                input_root,
+                "demo_pz2",
+                "T5",
+                "eta0",
+                1,
+                "real",
+                1,
+                fit_rows=[(0, 1.0, 0.1)],
+                sample_rows=[(0, 0, 1, 1.0)],
+            )
+            self._write_tmdwf_m0_outputs(
+                input_root,
+                "demo_pz2",
+                "T5",
+                "eta0",
+                1,
+                "imag",
+                1,
+                fit_rows=[(0, 1.0, 0.1)],
+                sample_rows=[(0, 0, 1, 1.0)],
+            )
+            self._write_tmdwf_m0_outputs(
+                input_root,
+                "demo_pz0",
+                "T5",
+                "eta0",
+                1,
+                "real",
+                1,
+                fit_rows=[(0, 1.0, 0.1)],
+                sample_rows=[(0, 0, 1, 1.0)],
+            )
+            self._write_tmdwf_m0_outputs(
+                input_root,
+                "demo_pz0",
+                "T5",
+                "eta0",
+                1,
+                "imag",
+                1,
+                fit_rows=[(0, -1.0, 0.1)],
+                sample_rows=[(0, 0, 1, -1.0)],
+            )
+
+            def run_component(component: str) -> tuple[str, str]:
+                input_path = tmp / f"normalize_{component}.txt"
+                input_path.write_text(
+                    "\n".join(
+                        [
+                            "title_pattern demo_pz*",
+                            f"input_root {input_root}",
+                            "ns 64",
+                            "lattice_spacing_fm 0.076",
+                            "pzlist 2",
+                            "gmlist T5",
+                            "etalist eta0",
+                            "bTlist 1",
+                            "bzlist 0",
+                            f"component {component}",
+                            "nstates 1",
+                            "normalization_mode mode2",
+                            f"results_dir {tmp / ('normalized_' + component)}",
+                        ]
+                    ),
+                    encoding="utf-8",
+                )
+                run_tmdwf_normalization(input_path)
+                out_root = tmp / f"normalized_{component}" / "demo_pz2"
+                fit_text = (out_root / "tables" / f"demo_pz2_T5_eta0_bT1_mode2_{component}_1state_fit.txt").read_text(encoding="utf-8")
+                sample_text = (out_root / "samples" / f"demo_pz2_T5_eta0_bT1_mode2_{component}_1state_samples.txt").read_text(encoding="utf-8")
+                return fit_text, sample_text
+
+            fit_real, sample_real = run_component("real")
+            fit_imag, sample_imag = run_component("imag")
+
+        self.assertIn("normalization_sample_domain complex", fit_real)
+        self.assertIn("normalization_sample_domain complex", fit_imag)
+        self.assertIn("0.0000000000e+00", fit_real)
+        self.assertIn("1.0000000000e+00", fit_imag)
+        self.assertIn("0\t0\t1\t0.0000000000e+00", sample_real)
+        self.assertIn("0\t0\t1\t1.0000000000e+00", sample_imag)
+
     def test_tmdwf_normalization_missing_reference_raises_clear_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
@@ -2238,6 +2433,8 @@ class TMDWFFitTests(unittest.TestCase):
                     handle.write(str(t) + "," + ",".join(f"{value:.12e}" for value in c2pt_data[t]) + "\n")
             plateau_path = tmp / "plateau_pz0_tmax5_plateau.txt"
             np.savetxt(plateau_path, np.array([[amplitudes[0], energies[0], 0.05, 0.02]]))
+            fit_window_path = tmp / "fit_window.txt"
+            fit_window_path.write_text("0 2 5\n", encoding="utf-8")
             input_path = tmp / "input_tmdwf.txt"
             input_path.write_text(
                 "\n".join(
@@ -2252,8 +2449,7 @@ class TMDWFFitTests(unittest.TestCase):
                         "Tdirlist plus minus",
                         "bTlist 0",
                         "bzlist 0",
-                        "tmin 2",
-                        "tmax auto",
+                        f"fit_window {fit_window_path}",
                         f"qtmdwf_h5 {h5_path}",
                         "dataset_path_template {gm}/{eta}/pz{pz}/{Tdir}/bT{bT}/bz{bz}",
                         f"two_point_plateau_table {tmp / 'plateau_pz*_tmax#_plateau.txt'}",
@@ -2304,6 +2500,8 @@ class TMDWFFitTests(unittest.TestCase):
                             data=np.column_stack([numerator for _ in range(8)]).T,
                         )
 
+            fit_window_path = tmp / "fit_window.txt"
+            fit_window_path.write_text("0 2 5\n", encoding="utf-8")
             input_path = tmp / "input_tmdwf_notebook.txt"
             input_path.write_text(
                 "\n".join(
@@ -2318,8 +2516,7 @@ class TMDWFFitTests(unittest.TestCase):
                         "Tdirlist plus minus",
                         "bTlist 0",
                         "bzlist 0 1",
-                        "tmin 2",
-                        "tmax auto",
+                        f"fit_window {fit_window_path}",
                         f"qtmdwf_h5 {h5_path}",
                         "dataset_path_template {gm}/{eta}/pz{pz}/{Tdir}/bT{bT}/bz{bz}",
                         f"two_point_plateau_table {tmp / 'plateau_pz*_tmax#_plateau.txt'}",
@@ -2379,6 +2576,8 @@ class TMDWFFitTests(unittest.TestCase):
                                 data=np.column_stack([numerator for _ in range(8)]).T,
                             )
 
+            fit_window_path = tmp / "fit_window.txt"
+            fit_window_path.write_text("0 2 5\n", encoding="utf-8")
             input_path = tmp / "input_tmdwf_m0_group.txt"
             input_path.write_text(
                 "\n".join(
@@ -2393,8 +2592,7 @@ class TMDWFFitTests(unittest.TestCase):
                         "Tdirlist plus minus",
                         "bTlist 0 1",
                         "bzlist 0 1",
-                        "tmin 2",
-                        "tmax auto",
+                        f"fit_window {fit_window_path}",
                         f"qtmdwf_h5 {h5_path}",
                         "dataset_path_template {gm}/{eta}/pz{pz}/{Tdir}/bT{bT}/bz{bz}",
                         f"two_point_plateau_table {tmp / 'plateau_pz*_tmax#_plateau.txt'}",
@@ -2451,6 +2649,8 @@ class TMDWFFitTests(unittest.TestCase):
                 for eta in ("eta0", "eta1"):
                     for tdir in ("plus", "minus"):
                         handle.create_dataset(f"T5/{eta}/pz0/{tdir}/bT0/bz0", data=np.column_stack([numerator for _ in range(8)]).T)
+            fit_window_path = tmp / "fit_window.txt"
+            fit_window_path.write_text("0 2 5\n", encoding="utf-8")
             input_path = tmp / "input_tmdwf.txt"
             input_path.write_text(
                 "\n".join(
@@ -2465,8 +2665,7 @@ class TMDWFFitTests(unittest.TestCase):
                         "Tdirlist plus minus",
                         "bTlist 0",
                         "bzlist 0",
-                        "tmin 2",
-                        "tmax auto",
+                        f"fit_window {fit_window_path}",
                         f"qtmdwf_h5 {h5_path}",
                         "dataset_path_template {gm}/{eta}/pz{pz}/{Tdir}/bT{bT}/bz{bz}",
                         f"two_point_plateau_table {tmp / 'plateau_pz*_tmax#_plateau.txt'}",

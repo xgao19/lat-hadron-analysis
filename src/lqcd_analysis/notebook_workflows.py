@@ -53,8 +53,10 @@ NSTATE_INPUT_KEYS = {
     "model",
     "fit_mode",
     "pz0_ground_energy",
+    "fix_ground_energy_from_dispersion",
     "nstates",
-    "tmax",
+    "fit_window",
+    "auto_search_plateau_from_fit_window",
     "binsize",
     "bootstrap_samples",
     "bootstrap_size",
@@ -84,9 +86,9 @@ TMDWF_INPUT_KEYS = {
     "bootstrap_samples",
     "bootstrap_size",
     "seed",
-    "tmin",
-    "tmax",
-    "shared_window_by_pz_gm",
+    "fit_window",
+    "auto_search_shared_window_from_fit_window",
+    "tmax_scan_radius",
     "decay_constant",
     "min_fit_dof",
     "qtmdwf_h5",
@@ -134,6 +136,7 @@ TMDWF_CS_KERNEL_KEYS = {
     "mu",
     "scheme",
     "extraction_type",
+    "pair_mode",
     "kernel_labels",
     "kernel",
     "bTlist",
@@ -220,6 +223,11 @@ def render_tgevp_input_text(config: dict[str, Any]) -> str:
 
 
 def render_nstate_fit_input_text(config: dict[str, Any]) -> str:
+    if isinstance(config.get("fit_window"), dict):
+        config = dict(config)
+        config["fit_window"] = str(
+            _materialize_nstate_fit_window_table(config["fit_window"])
+        )
     config = _subset_config(config, NSTATE_INPUT_KEYS)
     required = [
         "title_pattern",
@@ -232,6 +240,7 @@ def render_nstate_fit_input_text(config: dict[str, Any]) -> str:
         "model",
         "fit_mode",
         "nstates",
+        "fit_window",
     ]
     missing = [key for key in required if key not in config]
     if missing:
@@ -245,13 +254,15 @@ def render_nstate_fit_input_text(config: dict[str, Any]) -> str:
         f"model {_as_scalar_string(config['model'])}",
         f"fit_mode {_as_scalar_string(config.get('fit_mode', 'uncorrelated'))}",
         f"nstates {_as_scalar_string(config['nstates'])}",
+        f"fit_window {_as_scalar_string(config['fit_window'])}",
     ]
     if "tsrange" in config and config["tsrange"] is not None:
         lines.append(f"tsrange {_as_scalar_string(config['tsrange'])}")
 
     for optional_key in (
         "pz0_ground_energy",
-        "tmax",
+        "fix_ground_energy_from_dispersion",
+        "auto_search_plateau_from_fit_window",
         "binsize",
         "bootstrap_samples",
         "bootstrap_size",
@@ -266,6 +277,11 @@ def render_nstate_fit_input_text(config: dict[str, Any]) -> str:
 
 
 def render_tmdwf_fit_input_text(config: dict[str, Any]) -> str:
+    if isinstance(config.get("fit_window"), dict):
+        config = dict(config)
+        config["fit_window"] = str(
+            _materialize_tmdwf_fit_window_table(config["fit_window"])
+        )
     config = _subset_config(config, TMDWF_INPUT_KEYS)
     required = [
         "title_pattern",
@@ -279,7 +295,7 @@ def render_tmdwf_fit_input_text(config: dict[str, Any]) -> str:
         "gmlist",
         "etalist",
         "Tdirlist",
-        "tmin",
+        "fit_window",
         "qtmdwf_h5",
         "dataset_path_template",
         "two_point_plateau_table",
@@ -315,12 +331,7 @@ def render_tmdwf_fit_input_text(config: dict[str, Any]) -> str:
 
     lines.extend(
         [
-            f"tmin {_as_scalar_string(config['tmin'])}",
-            *(
-                [f"tmax {_as_scalar_string(config['tmax'])}"]
-                if "tmax" in config and config["tmax"] is not None
-                else []
-            ),
+            f"fit_window {_as_scalar_string(config['fit_window'])}",
             # qtmdwf_h5 is passed through unchanged so notebook configs may use
             # either {pz}/{gm} placeholders or the legacy * pz wildcard.
             f"qtmdwf_h5 {_as_scalar_string(config['qtmdwf_h5'])}",
@@ -337,7 +348,8 @@ def render_tmdwf_fit_input_text(config: dict[str, Any]) -> str:
         "bootstrap_samples",
         "bootstrap_size",
         "seed",
-        "shared_window_by_pz_gm",
+        "tmax_scan_radius",
+        "auto_search_shared_window_from_fit_window",
         "decay_constant",
         "min_fit_dof",
         "plot",
@@ -437,6 +449,7 @@ def render_tmdwf_cs_kernel_input_text(config: dict[str, Any]) -> str:
         f"mu {_as_scalar_string(config['mu'])}",
         f"scheme {_as_scalar_string(config.get('scheme', 'CG'))}",
         f"extraction_type {_as_scalar_string(config.get('extraction_type', 'type2'))}",
+        f"pair_mode {_as_scalar_string(config.get('pair_mode', 'all'))}",
         f"kernel_labels {_as_scalar_string(config.get('kernel_labels', config.get('kernel')))}",
     ]
     if "bTlist" in config and config["bTlist"] is not None:
@@ -511,6 +524,58 @@ def _materialize_input_text(text: str, suffix: str) -> Path:
     tmpdir = Path(tempfile.mkdtemp(prefix="lqcd_notebook_"))
     path = tmpdir / suffix
     path.write_text(text, encoding="utf-8")
+    return path
+
+
+def _materialize_tmdwf_fit_window_table(overrides: dict[Any, Any]) -> Path:
+    tmpdir = Path(tempfile.mkdtemp(prefix="lqcd_tmdwf_fit_windows_"))
+    path = tmpdir / "tmdwf_fit_window.txt"
+    lines: list[str] = []
+
+    def _parse_window(window: Any, label: str) -> tuple[int, int]:
+        if not isinstance(window, (list, tuple)) or len(window) != 2:
+            raise ValueError(
+                f"invalid fit_window entry for {label}; expected [tmin, tmax]"
+            )
+        tmin = int(window[0])
+        tmax = int(window[1])
+        if tmax < tmin:
+            raise ValueError(
+                f"invalid fit_window entry for {label}; tmax must be >= tmin"
+            )
+        return tmin, tmax
+
+    for key, value in overrides.items():
+        if isinstance(value, dict):
+            gm = str(key)
+            for pz_key, window in value.items():
+                tmin, tmax = _parse_window(window, f"{gm}/{pz_key}")
+                lines.append(f"{gm} {int(pz_key)} {tmin} {tmax}")
+        else:
+            tmin, tmax = _parse_window(value, str(key))
+            lines.append(f"{int(key)} {tmin} {tmax}")
+
+    path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+    return path
+
+
+def _materialize_nstate_fit_window_table(overrides: dict[Any, Any]) -> Path:
+    tmpdir = Path(tempfile.mkdtemp(prefix="lqcd_nstate_fit_windows_"))
+    path = tmpdir / "nstate_fit_window.txt"
+    lines: list[str] = []
+    for key, value in overrides.items():
+        if not isinstance(value, (list, tuple)) or len(value) != 2:
+            raise ValueError(
+                f"invalid fit_window entry for {key}; expected [tmin, tmax]"
+            )
+        tmin = int(value[0])
+        tmax = int(value[1])
+        if tmax < tmin:
+            raise ValueError(
+                f"invalid fit_window entry for {key}; tmax must be >= tmin"
+            )
+        lines.append(f"{int(key)} {tmin} {tmax}")
+    path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
     return path
 
 
@@ -592,6 +657,7 @@ def validate_tmdwf_cs_kernel_notebook_config(config: dict[str, Any]) -> dict[str
         "mu": parsed.mu,
         "scheme": parsed.scheme,
         "extraction_type": parsed.extraction_type,
+        "pair_mode": parsed.pair_mode,
         "kernel_labels": parsed.kernel_labels,
         "bTlist": parsed.bTlist,
         "pzlist": parsed.pzlist,

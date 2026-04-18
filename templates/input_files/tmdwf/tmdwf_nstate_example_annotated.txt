@@ -51,13 +51,36 @@ bootstrap_samples 32
 bootstrap_size 32
 seed 2026
 
-# Fit time window in lattice units.
-# `tmax` may be:
-#   an explicit integer, which always takes precedence
-#   auto, which infers tmax from the two-point plateau filename token
-# Omit the line entirely to use the same inference rule as auto.
-tmin 2
-tmax auto
+# Recommended default usage: set one trusted fit window per momentum.
+# Each row in the fit-window table should contain:
+#   pz tmin tmax
+# or, for gm-specific control:
+#   gm pz tmin tmax
+# In the notebook workflow_config, the preferred equivalent is:
+#   "fit_window": {5: [6, 12], 6: [6, 12], 7: [5, 12]}
+fit_window /path/to/tmdwf_fit_windows.txt
+
+# Advanced / experimental automatic-window controls begin here.
+# These are useful for exploratory studies, but are still early-stage and not
+# the primary recommended default.
+# Optional: when automatic shared-window search is enabled, search a small local
+# tmax range around the retained fit-window upper edge. For example, radius 1
+# scans:
+#   fit_window_tmax - 1, fit_window_tmax, fit_window_tmax + 1
+tmax_scan_radius 1
+
+# Optional: when true, treat the retained fit_window as a bounded search region
+# and perform automatic shared-window selection inside it.
+auto_search_shared_window_from_fit_window false
+
+# Required when auto_search_shared_window_from_fit_window is true.
+# The automatic reference-window search keeps the current reference-value /
+# decay-constant philosophy and ranks candidate windows by overlap with this
+# target, window size, later times, and local m0 stability.
+decay_constant 0.11 0.03
+
+# Shared-window scans still enforce the existing hard fit-dof floor of 4.
+min_fit_dof 4
 
 # HDF5 file path or wildcard pattern.
 # The pz wildcard can be written using * if helpful.
@@ -108,6 +131,11 @@ results_dir examples/outputs/tmdwf_fit_example
 # - Outputs are grouped by bT. For a fixed (title, gm, eta, bT, component, nstates),
 #   one summary / fit / samples / curve file is written and each file contains all bz entries.
 # - Grouped summary files contain one `begin_bz ...` / `end_bz ...` block per bz.
+# - Grouped ratio and summary outputs also record `fit_window_source`, so you can
+#   distinguish manual overrides from automatic reference-based selection.
+# - When automatic shared-window search is enabled, the reference summary now
+#   scans a bounded `(tmin, tmax)` neighborhood inside the retained fit-window
+#   region rather than using the full fit-window directly.
 # - Summary blocks also record:
 #     two_point_plateau_table_resolved
 #     two_point_tmax_source

@@ -28,6 +28,19 @@ class TMDWFM0VsBZSeries:
     m0_err: np.ndarray
 
 
+@dataclass(frozen=True)
+class CSKernelBreakdownSeries:
+    label: str
+    x_values: np.ndarray
+    log_ratio_p16: np.ndarray
+    log_ratio_p50: np.ndarray
+    log_ratio_p84: np.ndarray
+    matching: np.ndarray
+    total_p16: np.ndarray
+    total_p50: np.ndarray
+    total_p84: np.ndarray
+
+
 def _parse_grouped_table(path: str | Path) -> tuple[dict[str, str], list[str], list[list[str]]]:
     metadata: dict[str, str] = {}
     header: list[str] | None = None
@@ -339,6 +352,43 @@ def plot_tmdwf_cs_kernel_band(
         ax.set_ylim(*ylim)
     ax.set_title(f"{title} bT={bT} ref pz={reference_pz}")
     ax.legend()
+    fig.tight_layout()
+    fig.savefig(output_path)
+    plt.close(fig)
+    return output_path
+
+
+def plot_tmdwf_cs_kernel_adjacent_breakdown(
+    output_path: str | Path,
+    series: tuple[CSKernelBreakdownSeries, ...],
+    *,
+    title: str | None = None,
+    figsize: tuple[float, float] = (8.5, 12.0),
+) -> Path:
+    output_path = Path(output_path)
+    plt = prepare_matplotlib()
+    if plt is None:
+        return save_plot_status(output_path.with_suffix(".txt"), "matplotlib not installed; plot was skipped")
+
+    fig, axes = plt.subplots(3, 1, figsize=figsize, sharex=True)
+    ax_data, ax_match, ax_total = axes
+    for index, item in enumerate(series):
+        color = f"C{index}"
+        ax_data.plot(item.x_values, item.log_ratio_p50, "--", lw=2.0, color=color, label=item.label)
+        ax_data.fill_between(item.x_values, item.log_ratio_p16, item.log_ratio_p84, color=color, alpha=0.18, linewidth=0)
+        ax_match.plot(item.x_values, item.matching, "--", lw=2.0, color=color, label=item.label)
+        ax_total.plot(item.x_values, item.total_p50, "--", lw=2.0, color=color, label=item.label)
+        ax_total.fill_between(item.x_values, item.total_p16, item.total_p84, color=color, alpha=0.18, linewidth=0)
+
+    ax_data.set_ylabel("data log-ratio")
+    ax_match.set_ylabel("matching")
+    ax_total.set_ylabel("total estimator")
+    ax_total.set_xlabel("x")
+    if title:
+        ax_data.set_title(title)
+    for ax in axes:
+        ax.axvline(0.5, color="0.85", linewidth=1.0)
+        ax.legend()
     fig.tight_layout()
     fig.savefig(output_path)
     plt.close(fig)

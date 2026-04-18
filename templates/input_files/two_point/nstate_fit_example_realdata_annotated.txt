@@ -19,10 +19,6 @@ pzlist 0
 #   antiperiodic
 fold_t none
 
-# Raw correlator time window [t_start, t_end].
-# Optional. If omitted, the backend defaults to [0, Nt//2 - 1].
-tsrange 0 24
-
 # Fit model choices:
 #   normal
 #   symmetric
@@ -37,6 +33,12 @@ model normal
 #                  fit using only the covariance diagonal for that sample/window
 fit_mode uncorrelated
 
+# Recommended default usage: use a trusted `fit_window`, provide
+# `pz0_ground_energy`, and keep `fix_ground_energy_from_dispersion true`.
+# This keeps the main user-facing control in one place: one `[tmin, tmax]`
+# window per momentum.
+# This is the closest repository-native path to the legacy fixed-E0 workflow.
+
 # Allowed fit-state choices are subsets of: 1 2 3
 # Examples:
 #   nstates 1
@@ -48,11 +50,32 @@ nstates 1 2
 # If provided, the 1-state plateau search uses the target
 #   E_target(pz) = sqrt(E0_pz0^2 + (2*pi*pz/Ns)^2)
 # to pre-filter plateau candidates before the usual ranking.
-# This affects only the 1-state plateau selection, not the fit model itself.
-# pz0_ground_energy 0.42
+# This also serves as the dispersion anchor if you enable
+# `fix_ground_energy_from_dispersion true` below.
+pz0_ground_energy 0.42
 
-# Fit upper bound. Use an integer or the word auto.
-tmax 12
+# Optional: legacy-style fixed-E0 support for the nonlinear 2pt fit.
+# When true, the ground-state energy is fixed to the lattice-dispersion target
+# derived from `pz0_ground_energy` for every fitted pz:
+#   E0(pz) = sqrt(E0_pz0^2 + (2*pi*pz/Ns)^2)
+# This changes the nonlinear fit, not only plateau pre-filtering.
+fix_ground_energy_from_dispersion true
+
+# Recommended default: explicit per-momentum fit windows.
+# Each row should contain:
+#   pz tmin tmax
+# Example file contents:
+#   0 4 12
+#   5 6 12
+#   6 6 12
+fit_window /path/to/2pt_fit_windows.txt
+
+# Advanced / experimental option:
+# when true, the backend first clips the folded correlator to the requested
+# fit_window for that momentum, then performs automatic plateau suggestion
+# inside that retained window instead of using the full window directly.
+# Keep false for the current default.
+auto_search_plateau_from_fit_window false
 
 # Bootstrap and run controls.
 # Use auto for bootstrap_samples / bootstrap_size to let the backend choose.
@@ -83,3 +106,12 @@ plot true
 # Output directory.
 # If omitted, outputs go to a `results_nstate_fit/` directory next to this input file.
 results_dir examples/outputs/nstate_fit_realdata
+
+# Note:
+# - By default, the backend folds the correlator and then directly clips it to
+#   the requested `fit_window` range for that momentum.
+# - If `auto_search_plateau_from_fit_window` is true, the code uses the
+#   provided fit window as a bounded search region and runs automatic plateau
+#   suggestion inside it.
+# - That automatic search mode is still intended as a higher-level testing
+#   feature rather than the primary recommended default.

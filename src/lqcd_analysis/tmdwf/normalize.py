@@ -185,9 +185,89 @@ def _resolve_fit_sample_paths(
     return fit_path, sample_path
 
 
+def _try_resolve_fit_sample_paths(
+    input_root: Path,
+    title: str,
+    gm: str,
+    eta: str,
+    bT: int,
+    component: str,
+    nstates: int,
+) -> tuple[Path, Path] | None:
+    try:
+        return _resolve_fit_sample_paths(input_root, title, gm, eta, bT, component, nstates)
+    except FileNotFoundError:
+        return None
+
+
+def _combine_complex_samples(
+    real_samples: dict[int, dict[int, tuple[int, float]]],
+    imag_samples: dict[int, dict[int, tuple[int, float]]],
+) -> dict[int, dict[int, tuple[int, complex]]]:
+    combined: dict[int, dict[int, tuple[int, complex]]] = {}
+    sample_ids = sorted(set(real_samples) | set(imag_samples))
+    for sample_id in sample_ids:
+        by_bz_real = real_samples.get(sample_id, {})
+        by_bz_imag = imag_samples.get(sample_id, {})
+        bz_values = sorted(set(by_bz_real) | set(by_bz_imag))
+        for bz in bz_values:
+            real_entry = by_bz_real.get(bz)
+            imag_entry = by_bz_imag.get(bz)
+            if real_entry is None or imag_entry is None:
+                continue
+            real_success, real_value = real_entry
+            imag_success, imag_value = imag_entry
+            success = int(
+                real_success == 1
+                and imag_success == 1
+                and np.isfinite(real_value)
+                and np.isfinite(imag_value)
+            )
+            combined.setdefault(sample_id, {})[bz] = (
+                success,
+                complex(real_value, imag_value) if success == 1 else complex(np.nan, np.nan),
+            )
+    return combined
+
+
+def _load_dataset_rows_and_samples(
+    input_root: Path,
+    title: str,
+    gm: str,
+    eta: str,
+    bT: int,
+    component: str,
+    nstates: int,
+) -> tuple[list[str], dict[int, dict[str, str]], dict[int, dict[int, tuple[int, complex]]], Path, Path, bool]:
+    fit_path, sample_path = _resolve_fit_sample_paths(input_root, title, gm, eta, bT, component, nstates)
+    header, row_map, _ = _load_fit_rows_by_bz(fit_path)
+    _, sample_map = _load_sample_rows(sample_path)
+
+    complex_sample_map: dict[int, dict[int, tuple[int, complex]]] = {
+        sample_id: {
+            bz: (success, complex(value, 0.0))
+            for bz, (success, value) in by_bz.items()
+        }
+        for sample_id, by_bz in sample_map.items()
+    }
+    used_complex_samples = False
+
+    counterpart = "imag" if component == "real" else "real"
+    counterpart_paths = _try_resolve_fit_sample_paths(input_root, title, gm, eta, bT, counterpart, nstates)
+    if counterpart_paths is not None:
+        _, counterpart_sample_map = _load_sample_rows(counterpart_paths[1])
+        if component == "real":
+            complex_sample_map = _combine_complex_samples(sample_map, counterpart_sample_map)
+        else:
+            complex_sample_map = _combine_complex_samples(counterpart_sample_map, sample_map)
+        used_complex_samples = True
+
+    return header, row_map, complex_sample_map, fit_path, sample_path, used_complex_samples
+
+
 def _require_reference_bz0(
     row_map: dict[int, dict[str, str]],
-    sample_map: dict[int, dict[int, tuple[int, float]]],
+    sample_map: dict[int, dict[int, tuple[int, complex]]],
     *,
     label: str,
 ) -> None:
@@ -208,11 +288,11 @@ def _summarize_percentile(values: np.ndarray) -> tuple[float, float]:
 
 def _compute_normalized_sample(
     mode: str,
-    target_value: float,
-    ref_same_pz_bt0: float | None,
-    ref_pz0_same_bt: float | None,
-    ref_pz0_bt0: float | None,
-) -> float:
+    target_value: complex,
+    ref_same_pz_bt0: complex | None,
+    ref_pz0_same_bt: complex | None,
+    ref_pz0_bt0: complex | None,
+) -> complex:
     if mode == "mode1":
         assert ref_same_pz_bt0 is not None
         return target_value / ref_same_pz_bt0
@@ -284,7 +364,7 @@ def run_tmdwf_normalization(
             for eta in spec.etalist:
                 fit_tables_by_bT: dict[int, Path] = {}
                 for bT in spec.bTlist:
-                    target_fit_path, target_sample_path = _resolve_fit_sample_paths(
+                    target_header, target_rows, target_samples, target_fit_path, target_sample_path, target_used_complex = _load_dataset_rows_and_samples(
                         spec.input_root,
                         title,
                         gm,
@@ -293,15 +373,21 @@ def run_tmdwf_normalization(
                         spec.component,
                         spec.nstates,
                     )
-                    target_header, target_rows, _ = _load_fit_rows_by_bz(target_fit_path)
-                    _, target_samples = _load_sample_rows(target_sample_path)
 
                     mode1_fit_rows = mode1_samples = None
                     mode2_fit_rows = mode2_samples = None
                     mode3_fit_rows = mode3_samples = None
+                    reference_uses_complex = target_used_complex
 
                     if spec.normalization_mode in {"mode1", "mode3"}:
-                        mode1_fit_path, mode1_sample_path = _resolve_fit_sample_paths(
+                        (
+                            _,
+                            mode1_fit_rows,
+                            mode1_samples,
+                            _mode1_fit_path,
+                            _mode1_sample_path,
+                            mode1_used_complex,
+                        ) = _load_dataset_rows_and_samples(
                             spec.input_root,
                             title,
                             gm,
@@ -310,11 +396,17 @@ def run_tmdwf_normalization(
                             spec.component,
                             spec.nstates,
                         )
-                        _, mode1_fit_rows, _ = _load_fit_rows_by_bz(mode1_fit_path)
-                        _, mode1_samples = _load_sample_rows(mode1_sample_path)
+                        reference_uses_complex = reference_uses_complex or mode1_used_complex
                         _require_reference_bz0(mode1_fit_rows, mode1_samples, label=f"pz={pz} gm={gm} eta={eta} bT=0")
                     if spec.normalization_mode in {"mode2", "mode3"}:
-                        mode2_fit_path, mode2_sample_path = _resolve_fit_sample_paths(
+                        (
+                            _,
+                            mode2_fit_rows,
+                            mode2_samples,
+                            _mode2_fit_path,
+                            _mode2_sample_path,
+                            mode2_used_complex,
+                        ) = _load_dataset_rows_and_samples(
                             spec.input_root,
                             title_pz0,
                             gm,
@@ -323,12 +415,18 @@ def run_tmdwf_normalization(
                             spec.component,
                             spec.nstates,
                         )
-                        _, mode2_fit_rows, _ = _load_fit_rows_by_bz(mode2_fit_path)
-                        _, mode2_samples = _load_sample_rows(mode2_sample_path)
+                        reference_uses_complex = reference_uses_complex or mode2_used_complex
                         _require_reference_bz0(mode2_fit_rows, mode2_samples, label=f"pz=0 gm={gm} eta={eta} bT={bT}")
                     if spec.normalization_mode == "mode3":
                         assert mode2_fit_rows is not None and mode2_samples is not None
-                        mode3_fit_path, mode3_sample_path = _resolve_fit_sample_paths(
+                        (
+                            _,
+                            mode3_fit_rows,
+                            mode3_samples,
+                            _mode3_fit_path,
+                            _mode3_sample_path,
+                            mode3_used_complex,
+                        ) = _load_dataset_rows_and_samples(
                             spec.input_root,
                             title_pz0,
                             gm,
@@ -337,8 +435,7 @@ def run_tmdwf_normalization(
                             spec.component,
                             spec.nstates,
                         )
-                        _, mode3_fit_rows, _ = _load_fit_rows_by_bz(mode3_fit_path)
-                        _, mode3_samples = _load_sample_rows(mode3_sample_path)
+                        reference_uses_complex = reference_uses_complex or mode3_used_complex
                         _require_reference_bz0(mode3_fit_rows, mode3_samples, label=f"pz=0 gm={gm} eta={eta} bT=0")
 
                     fit_rows_out: list[dict[str, str]] = []
@@ -376,13 +473,14 @@ def run_tmdwf_normalization(
                                     continue
                                 ref3 = ref_entry[1]
 
-                            normalized = _compute_normalized_sample(
+                            normalized_complex = _compute_normalized_sample(
                                 spec.normalization_mode,
                                 target_entry[1],
                                 ref1,
                                 ref2,
                                 ref3,
                             )
+                            normalized = float(normalized_complex.real if spec.component == "real" else normalized_complex.imag)
                             success = int(np.isfinite(normalized))
                             sample_rows_out.append((bz, sample_id, success, normalized))
                             if success:
@@ -404,6 +502,7 @@ def run_tmdwf_normalization(
                         f"bT {bT}",
                         f"component {spec.component}",
                         f"nstates {spec.nstates}",
+                        f"normalization_sample_domain {'complex' if reference_uses_complex else 'scalar'}",
                         f"input_fit_table {target_fit_path}",
                         f"input_sample_table {target_sample_path}",
                     ]

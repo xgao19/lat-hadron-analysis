@@ -48,5 +48,8 @@ results_dir examples/outputs/tmdwf_normalize_example
 # - This workflow consumes grouped fit/sample outputs from the TMDWF N-state fit.
 # - It does not rerun the nonlinear fit.
 # - Normalization is done sample-by-sample before percentile summaries are built.
+# - If both real and imag grouped sample tables exist for the requested inputs,
+#   the workflow first reconstructs complex bootstrap samples, normalizes those
+#   complex values, and only then writes the requested real or imag component.
 # - The output fit/sample tables keep the familiar m0_mean / m0_err / m0 columns
 #   so downstream code, including the Fourier step, can reuse them smoothly.
