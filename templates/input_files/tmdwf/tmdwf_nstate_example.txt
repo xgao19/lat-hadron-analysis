@@ -14,10 +14,6 @@ bootstrap_samples 32
 bootstrap_size 32
 seed 2026
 fit_window /path/to/tmdwf_fit_windows.txt
-auto_search_shared_window_from_fit_window false
-tmax_scan_radius 1
-decay_constant 0.11 0.03
-min_fit_dof 4
 qtmdwf_h5 /path/to/qtmdwf_pz*.h5
 dataset_path_template {gm}/{eta}/pz{pz}/{Tdir}/bT{bT}/bz{bz}
 two_point_plateau_table examples/outputs/nstate_fit_realdata/l64c64a076_m140_fit_k0_pz*/tables/l64c64a076_m140_fit_k0_pz*_normal_1state_tmax#_plateau.txt

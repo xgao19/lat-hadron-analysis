@@ -7,7 +7,6 @@ from unittest.mock import patch
 import numpy as np
 
 from lqcd_analysis.tmdwf.fit_nstate import (
-    _effective_shared_window_min_fit_dof,
     _select_curve_component,
     _write_component_outputs,
     build_bootstrap_ratio_samples,
@@ -15,7 +14,6 @@ from lqcd_analysis.tmdwf.fit_nstate import (
     fit_tmdwf_mean_component,
     parse_tmdwf_fit_input,
     run_tmdwf_nstate_fit,
-    scan_reference_tmin_rows,
     TMDWFFitResult,
     TMDWFOutputRecord,
 )
@@ -84,9 +82,9 @@ class TMDWFFitTests(unittest.TestCase):
         (fit_dir / f"{stem}_fit.txt").write_text(
             "\n".join(
                 [
-                    "bz\ttmin\ttmax\tsuccess_meanfit\tchi2_dof\tpvalue\tshared_window_flag\treference_eta\treference_bT\treference_bz\tplateau_tmax_used\tm0_mean\tm0_err",
+                    "bz\ttmin\ttmax\tsuccess_meanfit\tchi2_dof\tpvalue\tfit_window_tmax_used\tm0_mean\tm0_err",
                     *[
-                        f"{bz}\t2\t6\t1\t1.0\t0.5\t0\tnone\t-1\t-1\t6\t{mean:.10e}\t{err:.10e}"
+                        f"{bz}\t2\t6\t1\t1.0\t0.5\t6\t{mean:.10e}\t{err:.10e}"
                         for bz, mean, err in fit_rows
                     ],
                 ]
@@ -149,46 +147,6 @@ class TMDWFFitTests(unittest.TestCase):
         self.assertEqual(parsed.fit_component, "both")
         self.assertEqual(parsed.results_dir, Path("/tmp/tmdwf_results"))
         self.assertEqual(parsed.fold_t, "periodic")
-        self.assertEqual(parsed.fit_window, "/tmp/fit_windows.txt")
-        self.assertEqual(parsed.tmax_scan_radius, 0)
-        self.assertIsNone(parsed.decay_constant)
-        self.assertEqual(parsed.min_fit_dof, 1)
-
-    def test_parse_input_file_with_auto_search_options(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            input_file = Path(tmpdir) / "input_tmdwf.txt"
-            input_file.write_text(
-                "\n".join(
-                    [
-                        "demo_pz* 32 16 0.076",
-                        "fit_target ratio",
-                        "fit_component real",
-                        "nstates 1",
-                        "pzlist 0",
-                        "gmlist T5",
-                        "etalist eta0 eta1",
-                        "Tdirlist plus minus",
-                        "bTlist 0 1",
-                        "bzlist 0",
-                        "fit_window /tmp/fit_windows.txt",
-                        "auto_search_shared_window_from_fit_window true",
-                        "decay_constant 0.12 0.03",
-                        "min_fit_dof 2",
-                        "tmax_scan_radius 1",
-                        "qtmdwf_h5 /tmp/tmdwf_pz*.h5",
-                        "dataset_path_template {gm}/{eta}/pz{pz}/{Tdir}/bT{bT}/bz{bz}",
-                        "two_point_plateau_table /tmp/plateau_pz*.txt",
-                        "c2pt /tmp/c2pt_pz*.csv",
-                        "fold_t periodic",
-                    ]
-                ),
-                encoding="utf-8",
-            )
-            parsed = parse_tmdwf_fit_input(input_file)
-        self.assertTrue(parsed.auto_search_shared_window_from_fit_window)
-        self.assertEqual(parsed.decay_constant, (0.12, 0.03))
-        self.assertEqual(parsed.min_fit_dof, 2)
-        self.assertEqual(parsed.tmax_scan_radius, 1)
         self.assertEqual(parsed.fit_window, "/tmp/fit_windows.txt")
 
     def test_parse_input_file_supports_fit_window_without_tmin(self) -> None:
@@ -577,15 +535,10 @@ class TMDWFFitTests(unittest.TestCase):
                 pz=1,
                 ns=16,
                 gm="Z5",
-                shared_window_flag=0,
-                reference_eta="none",
-                reference_bT=-1,
-                reference_bz=-1,
-                plateau_tmax_used=2,
-                two_point_plateau_table_resolved="plateau.txt",
+                fit_window_tmax_used=2,
+                two_point_fit_table_resolved="plateau.txt",
                 two_point_tmax_source="explicit",
                 two_point_tmax_inferred="none",
-                fit_window_source="fit_window",
                 tsrange_start=0,
                 tsrange_end=2,
                 ratio_samples=np.ones((2, 3), dtype=np.complex128),
@@ -632,15 +585,10 @@ class TMDWFFitTests(unittest.TestCase):
                 pz=0,
                 ns=16,
                 gm="T5",
-                shared_window_flag=0,
-                reference_eta="none",
-                reference_bT=-1,
-                reference_bz=-1,
-                plateau_tmax_used=2,
-                two_point_plateau_table_resolved="plateau.txt",
+                fit_window_tmax_used=2,
+                two_point_fit_table_resolved="plateau.txt",
                 two_point_tmax_source="explicit",
                 two_point_tmax_inferred="none",
-                fit_window_source="fit_window",
                 tsrange_start=0,
                 tsrange_end=2,
                 ratio_samples=np.ones((2, 3), dtype=np.complex128),
@@ -706,127 +654,6 @@ class TMDWFFitTests(unittest.TestCase):
 
         self.assertTrue(meanfit.success)
         self.assertAlmostEqual(meanfit.params[0], matrix_elements[0], delta=0.05)
-
-    def test_scan_reference_tmin_rows_reports_m0_errors(self) -> None:
-        nt = 16
-        amplitudes = np.array([2.5])
-        energies = np.array([0.35])
-        matrix_elements = np.array([1.2])
-        times = np.arange(0, nt // 2 + 1)
-        model = evaluate_tmdwf_ratio(times, amplitudes, energies, matrix_elements, nt, gm="T5", pz=0, ns=32)
-        rng = np.random.default_rng(7)
-        ratio_samples = model[None, :] + 0.002 * rng.normal(size=(24, times.size))
-
-        rows = scan_reference_tmin_rows(
-            ratio_samples,
-            amplitudes,
-            energies,
-            nt=nt,
-            pz=0,
-            ns=32,
-            gm="T5",
-            tmin_start=2,
-            tmax=6,
-            nstates=1,
-            min_fit_dof=1,
-            component="real",
-        )
-
-        self.assertTrue(rows)
-        self.assertTrue(all(np.isfinite(row.m0_mean) for row in rows))
-        self.assertTrue(all(np.isfinite(row.m0_err) and row.m0_err >= 0.0 for row in rows))
-
-    def test_scan_reference_tmin_rows_scans_local_tmax_values(self) -> None:
-        nt = 16
-        amplitudes = np.array([2.5])
-        energies = np.array([0.35])
-        matrix_elements = np.array([1.2])
-        times = np.arange(0, nt // 2 + 1)
-        model = evaluate_tmdwf_ratio(times, amplitudes, energies, matrix_elements, nt, gm="T5", pz=0, ns=32)
-        rng = np.random.default_rng(7)
-        ratio_samples = model[None, :] + 0.002 * rng.normal(size=(24, times.size))
-
-        rows = scan_reference_tmin_rows(
-            ratio_samples,
-            amplitudes,
-            energies,
-            nt=nt,
-            pz=0,
-            ns=32,
-            gm="T5",
-            tmin_start=2,
-            tmax=6,
-            nstates=1,
-            min_fit_dof=1,
-            component="real",
-            tmax_values=(5, 6, 7),
-        )
-
-        self.assertTrue(rows)
-        self.assertEqual(sorted({row.tmax for row in rows}), [6, 7])
-
-    def test_shared_window_min_fit_dof_has_hard_floor_of_four(self) -> None:
-        self.assertEqual(_effective_shared_window_min_fit_dof(1), 4)
-        self.assertEqual(_effective_shared_window_min_fit_dof(3), 4)
-        self.assertEqual(_effective_shared_window_min_fit_dof(4), 4)
-        self.assertEqual(_effective_shared_window_min_fit_dof(5), 5)
-
-    def test_scan_reference_tmin_rows_enforces_hard_fit_dof_floor(self) -> None:
-        nt = 16
-        amplitudes = np.array([2.5])
-        energies = np.array([0.35])
-        matrix_elements = np.array([1.2])
-        times = np.arange(0, nt // 2 + 1)
-        model = evaluate_tmdwf_ratio(times, amplitudes, energies, matrix_elements, nt, gm="T5", pz=0, ns=32)
-        rng = np.random.default_rng(7)
-        ratio_samples = model[None, :] + 0.002 * rng.normal(size=(24, times.size))
-
-        rows_min1 = scan_reference_tmin_rows(
-            ratio_samples,
-            amplitudes,
-            energies,
-            nt=nt,
-            pz=0,
-            ns=32,
-            gm="T5",
-            tmin_start=2,
-            tmax=6,
-            nstates=1,
-            min_fit_dof=1,
-            component="real",
-        )
-        rows_min4 = scan_reference_tmin_rows(
-            ratio_samples,
-            amplitudes,
-            energies,
-            nt=nt,
-            pz=0,
-            ns=32,
-            gm="T5",
-            tmin_start=2,
-            tmax=6,
-            nstates=1,
-            min_fit_dof=4,
-            component="real",
-        )
-        rows_min5 = scan_reference_tmin_rows(
-            ratio_samples,
-            amplitudes,
-            energies,
-            nt=nt,
-            pz=0,
-            ns=32,
-            gm="T5",
-            tmin_start=2,
-            tmax=7,
-            nstates=1,
-            min_fit_dof=5,
-            component="real",
-        )
-
-        self.assertEqual([row.fit_dof for row in rows_min1], [4])
-        self.assertEqual([row.fit_dof for row in rows_min4], [4])
-        self.assertEqual([row.fit_dof for row in rows_min5], [5])
 
     def test_end_to_end_workflow_writes_outputs_for_t5_and_z5(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1150,116 +977,6 @@ class TMDWFFitTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "could not infer tmax"):
                 run_tmdwf_nstate_fit(input_path)
 
-    def test_auto_search_from_fit_window_reuses_reference_window(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tmp = Path(tmpdir)
-            nt = 12
-            ns = 16
-            times = np.arange(nt)
-            amplitudes = np.array([2.8])
-            energies = np.array([0.42])
-            matrix_elements = np.array([0.11])
-            denominator = evaluate_two_point_symmetric(times, amplitudes, energies, nt)
-            c2pt_csv = tmp / "c2pt_pz0.csv"
-            c2pt_data = np.column_stack(
-                [denominator * (1.0 + 0.001 * np.cos(times + cfg)) for cfg in range(10)]
-            )
-            with c2pt_csv.open("w", encoding="utf-8") as handle:
-                handle.write(",".join(["t"] + [f"cfg_{idx}" for idx in range(c2pt_data.shape[1])]) + "\n")
-                for t in range(nt):
-                    handle.write(str(t) + "," + ",".join(f"{value:.12e}" for value in c2pt_data[t]) + "\n")
-
-            plateau_path = tmp / "plateau_pz0_tmax6_plateau.txt"
-            np.savetxt(plateau_path, np.array([[amplitudes[0], energies[0], 0.05, 0.02]]))
-            h5_path = tmp / "tmdwf_pz0.h5"
-            with h5py.File(h5_path, "w") as handle:
-                for eta in ("eta0", "eta1"):
-                    for bT in (0, 1):
-                        numerator = evaluate_tmdwf_numerator(
-                            times, amplitudes, energies, matrix_elements, nt, gm="T5", pz=0, ns=ns
-                        )
-                        for tdir in ("plus", "minus"):
-                            dataset = np.column_stack(
-                                [numerator * (1.0 + 0.001 * np.sin(times + cfg + bT)) for cfg in range(10)]
-                            ).T
-                            handle.create_dataset(
-                                f"T5/{eta}/pz0/{tdir}/bT{bT}/bz0",
-                                data=dataset,
-                            )
-
-            fit_window_path = tmp / "fit_window.txt"
-            fit_window_path.write_text("0 2 6\n", encoding="utf-8")
-            input_path = tmp / "input_tmdwf.txt"
-            input_path.write_text(
-                "\n".join(
-                    [
-                        "demo_pz* 16 12 0.076",
-                        "fit_target ratio",
-                        "fit_component real",
-                        "nstates 1",
-                        "pzlist 0",
-                        "gmlist T5",
-                        "etalist eta0 eta1",
-                        "Tdirlist plus minus",
-                        "bTlist 0 1",
-                        "bzlist 0",
-                        "bootstrap_samples 12",
-                        "bootstrap_size 10",
-                        "seed 9",
-                        f"fit_window {fit_window_path}",
-                        "auto_search_shared_window_from_fit_window true",
-                        "decay_constant 0.11 0.03",
-                        "min_fit_dof 1",
-                        f"qtmdwf_h5 {h5_path}",
-                        "dataset_path_template {gm}/{eta}/pz{pz}/{Tdir}/bT{bT}/bz{bz}",
-                        f"two_point_plateau_table {tmp / 'plateau_pz*_tmax#_plateau.txt'}",
-                        f"c2pt {tmp / 'c2pt_pz*.csv'}",
-                        "fold_t periodic",
-                        "tsrange 0 6",
-                        f"results_dir {tmp / 'results'}",
-                    ]
-                ),
-                encoding="utf-8",
-            )
-            run_tmdwf_nstate_fit(input_path)
-
-            shared_summary = tmp / "results" / "demo_pz0" / "demo_pz0_T5_1state_shared_window.txt"
-            first_summary = tmp / "results" / "demo_pz0" / "demo_pz0_T5_eta0_bT0_real_1state_summary.txt"
-            second_summary = tmp / "results" / "demo_pz0" / "demo_pz0_T5_eta1_bT1_real_1state_summary.txt"
-            ratio_table = tmp / "results" / "demo_pz0" / "tables" / "demo_pz0_T5_eta0_bT0_ratio.txt"
-            overview_candidates = sorted((tmp / "results").glob("*T5_1state_reference_windows.txt"))
-            shared_exists = shared_summary.exists()
-            shared_text = shared_summary.read_text(encoding="utf-8")
-            first_text = first_summary.read_text(encoding="utf-8")
-            second_text = second_summary.read_text(encoding="utf-8")
-            ratio_text = ratio_table.read_text(encoding="utf-8")
-            overview_text = overview_candidates[0].read_text(encoding="utf-8") if overview_candidates else ""
-
-        self.assertTrue(shared_exists)
-        self.assertIn("selection_basis reference_mean_fits_only", shared_text)
-        self.assertIn("reference_dataset gm=T5 eta=eta0 pz=0 bT=0 bz=0", shared_text)
-        self.assertIn("decay_constant_target 1.1000000000e-01", shared_text)
-        self.assertIn("decay_constant_error 3.0000000000e-02", shared_text)
-        self.assertIn("decay_constant_source input", shared_text)
-        self.assertIn("selected_window_m0_error", shared_text)
-        self.assertIn("selected_window_local_roughness", shared_text)
-        candidate_lines = shared_text.split("candidate_rows\n", 1)[1].splitlines()[1:]
-        fit_dofs = [int(line.split()[-1]) for line in candidate_lines if line.strip()]
-        self.assertEqual(fit_dofs, [4])
-        self.assertIn("shared_tfit", first_text)
-        self.assertIn("shared_tfit", second_text)
-        self.assertIn("fit_window_source fit_window_auto_search", first_text)
-        self.assertIn("fit_window_source fit_window_auto_search", second_text)
-        self.assertIn("fit_window_source fit_window_auto_search", ratio_text)
-        self.assertIn("m0 ", first_text)
-        self.assertEqual(
-            next(line for line in first_text.splitlines() if line.startswith("shared_tfit ")),
-            next(line for line in second_text.splitlines() if line.startswith("shared_tfit ")),
-        )
-        self.assertEqual(len(overview_candidates), 1)
-        self.assertIn("fit_window_source", overview_text.splitlines()[0])
-        self.assertTrue(any(line.startswith("0\t") and "fit_window_auto_search" in line for line in overview_text.splitlines()[1:]))
-
     def test_fit_window_is_used_directly(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
@@ -1330,20 +1047,12 @@ class TMDWFFitTests(unittest.TestCase):
 
             summary_path = tmp / "results" / "demo_pz0" / "demo_pz0_T5_eta0_bT0_real_1state_summary.txt"
             ratio_path = tmp / "results" / "demo_pz0" / "tables" / "demo_pz0_T5_eta0_bT0_ratio.txt"
-            overview_candidates = sorted((tmp / "results").glob("*T5_1state_reference_windows.txt"))
-            shared_candidates = sorted((tmp / "results" / "demo_pz0").glob("*shared_window.txt"))
-
             summary_text = summary_path.read_text(encoding="utf-8")
             ratio_text = ratio_path.read_text(encoding="utf-8")
-            overview_text = overview_candidates[0].read_text(encoding="utf-8") if overview_candidates else ""
 
-        self.assertIn("fit_window_source fit_window", summary_text)
         self.assertIn("tfit 3 6", summary_text)
-        self.assertIn("fit_window_source fit_window", ratio_text)
         self.assertIn("tfit 3 6", ratio_text)
-        self.assertEqual(len(shared_candidates), 0)
-        self.assertEqual(len(overview_candidates), 1)
-        self.assertTrue(any(line.startswith("0\t") and "fit_window" in line for line in overview_text.splitlines()[1:]))
+        self.assertNotIn("fit_window_source", ratio_text)
 
     def test_grouped_outputs_by_bt_include_multiple_bz_rows_and_fit_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1416,17 +1125,12 @@ class TMDWFFitTests(unittest.TestCase):
         self.assertIn("begin_bz 0", summary_text)
         self.assertIn("begin_bz 1", summary_text)
         self.assertIn("two_point_tmax_source inferred", summary_text)
-        self.assertIn("shared_window_flag", fit_text.splitlines()[0])
-        self.assertIn("reference_eta", fit_text.splitlines()[0])
-        self.assertIn("plateau_tmax_used", fit_text.splitlines()[0])
+        self.assertIn("fit_window_tmax_used", fit_text.splitlines()[0])
         self.assertIn("tsrange 0 5", ratio_text)
         self.assertIn("tfit 2 5", ratio_text)
-        self.assertIn("fit_window_source fit_window", ratio_text)
-        self.assertIn("shared_window_flag 0", ratio_text)
-        self.assertIn("two_point_plateau_table_resolved", ratio_text)
+        self.assertIn("two_point_fit_table_resolved", ratio_text)
         self.assertIn("two_point_tmax_source inferred", ratio_text)
         self.assertIn("two_point_tmax_inferred 5", ratio_text)
-        self.assertIn("fit_window_source fit_window", summary_text)
         ratio_header = next(line for line in ratio_text.splitlines() if line.startswith("bz\t"))
         self.assertEqual(
             ratio_header.split("\t"),
@@ -1732,8 +1436,7 @@ class TMDWFFitTests(unittest.TestCase):
                     [
                         "tsrange 0 2",
                         "tfit 1 2",
-                        "shared_window_flag 0",
-                        "two_point_plateau_table_resolved plateaus.txt",
+                        "two_point_fit_table_resolved plateaus.txt",
                         "two_point_tmax_source explicit",
                         "two_point_tmax_inferred none",
                         "bz\tt\tin_fit_window\tratio_real_mean\tratio_real_err\tratio_imag_mean\tratio_imag_err",
@@ -1796,11 +1499,7 @@ class TMDWFFitTests(unittest.TestCase):
                     "success_meanfit",
                     "chi2_dof",
                     "pvalue",
-                    "shared_window_flag",
-                    "reference_eta",
-                    "reference_bT",
-                    "reference_bz",
-                    "plateau_tmax_used",
+                    "fit_window_tmax_used",
                     "m0_mean",
                     "m0_err",
                 ]
@@ -1809,9 +1508,9 @@ class TMDWFFitTests(unittest.TestCase):
                 "\n".join(
                     [
                         header,
-                        "2\t2\t5\t1\t1.0\t0.5\t0\tnone\t-1\t-1\t5\t1.20\t0.12",
-                        "0\t2\t5\t1\t1.0\t0.5\t0\tnone\t-1\t-1\t5\t1.00\t0.10",
-                        "1\t2\t5\t1\t1.0\t0.5\t0\tnone\t-1\t-1\t5\t1.10\t0.11",
+                        "2\t2\t5\t1\t1.0\t0.5\t5\t1.20\t0.12",
+                        "0\t2\t5\t1\t1.0\t0.5\t5\t1.00\t0.10",
+                        "1\t2\t5\t1\t1.0\t0.5\t5\t1.10\t0.11",
                     ]
                 ),
                 encoding="utf-8",
@@ -1820,8 +1519,8 @@ class TMDWFFitTests(unittest.TestCase):
                 "\n".join(
                     [
                         header,
-                        "1\t2\t5\t1\t1.0\t0.5\t0\tnone\t-1\t-1\t5\t2.10\t0.21",
-                        "0\t2\t5\t1\t1.0\t0.5\t0\tnone\t-1\t-1\t5\t2.00\t0.20",
+                        "1\t2\t5\t1\t1.0\t0.5\t5\t2.10\t0.21",
+                        "0\t2\t5\t1\t1.0\t0.5\t5\t2.00\t0.20",
                     ]
                 ),
                 encoding="utf-8",
@@ -1849,17 +1548,13 @@ class TMDWFFitTests(unittest.TestCase):
                     "success_meanfit",
                     "chi2_dof",
                     "pvalue",
-                    "shared_window_flag",
-                    "reference_eta",
-                    "reference_bT",
-                    "reference_bz",
-                    "plateau_tmax_used",
+                    "fit_window_tmax_used",
                     "m0_mean",
                     "m0_err",
                 ]
             )
-            fit_bt0.write_text("\n".join([header, "1\t2\t5\t1\t1.0\t0.5\t0\tnone\t-1\t-1\t5\t1.10\t0.11"]), encoding="utf-8")
-            fit_bt2.write_text("\n".join([header, "0\t2\t5\t1\t1.0\t0.5\t0\tnone\t-1\t-1\t5\t2.00\t0.20"]), encoding="utf-8")
+            fit_bt0.write_text("\n".join([header, "1\t2\t5\t1\t1.0\t0.5\t5\t1.10\t0.11"]), encoding="utf-8")
+            fit_bt2.write_text("\n".join([header, "0\t2\t5\t1\t1.0\t0.5\t5\t2.00\t0.20"]), encoding="utf-8")
 
             captured = {}
 
@@ -1894,10 +1589,10 @@ class TMDWFFitTests(unittest.TestCase):
             fit_table.write_text(
                 "\n".join(
                     [
-                        "bz\ttmin\ttmax\tsuccess_meanfit\tchi2_dof\tpvalue\tshared_window_flag\treference_eta\treference_bT\treference_bz\tplateau_tmax_used\tm0_mean\tm0_err",
-                        "2\t2\t6\t1\t1.0\t0.5\t0\tnone\t-1\t-1\t6\t1.20\t0.12",
-                        "0\t2\t6\t1\t1.0\t0.5\t0\tnone\t-1\t-1\t6\t1.00\t0.10",
-                        "1\t2\t6\t1\t1.0\t0.5\t0\tnone\t-1\t-1\t6\t1.10\t0.11",
+                        "bz\ttmin\ttmax\tsuccess_meanfit\tchi2_dof\tpvalue\tfit_window_tmax_used\tm0_mean\tm0_err",
+                        "2\t2\t6\t1\t1.0\t0.5\t6\t1.20\t0.12",
+                        "0\t2\t6\t1\t1.0\t0.5\t6\t1.00\t0.10",
+                        "1\t2\t6\t1\t1.0\t0.5\t6\t1.10\t0.11",
                     ]
                 ),
                 encoding="utf-8",
@@ -1955,10 +1650,10 @@ class TMDWFFitTests(unittest.TestCase):
             fit_table.write_text(
                 "\n".join(
                     [
-                        "bz\ttmin\ttmax\tsuccess_meanfit\tchi2_dof\tpvalue\tshared_window_flag\treference_eta\treference_bT\treference_bz\tplateau_tmax_used\tm0_mean\tm0_err",
-                        "0\t2\t6\t1\t1.0\t0.5\t0\tnone\t-1\t-1\t6\t1.00\t0.10",
-                        "1\t2\t6\t1\t1.0\t0.5\t0\tnone\t-1\t-1\t6\t1.10\t0.11",
-                        "2\t2\t6\t1\t1.0\t0.5\t0\tnone\t-1\t-1\t6\t1.20\t0.12",
+                        "bz\ttmin\ttmax\tsuccess_meanfit\tchi2_dof\tpvalue\tfit_window_tmax_used\tm0_mean\tm0_err",
+                        "0\t2\t6\t1\t1.0\t0.5\t6\t1.00\t0.10",
+                        "1\t2\t6\t1\t1.0\t0.5\t6\t1.10\t0.11",
+                        "2\t2\t6\t1\t1.0\t0.5\t6\t1.20\t0.12",
                     ]
                 ),
                 encoding="utf-8",

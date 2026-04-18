@@ -8,18 +8,16 @@ import numpy as np
 
 from lqcd_analysis.two_point.fit_nstate import (
     SHRINKAGE_LAMBDAS,
-    _load_previous_state_artifacts,
     build_residual_model,
     build_fallback_fit_attempts,
-    compute_plateau_parameter_summary,
-    build_energy_priors_from_plateau_summary,
+    compute_fit_window_parameter_summary,
+    build_energy_priors_from_fit_window_summary,
     compute_bootstrap_covariance,
     compute_effective_mass_antisymmetric_root,
     compute_effective_mass_cosh_root,
     effective_mass_single,
     evaluate_model,
     extract_shrinkage_lambda_from_message,
-    filter_plateau_candidates_by_target_energy,
     find_first_usable_correlated_residual_model,
     FitResult,
     fit_residuals,
@@ -28,15 +26,14 @@ from lqcd_analysis.two_point.fit_nstate import (
     EnergyPrior,
     pack_fit_parameters,
     parse_nstate_fit_input,
-    PlateauParameterSummary,
-    PlateauWindow,
+    FitWindowParameterSummary,
+    FitWindowSummary,
     run_single_dataset,
     run_sliding_fits,
     run_nstate_fit,
     shrink_covariance_to_diagonal,
     solve_antisymmetric_effective_mass,
     solve_cosh_effective_mass,
-    suggest_plateau,
     target_ground_energy_from_pz0,
 )
 from lqcd_analysis.two_point.plotting import (
@@ -48,24 +45,6 @@ from lqcd_analysis.two_point.plotting import (
 
 
 class NStateFitTests(unittest.TestCase):
-    @staticmethod
-    def _make_fit_row(tmin: int, energy: float, error: float = 0.05, chi2_dof: float = 1.0) -> FitSummaryRow:
-        return FitSummaryRow(
-            nstates=1,
-            tmin=tmin,
-            tmax=12,
-            success_meanfit=1,
-            bootstrap_successes=0,
-            bootstrap_total=0,
-            bootstrap_success_fraction=0.0,
-            fallback_uncorrelated_successes=0,
-            chi2_dof=chi2_dof,
-            pvalue=0.5,
-            plateau_flag=0,
-            params_mean=(2.0, energy),
-            params_err=(0.2, error),
-        )
-
     def test_normal_effective_mass(self) -> None:
         correlator = np.exp(-0.4 * np.arange(8))
         meff = effective_mass_single(correlator, "normal")
@@ -131,132 +110,6 @@ class NStateFitTests(unittest.TestCase):
             meff = effective_mass_single(correlator, "antisymmetric", nt=16)
         mock_solver.assert_called_once()
         self.assertTrue(np.allclose(meff, 0.123))
-
-    def test_plateau_accepts_constant_fluctuating_window(self) -> None:
-        rows = [
-            self._make_fit_row(2, 1.02),
-            self._make_fit_row(3, 0.97),
-            self._make_fit_row(4, 1.03),
-            self._make_fit_row(5, 0.99),
-            self._make_fit_row(6, 1.01),
-        ]
-        plateau = suggest_plateau(rows)
-        self.assertEqual((plateau.start_tmin, plateau.end_tmin), (2, 6))
-
-    def test_plateau_rejects_upward_trend(self) -> None:
-        rows = [self._make_fit_row(t, 0.5 + 0.15 * (t - 2), error=0.03) for t in range(2, 7)]
-        with self.assertRaises(ValueError):
-            suggest_plateau(rows)
-
-    def test_plateau_rejects_downward_trend(self) -> None:
-        rows = [self._make_fit_row(t, 1.4 - 0.15 * (t - 2), error=0.03) for t in range(2, 7)]
-        with self.assertRaises(ValueError):
-            suggest_plateau(rows)
-
-    def test_plateau_accepts_noisy_local_oscillations_without_global_slope(self) -> None:
-        energies = [1.0, 1.08, 0.94, 1.06, 0.96, 1.02]
-        rows = [self._make_fit_row(t, energy, error=0.08) for t, energy in enumerate(energies, start=2)]
-        plateau = suggest_plateau(rows)
-        self.assertEqual((plateau.start_tmin, plateau.end_tmin), (2, 7))
-
-    def test_plateau_prefers_longest_then_later_window(self) -> None:
-        rows = [
-            self._make_fit_row(2, 1.00, error=0.04),
-            self._make_fit_row(3, 1.03, error=0.04),
-            self._make_fit_row(4, 0.98, error=0.04),
-            self._make_fit_row(6, 1.01, error=0.04),
-            self._make_fit_row(7, 0.99, error=0.04),
-            self._make_fit_row(8, 1.02, error=0.04),
-        ]
-        plateau = suggest_plateau(rows)
-        self.assertEqual((plateau.start_tmin, plateau.end_tmin), (6, 8))
-
-    def test_plateau_falls_back_to_best_three_rows_when_thresholded_pool_is_empty(self) -> None:
-        rows = [
-            self._make_fit_row(2, 1.01, error=0.03, chi2_dof=6.2),
-            self._make_fit_row(3, 0.99, error=0.03, chi2_dof=6.5),
-            self._make_fit_row(4, 1.02, error=0.03, chi2_dof=6.8),
-            self._make_fit_row(5, 1.30, error=0.03, chi2_dof=20.0),
-        ]
-        plateau = suggest_plateau(rows)
-        self.assertEqual((plateau.start_tmin, plateau.end_tmin), (2, 4))
-
-    def test_plateau_falls_back_to_best_three_rows_when_thresholded_pool_has_two_rows(self) -> None:
-        rows = [
-            self._make_fit_row(2, 1.01, error=0.03, chi2_dof=1.0),
-            self._make_fit_row(3, 0.99, error=0.03, chi2_dof=1.2),
-            self._make_fit_row(4, 1.02, error=0.03, chi2_dof=6.1),
-            self._make_fit_row(8, 1.40, error=0.03, chi2_dof=9.5),
-        ]
-        plateau = suggest_plateau(rows)
-        self.assertEqual((plateau.start_tmin, plateau.end_tmin), (2, 4))
-
-    def test_plateau_still_raises_when_fewer_than_three_usable_rows_exist(self) -> None:
-        rows = [
-            self._make_fit_row(2, 1.0, error=0.03, chi2_dof=6.0),
-            self._make_fit_row(3, 1.0, error=0.03, chi2_dof=7.0),
-            FitSummaryRow(
-                nstates=1,
-                tmin=4,
-                tmax=12,
-                success_meanfit=0,
-                bootstrap_successes=0,
-                bootstrap_total=0,
-                bootstrap_success_fraction=0.0,
-                fallback_uncorrelated_successes=0,
-                chi2_dof=np.nan,
-                pvalue=np.nan,
-                plateau_flag=0,
-                params_mean=(2.0, 1.0),
-                params_err=(0.2, 0.03),
-            ),
-        ]
-        with self.assertRaisesRegex(ValueError, "fewer than 3 usable fit rows exist"):
-            suggest_plateau(rows)
-
-    def test_plateau_normal_thresholded_case_is_unchanged_when_three_rows_exist(self) -> None:
-        rows = [
-            self._make_fit_row(2, 1.02, error=0.03, chi2_dof=1.0),
-            self._make_fit_row(3, 0.98, error=0.03, chi2_dof=1.1),
-            self._make_fit_row(4, 1.01, error=0.03, chi2_dof=1.2),
-            self._make_fit_row(5, 1.25, error=0.03, chi2_dof=8.0),
-        ]
-        plateau = suggest_plateau(rows)
-        self.assertEqual((plateau.start_tmin, plateau.end_tmin), (2, 4))
-
-    def test_plateau_target_energy_overlap_prefers_overlapping_candidates(self) -> None:
-        rows = [
-            self._make_fit_row(2, 0.94, error=0.01),
-            self._make_fit_row(3, 0.96, error=0.01),
-            self._make_fit_row(4, 0.95, error=0.01),
-            self._make_fit_row(6, 0.74, error=0.01),
-            self._make_fit_row(7, 0.76, error=0.01),
-            self._make_fit_row(8, 0.75, error=0.01),
-        ]
-        plateau = suggest_plateau(rows, target_energy=0.75)
-        self.assertEqual((plateau.start_tmin, plateau.end_tmin), (6, 8))
-
-    def test_plateau_target_energy_uses_nearest_candidate_when_no_overlap_exists(self) -> None:
-        rows = [
-            self._make_fit_row(2, 0.94, error=0.01),
-            self._make_fit_row(3, 0.96, error=0.01),
-            self._make_fit_row(4, 0.95, error=0.01),
-            self._make_fit_row(6, 0.83, error=0.01),
-            self._make_fit_row(7, 0.85, error=0.01),
-            self._make_fit_row(8, 0.84, error=0.01),
-        ]
-        plateau = suggest_plateau(rows, target_energy=0.80)
-        self.assertEqual((plateau.start_tmin, plateau.end_tmin), (6, 8))
-
-    def test_plateau_target_energy_absent_leaves_behavior_unchanged(self) -> None:
-        rows = [
-            self._make_fit_row(2, 1.02),
-            self._make_fit_row(3, 0.97),
-            self._make_fit_row(4, 1.03),
-            self._make_fit_row(5, 0.99),
-            self._make_fit_row(6, 1.01),
-        ]
-        self.assertEqual(suggest_plateau(rows), suggest_plateau(rows, target_energy=None))
 
     def test_prior_residuals_are_appended_and_scaled_by_sqrt_lambda(self) -> None:
         times = np.array([2.0, 3.0, 4.0])
@@ -683,20 +536,20 @@ class NStateFitTests(unittest.TestCase):
         self.assertTrue(result.used_uncorrelated_fallback)
         self.assertEqual(mock_least_squares.call_count, n_failures + 1)
 
-    def test_two_state_priors_use_one_state_plateau_summary_e0_only(self) -> None:
-        previous = PlateauParameterSummary(params_mean=(2.5, 0.41), params_err=(0.15, 0.02))
-        priors = build_energy_priors_from_plateau_summary(previous, nstates=2)
+    def test_two_state_priors_use_one_state_fit_window_summary_e0_only(self) -> None:
+        previous = FitWindowParameterSummary(params_mean=(2.5, 0.41), params_err=(0.15, 0.02))
+        priors = build_energy_priors_from_fit_window_summary(previous, nstates=2)
         self.assertEqual(len(priors), 1)
         self.assertEqual(priors[0].energy_index, 0)
         self.assertAlmostEqual(priors[0].center, 0.41)
         self.assertAlmostEqual(priors[0].sigma, 0.02)
 
-    def test_three_state_priors_use_two_state_plateau_summary_e0_and_e1_only(self) -> None:
-        previous = PlateauParameterSummary(
+    def test_three_state_priors_use_two_state_fit_window_summary_e0_and_e1_only(self) -> None:
+        previous = FitWindowParameterSummary(
             params_mean=(2.0, 1.0, 0.40, 0.82),
             params_err=(0.2, 0.2, 0.02, 0.05),
         )
-        priors = build_energy_priors_from_plateau_summary(previous, nstates=3)
+        priors = build_energy_priors_from_fit_window_summary(previous, nstates=3)
         self.assertEqual(len(priors), 2)
         self.assertEqual([prior.energy_index for prior in priors], [0, 1])
         self.assertTrue(np.allclose([prior.center for prior in priors], [0.40, 0.82]))
@@ -947,25 +800,12 @@ class NStateFitTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            def fake_plateau(rows, **kwargs):
-                del kwargs
-                chosen = rows[: min(3, len(rows))]
-                return PlateauWindow(
-                    start_tmin=chosen[0].tmin,
-                    end_tmin=chosen[-1].tmin,
-                    representative_tmin=chosen[len(chosen) // 2].tmin,
-                    energy_mean=0.4,
-                    amplitude_mean=2.0,
-                )
-
-            with patch("lqcd_analysis.two_point.fit_nstate.suggest_plateau", side_effect=fake_plateau):
-                outputs = run_nstate_fit(input_path)
+            outputs = run_nstate_fit(input_path)
             self.assertTrue(outputs)
             summary = tmp / "results_nstate_fit" / "demo_pz0" / "demo_pz0_normal_summary.txt"
             self.assertTrue(summary.exists())
-            self.assertIn("1state source computed_fresh", summary.read_text(encoding="utf-8"))
             self.assertIn(
-                "1state plateau_start_fallback_uncorrelated_successes",
+                "1state fit_window_start_fallback_uncorrelated_successes",
                 summary.read_text(encoding="utf-8"),
             )
             one_state = (
@@ -1021,7 +861,7 @@ class NStateFitTests(unittest.TestCase):
         self.assertTrue(np.array_equal(select_scan_state_indices(2), np.array([1])))
         self.assertTrue(np.array_equal(select_scan_state_indices(3), np.array([2])))
 
-    def test_plateau_parameter_summary_uses_bootstrap_window_averages_for_means(self) -> None:
+    def test_fit_window_parameter_summary_uses_bootstrap_window_averages_for_means(self) -> None:
         rows = [
             FitSummaryRow(1, 2, 10, 1, 2, 2, 1.0, 0, 1.0, 0.5, 1, (2.0, 0.40), (0.2, 0.10)),
             FitSummaryRow(1, 3, 10, 1, 2, 2, 1.0, 0, 1.0, 0.5, 1, (4.0, 0.80), (0.1, 0.20)),
@@ -1030,8 +870,8 @@ class NStateFitTests(unittest.TestCase):
             2: np.array([[2, 0, 1, 1.0, 0.5, 1.8, 0.36], [2, 1, 1, 1.0, 0.5, 2.2, 0.44]], dtype=float),
             3: np.array([[3, 0, 1, 1.0, 0.5, 3.8, 0.76], [3, 1, 1, 1.0, 0.5, 4.2, 0.84]], dtype=float),
         }
-        plateau = PlateauWindow(start_tmin=2, end_tmin=3, representative_tmin=2, energy_mean=0.0, amplitude_mean=0.0)
-        summary = compute_plateau_parameter_summary(rows, sample_tables, plateau)
+        fit_window = FitWindowSummary(start_tmin=2, end_tmin=3, representative_tmin=2, energy_mean=0.0, amplitude_mean=0.0)
+        summary = compute_fit_window_parameter_summary(rows, sample_tables, fit_window)
         amp_boot = np.array([3.4, 3.8])
         energy_boot = np.array([0.44, 0.52])
         amp_expected = 0.5 * np.sum(np.percentile(amp_boot, [16.0, 84.0]))
@@ -1039,7 +879,7 @@ class NStateFitTests(unittest.TestCase):
         self.assertAlmostEqual(summary.params_mean[0], amp_expected)
         self.assertAlmostEqual(summary.params_mean[1], energy_expected)
 
-    def test_plateau_parameter_summary_errors_use_bootstrap_window_averages(self) -> None:
+    def test_fit_window_parameter_summary_errors_use_bootstrap_window_averages(self) -> None:
         rows = [
             FitSummaryRow(1, 2, 10, 1, 2, 2, 1.0, 0, 1.0, 0.5, 1, (2.0, 0.40), (0.2, 0.10)),
             FitSummaryRow(1, 3, 10, 1, 2, 2, 1.0, 0, 1.0, 0.5, 1, (4.0, 0.80), (0.1, 0.20)),
@@ -1048,8 +888,8 @@ class NStateFitTests(unittest.TestCase):
             2: np.array([[2, 0, 1, 1.0, 0.5, 1.8, 0.36], [2, 1, 1, 1.0, 0.5, 2.2, 0.44]], dtype=float),
             3: np.array([[3, 0, 1, 1.0, 0.5, 3.8, 0.76], [3, 1, 1, 1.0, 0.5, 4.2, 0.84]], dtype=float),
         }
-        plateau = PlateauWindow(start_tmin=2, end_tmin=3, representative_tmin=2, energy_mean=0.0, amplitude_mean=0.0)
-        summary = compute_plateau_parameter_summary(rows, sample_tables, plateau)
+        fit_window = FitWindowSummary(start_tmin=2, end_tmin=3, representative_tmin=2, energy_mean=0.0, amplitude_mean=0.0)
+        summary = compute_fit_window_parameter_summary(rows, sample_tables, fit_window)
         w_amp = np.array([1.0 / 0.2**2, 1.0 / 0.1**2])
         amp_boot = np.array(
             [
@@ -1060,7 +900,7 @@ class NStateFitTests(unittest.TestCase):
         p16, p84 = np.percentile(amp_boot, [16.0, 84.0])
         self.assertAlmostEqual(summary.params_err[0], 0.5 * (p84 - p16))
 
-    def test_plotting_uses_plateau_table_values_for_plateau_band(self) -> None:
+    def test_plotting_uses_fit_window_table_values_for_plateau_band(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
             correlator = np.column_stack([np.arange(6), np.linspace(1.0, 0.2, 6), np.full(6, 0.01)])
@@ -1106,7 +946,7 @@ class NStateFitTests(unittest.TestCase):
             self.assertAlmostEqual(energy_call.kwargs["plateau_values"][0], 0.3 * 197.3269804 / 0.1)
             self.assertAlmostEqual(amplitude_call.kwargs["plateau_values"][0], 3.0)
 
-    def test_plotting_reconstruction_starts_at_plateau_start(self) -> None:
+    def test_plotting_reconstruction_starts_at_fit_window_start(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
             correlator = np.column_stack([np.arange(7), np.linspace(1.0, 0.2, 7), np.full(7, 0.01)])
@@ -1153,7 +993,7 @@ class NStateFitTests(unittest.TestCase):
             self.assertEqual(len(reconstruction_args[2]), 3)
             self.assertEqual(len(reconstruction_args[3]), 3)
 
-    def test_summary_reports_plateau_start_shrinkage_lambda(self) -> None:
+    def test_summary_reports_fit_window_start_shrinkage_lambda(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
             csv_path = tmp / "c2pt_5_5_k0_pz0_real.csv"
@@ -1207,14 +1047,12 @@ class NStateFitTests(unittest.TestCase):
                 }
                 return rows, sample_tables, meanfits
 
-            plateau = PlateauWindow(start_tmin=2, end_tmin=4, representative_tmin=3, energy_mean=0.41, amplitude_mean=2.1)
             with patch("lqcd_analysis.two_point.fit_nstate.run_sliding_fits", side_effect=fake_run_sliding_fits):
-                with patch("lqcd_analysis.two_point.fit_nstate.suggest_plateau", return_value=plateau):
-                    run_nstate_fit(input_path)
+                run_nstate_fit(input_path)
 
             summary = tmp / "results_nstate_fit" / "demo_pz0" / "demo_pz0_normal_summary.txt"
             text = summary.read_text(encoding="utf-8")
-            self.assertIn("1state plateau_start_shrinkage_lambda 0.30", text)
+            self.assertIn("1state fit_window_start_shrinkage_lambda 0.30", text)
             self.assertNotIn("representative_shrinkage_lambda", text)
 
     def test_fit_window_fixes_two_point_window(self) -> None:
@@ -1255,18 +1093,15 @@ class NStateFitTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            with patch("lqcd_analysis.two_point.fit_nstate.suggest_plateau") as mock_plateau:
-                run_nstate_fit(input_path)
+            run_nstate_fit(input_path)
 
             summary = tmp / "results_nstate_fit" / "demo_pz0" / "demo_pz0_normal_summary.txt"
             fit_table = tmp / "results_nstate_fit" / "demo_pz0" / "tables" / "demo_pz0_normal_1state_tmax6_fits.txt"
             summary_text = summary.read_text(encoding="utf-8")
             fit_rows = np.loadtxt(fit_table, ndmin=2)
 
-        mock_plateau.assert_not_called()
-        self.assertIn("fit_window_source fit_window", summary_text)
         self.assertIn("fit_window 4 6", summary_text)
-        self.assertIn("1state plateau_tmin 4 4", summary_text)
+        self.assertIn("1state fit_window_tmin 4 4", summary_text)
         self.assertEqual(fit_rows.shape[0], 1)
         self.assertEqual(int(fit_rows[0, 0]), 4)
         self.assertEqual(int(fit_rows[0, 1]), 6)
@@ -1323,504 +1158,15 @@ class NStateFitTests(unittest.TestCase):
                 path.write_text("{}", encoding="utf-8")
                 return path
 
-            def fake_plateau(rows, **kwargs):
-                del kwargs
-                chosen = rows[: min(3, len(rows))]
-                return PlateauWindow(
-                    start_tmin=chosen[0].tmin,
-                    end_tmin=chosen[-1].tmin,
-                    representative_tmin=chosen[len(chosen) // 2].tmin,
-                    energy_mean=chosen[len(chosen) // 2].params_mean[len(chosen[0].params_mean) // 2],
-                    amplitude_mean=chosen[len(chosen) // 2].params_mean[0],
-                )
-
             with patch("lqcd_analysis.two_point.fit_nstate.plot_nstate_outputs", side_effect=fake_plot_nstate_outputs):
                 with patch(
                     "lqcd_analysis.two_point.fit_nstate.write_nstate_plot_notebook",
                     side_effect=fake_write_nstate_plot_notebook,
                 ):
-                    with patch("lqcd_analysis.two_point.fit_nstate.suggest_plateau", side_effect=fake_plateau):
-                        run_nstate_fit(input_path)
+                    run_nstate_fit(input_path)
 
             self.assertEqual(sorted(plotted_states), [1, 2])
             self.assertEqual(notebook_fit_table_keys, [1, 2])
-
-    def test_load_previous_state_artifacts(self) -> None:
-        spec = parse_nstate_fit_input("templates/input_files/two_point/nstate_fit_example_realdata.txt")
-        spec = type(spec)(**{**spec.__dict__, "results_dir": Path("examples/outputs/nstate_fit_realdata")})
-        artifact = _load_previous_state_artifacts(spec, "l64c64a076_m140_fit_k0_pz0", 2, 12)
-        self.assertIsNotNone(artifact)
-        assert artifact is not None
-        self.assertEqual(artifact.plateau.start_tmin, 2)
-        self.assertGreater(artifact.plateau.end_tmin, artifact.plateau.start_tmin)
-        self.assertTrue(np.isfinite(artifact.plateau.energy_mean))
-        self.assertIsNotNone(artifact.plateau_summary)
-
-    def test_load_cached_state_artifacts_reconstructs_plateau_summary_from_fit_and_sample_tables(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tmp = Path(tmpdir)
-            results_dir = tmp / "results_nstate_fit"
-            title = "demo_pz0"
-            table_dir = results_dir / title / "tables"
-            sample_dir = results_dir / title / "samples"
-            table_dir.mkdir(parents=True)
-            sample_dir.mkdir(parents=True)
-
-            fit_table = np.array(
-                [
-                    [2, 10, 1, 2, 2, 1.0, 0, 1.0, 0.5, 1, 2.0, 0.2, 0.40, 0.10],
-                    [3, 10, 1, 2, 2, 1.0, 0, 1.0, 0.5, 1, 4.0, 0.1, 0.80, 0.20],
-                ],
-                dtype=float,
-            )
-            sample_table = np.array(
-                [
-                    [2, 0, 1, 1.0, 0.5, 1.8, 0.36],
-                    [2, 1, 1, 1.0, 0.5, 2.2, 0.44],
-                    [3, 0, 1, 1.0, 0.5, 3.8, 0.76],
-                    [3, 1, 1, 1.0, 0.5, 4.2, 0.84],
-                ],
-                dtype=float,
-            )
-            np.savetxt(table_dir / f"{title}_normal_1state_tmax10_fits.txt", fit_table)
-            np.savetxt(sample_dir / f"{title}_normal_1state_tmax10_samples.txt", sample_table)
-
-            spec = parse_nstate_fit_input("templates/input_files/two_point/nstate_fit_example_realdata.txt")
-            spec = type(spec)(**{**spec.__dict__, "results_dir": results_dir})
-            artifact = _load_previous_state_artifacts(spec, title, 2, 10)
-
-            self.assertIsNotNone(artifact)
-            assert artifact is not None
-            self.assertAlmostEqual(artifact.plateau_summary.params_mean[0], 3.6)
-            self.assertAlmostEqual(artifact.plateau_summary.params_mean[1], 0.48)
-
-    def test_cached_lower_state_reuse_populates_plateau_summary_for_summary_writing(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tmp = Path(tmpdir)
-            csv_path = tmp / "c2pt_5_5_k0_pz0_real.csv"
-            input_path = tmp / "input_nstate.txt"
-            results_dir = tmp / "results_nstate_fit"
-            fit_window_path = tmp / "fit_window.txt"
-            title = "demo_pz0"
-            table_dir = results_dir / title / "tables"
-            sample_dir = results_dir / title / "samples"
-            table_dir.mkdir(parents=True)
-            sample_dir.mkdir(parents=True)
-
-            times = np.arange(18)
-            base = 3.0 * np.exp(-0.35 * times) + 0.8 * np.exp(-0.8 * times)
-            data = np.array([(base * (1.0 + 0.001 * np.sin(times + cfg))) for cfg in range(16)]).T
-            with csv_path.open("w", encoding="utf-8") as handle:
-                handle.write("t," + ",".join(f"cfg_{idx}" for idx in range(data.shape[1])) + "\n")
-                for t in range(len(times)):
-                    handle.write(str(t) + "," + ",".join(f"{value:.12e}" for value in data[t]) + "\n")
-
-            fit_table = np.array(
-                [
-                    [2, 10, 1, 2, 2, 1.0, 0, 1.0, 0.5, 1, 2.0, 0.2, 0.40, 0.10],
-                    [3, 10, 1, 2, 2, 1.0, 0, 1.0, 0.5, 1, 4.0, 0.1, 0.80, 0.20],
-                ],
-                dtype=float,
-            )
-            sample_table = np.array(
-                [
-                    [2, 0, 1, 1.0, 0.5, 1.8, 0.36],
-                    [2, 1, 1, 1.0, 0.5, 2.2, 0.44],
-                    [3, 0, 1, 1.0, 0.5, 3.8, 0.76],
-                    [3, 1, 1, 1.0, 0.5, 4.2, 0.84],
-                ],
-                dtype=float,
-            )
-            np.savetxt(table_dir / f"{title}_normal_1state_tmax10_fits.txt", fit_table)
-            np.savetxt(sample_dir / f"{title}_normal_1state_tmax10_samples.txt", sample_table)
-
-            fit_window_path.write_text("0 2 10\n", encoding="utf-8")
-            input_path.write_text(
-                "\n".join(
-                    [
-                        "demo_pz* 16 18 0.076",
-                        f"c2pt {csv_path.as_posix().replace('pz0', 'pz*')}",
-                        "pzlist 0",
-                        "fold_t none",
-                        "tsrange 0 14",
-                        "model normal",
-                        "nstates 2",
-                        f"fit_window {fit_window_path}",
-                        f"results_dir {results_dir}",
-                        "bootstrap_samples 8",
-                        "bootstrap_size 8",
-                        "plot false",
-                    ]
-                ),
-                encoding="utf-8",
-            )
-
-            def fake_run_sliding_fits(*args, **kwargs):
-                del args, kwargs
-                rows = [
-                    FitSummaryRow(2, 2, 10, 1, 2, 2, 1.0, 0, 1.0, 0.5, 0, (1.0, 0.5, 0.4, 0.8), (0.1, 0.1, 0.02, 0.05)),
-                    FitSummaryRow(2, 3, 10, 1, 2, 2, 1.0, 0, 1.0, 0.5, 0, (1.1, 0.6, 0.42, 0.82), (0.1, 0.1, 0.02, 0.05)),
-                    FitSummaryRow(2, 4, 10, 1, 2, 2, 1.0, 0, 1.0, 0.5, 0, (1.2, 0.7, 0.44, 0.84), (0.1, 0.1, 0.02, 0.05)),
-                ]
-                sample_tables = {
-                    2: np.array([[2, 0, 1, 1.0, 0.5, 0.9, 0.45, 0.39, 0.79], [2, 1, 1, 1.0, 0.5, 1.1, 0.55, 0.41, 0.81]]),
-                    3: np.array([[3, 0, 1, 1.0, 0.5, 1.0, 0.50, 0.41, 0.81], [3, 1, 1, 1.0, 0.5, 1.2, 0.60, 0.43, 0.83]]),
-                    4: np.array([[4, 0, 1, 1.0, 0.5, 1.1, 0.55, 0.43, 0.83], [4, 1, 1, 1.0, 0.5, 1.3, 0.65, 0.45, 0.85]]),
-                }
-                meanfits = {
-                    2: FitResult(np.array([1.0, 0.5, 0.4, 0.8]), 1.0, 1.0, 0.5, True, "ok"),
-                    3: FitResult(np.array([1.1, 0.6, 0.42, 0.82]), 1.0, 1.0, 0.5, True, "ok"),
-                    4: FitResult(np.array([1.2, 0.7, 0.44, 0.84]), 1.0, 1.0, 0.5, True, "ok"),
-                }
-                return rows, sample_tables, meanfits
-
-            def fake_plateau(rows, **kwargs):
-                del kwargs
-                chosen = rows[:3]
-                return PlateauWindow(chosen[0].tmin, chosen[-1].tmin, chosen[1].tmin, 0.42, 1.1)
-
-            with patch("lqcd_analysis.two_point.fit_nstate.run_sliding_fits", side_effect=fake_run_sliding_fits):
-                with patch("lqcd_analysis.two_point.fit_nstate.suggest_plateau", side_effect=fake_plateau):
-                    outputs = run_nstate_fit(input_path)
-            self.assertTrue(outputs)
-            summary = results_dir / title / f"{title}_normal_summary.txt"
-            self.assertTrue(summary.exists())
-            text = summary.read_text(encoding="utf-8")
-            self.assertIn("1state source computed_fresh", text)
-            self.assertIn("1state A0", text)
-
-    def test_cached_lower_state_reuse_builds_priors_from_plateau_summary(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tmp = Path(tmpdir)
-            csv_path = tmp / "c2pt_5_5_k0_pz0_real.csv"
-            input_path = tmp / "input_nstate.txt"
-            results_dir = tmp / "results_nstate_fit"
-            fit_window_path = tmp / "fit_window.txt"
-            title = "demo_pz0"
-            table_dir = results_dir / title / "tables"
-            sample_dir = results_dir / title / "samples"
-            table_dir.mkdir(parents=True)
-            sample_dir.mkdir(parents=True)
-
-            times = np.arange(18)
-            base = 3.0 * np.exp(-0.35 * times) + 0.8 * np.exp(-0.8 * times)
-            data = np.array([(base * (1.0 + 0.001 * np.cos(times + cfg))) for cfg in range(16)]).T
-            with csv_path.open("w", encoding="utf-8") as handle:
-                handle.write("t," + ",".join(f"cfg_{idx}" for idx in range(data.shape[1])) + "\n")
-                for t in range(len(times)):
-                    handle.write(str(t) + "," + ",".join(f"{value:.12e}" for value in data[t]) + "\n")
-
-            fit_table = np.array(
-                [
-                    [2, 10, 1, 2, 2, 1.0, 0, 1.0, 0.5, 1, 2.0, 0.2, 0.40, 0.10],
-                    [3, 10, 1, 2, 2, 1.0, 0, 1.0, 0.5, 1, 4.0, 0.1, 0.80, 0.20],
-                ],
-                dtype=float,
-            )
-            sample_table = np.array(
-                [
-                    [2, 0, 1, 1.0, 0.5, 1.8, 0.36],
-                    [2, 1, 1, 1.0, 0.5, 2.2, 0.44],
-                    [3, 0, 1, 1.0, 0.5, 3.8, 0.76],
-                    [3, 1, 1, 1.0, 0.5, 4.2, 0.84],
-                ],
-                dtype=float,
-            )
-            np.savetxt(table_dir / f"{title}_normal_1state_tmax10_fits.txt", fit_table)
-            np.savetxt(sample_dir / f"{title}_normal_1state_tmax10_samples.txt", sample_table)
-
-            fit_window_path.write_text("0 2 10\n", encoding="utf-8")
-            input_path.write_text(
-                "\n".join(
-                    [
-                        "demo_pz* 16 18 0.076",
-                        f"c2pt {csv_path.as_posix().replace('pz0', 'pz*')}",
-                        "pzlist 0",
-                        "fold_t none",
-                        "tsrange 0 14",
-                        "model normal",
-                        "nstates 2",
-                        f"fit_window {fit_window_path}",
-                        f"results_dir {results_dir}",
-                        "bootstrap_samples 8",
-                        "bootstrap_size 8",
-                        "plot false",
-                    ]
-                ),
-                encoding="utf-8",
-            )
-
-            captured_priors = []
-
-            def fake_run_sliding_fits(
-                bootstrap_means,
-                sigma,
-                fit_mode,
-                nt,
-                model,
-                nstates,
-                tmin_values,
-                tmax,
-                initial_amplitudes,
-                initial_energies,
-                covariance=None,
-                priors=(),
-                lambda_prior=1.0,
-                fixed_ground_energy=None,
-                **kwargs,
-            ):
-                del (
-                    bootstrap_means,
-                    sigma,
-                    fit_mode,
-                    nt,
-                    model,
-                    tmin_values,
-                    tmax,
-                    initial_amplitudes,
-                    initial_energies,
-                    covariance,
-                    lambda_prior,
-                    fixed_ground_energy,
-                    kwargs,
-                )
-                captured_priors.append(priors)
-                rows = [
-                    FitSummaryRow(2, 2, 10, 1, 2, 2, 1.0, 0, 1.0, 0.5, 0, (1.0, 0.5, 0.4, 0.8), (0.1, 0.1, 0.02, 0.05)),
-                    FitSummaryRow(2, 3, 10, 1, 2, 2, 1.0, 0, 1.0, 0.5, 0, (1.1, 0.6, 0.42, 0.82), (0.1, 0.1, 0.02, 0.05)),
-                    FitSummaryRow(2, 4, 10, 1, 2, 2, 1.0, 0, 1.0, 0.5, 0, (1.2, 0.7, 0.44, 0.84), (0.1, 0.1, 0.02, 0.05)),
-                ]
-                sample_tables = {
-                    2: np.array([[2, 0, 1, 1.0, 0.5, 0.9, 0.45, 0.39, 0.79], [2, 1, 1, 1.0, 0.5, 1.1, 0.55, 0.41, 0.81]]),
-                    3: np.array([[3, 0, 1, 1.0, 0.5, 1.0, 0.50, 0.41, 0.81], [3, 1, 1, 1.0, 0.5, 1.2, 0.60, 0.43, 0.83]]),
-                    4: np.array([[4, 0, 1, 1.0, 0.5, 1.1, 0.55, 0.43, 0.83], [4, 1, 1, 1.0, 0.5, 1.3, 0.65, 0.45, 0.85]]),
-                }
-                meanfits = {
-                    2: FitResult(np.array([1.0, 0.5, 0.4, 0.8]), 1.0, 1.0, 0.5, True, "ok"),
-                    3: FitResult(np.array([1.1, 0.6, 0.42, 0.82]), 1.0, 1.0, 0.5, True, "ok"),
-                    4: FitResult(np.array([1.2, 0.7, 0.44, 0.84]), 1.0, 1.0, 0.5, True, "ok"),
-                }
-                return rows, sample_tables, meanfits
-
-            def fake_plateau(rows, **kwargs):
-                del kwargs
-                chosen = rows[:3]
-                return PlateauWindow(chosen[0].tmin, chosen[-1].tmin, chosen[1].tmin, 0.42, 1.1)
-
-            with patch("lqcd_analysis.two_point.fit_nstate.run_sliding_fits", side_effect=fake_run_sliding_fits):
-                with patch("lqcd_analysis.two_point.fit_nstate.suggest_plateau", side_effect=fake_plateau):
-                    run_nstate_fit(input_path)
-
-            self.assertEqual(len(captured_priors), 2)
-            priors = captured_priors[-1]
-            self.assertEqual(len(priors), 1)
-            self.assertAlmostEqual(priors[0].center, 0.4)
-            self.assertGreater(priors[0].sigma, 0.0)
-
-    def test_two_state_only_run_bootstraps_missing_lower_state(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tmp = Path(tmpdir)
-            csv_path = tmp / "c2pt_5_5_k0_pz0_real.csv"
-            input_path = tmp / "input_nstate.txt"
-            fit_window_path = tmp / "fit_window.txt"
-
-            times = np.arange(18)
-            base = 3.0 * np.exp(-0.35 * times) + 0.8 * np.exp(-0.8 * times)
-            configs = []
-            for cfg in range(64):
-                noise = 0.001 * np.sin(times + cfg)
-                configs.append(base * (1.0 + noise))
-            data = np.array(configs).T
-
-            with csv_path.open("w", encoding="utf-8") as handle:
-                handle.write("t," + ",".join(f"cfg_{idx}" for idx in range(data.shape[1])) + "\n")
-                for t in range(len(times)):
-                    handle.write(
-                        str(t)
-                        + ","
-                        + ",".join(f"{value:.12e}" for value in data[t])
-                        + "\n"
-                    )
-
-            fit_window_path.write_text("0 2 10\n", encoding="utf-8")
-            input_path.write_text(
-                "\n".join(
-                    [
-                        "demo_pz* 16 18 0.076",
-                        f"c2pt {csv_path.as_posix().replace('pz0', 'pz*')}",
-                        "pzlist 0",
-                        "fold_t none",
-                        "tsrange 0 14",
-                        "model normal",
-                        "nstates 2",
-                        f"fit_window {fit_window_path}",
-                        "bootstrap_samples 16",
-                        "bootstrap_size 16",
-                        "plot false",
-                    ]
-                ),
-                encoding="utf-8",
-            )
-
-            def fake_plateau(rows, **kwargs):
-                del kwargs
-                chosen = rows[: min(3, len(rows))]
-                return PlateauWindow(
-                    start_tmin=chosen[0].tmin,
-                    end_tmin=chosen[-1].tmin,
-                    representative_tmin=chosen[len(chosen) // 2].tmin,
-                    energy_mean=0.4,
-                    amplitude_mean=2.0,
-                )
-
-            with patch("lqcd_analysis.two_point.fit_nstate.suggest_plateau", side_effect=fake_plateau):
-                outputs = run_nstate_fit(input_path)
-            self.assertTrue(outputs)
-            one_state = (
-                tmp / "results_nstate_fit" / "demo_pz0" / "tables" / "demo_pz0_normal_1state_tmax10_fits.txt"
-            )
-            two_state = (
-                tmp / "results_nstate_fit" / "demo_pz0" / "tables" / "demo_pz0_normal_2state_tmax10_fits.txt"
-            )
-            self.assertTrue(one_state.exists())
-            self.assertTrue(two_state.exists())
-
-    def test_high_state_scan_uses_range_up_to_previous_plateau_start(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tmp = Path(tmpdir)
-            csv_path = tmp / "c2pt_5_5_k0_pz0_real.csv"
-            input_path = tmp / "input_nstate.txt"
-            fit_window_path = tmp / "fit_window.txt"
-
-            times = np.arange(18)
-            base = 3.0 * np.exp(-0.35 * times) + 0.8 * np.exp(-0.8 * times)
-            configs = []
-            for cfg in range(16):
-                noise = 0.001 * np.cos(times + cfg)
-                configs.append(base * (1.0 + noise))
-            data = np.array(configs).T
-
-            with csv_path.open("w", encoding="utf-8") as handle:
-                handle.write("t," + ",".join(f"cfg_{idx}" for idx in range(data.shape[1])) + "\n")
-                for t in range(len(times)):
-                    handle.write(str(t) + "," + ",".join(f"{value:.12e}" for value in data[t]) + "\n")
-
-            fit_window_path.write_text("0 2 10\n", encoding="utf-8")
-            input_path.write_text(
-                "\n".join(
-                    [
-                        "demo_pz* 16 18 0.076",
-                        f"c2pt {csv_path.as_posix().replace('pz0', 'pz*')}",
-                        "pzlist 0",
-                        "fold_t none",
-                        "tsrange 0 14",
-                        "model normal",
-                        "nstates 1 2",
-                        f"fit_window {fit_window_path}",
-                        "bootstrap_samples 8",
-                        "bootstrap_size 8",
-                        "plot false",
-                    ]
-                ),
-                encoding="utf-8",
-            )
-
-            spec = parse_nstate_fit_input(input_path)
-            captured_ranges: list[tuple[int, tuple[int, ...]]] = []
-
-            def fake_run_sliding_fits(
-                bootstrap_means,
-                sigma,
-                fit_mode,
-                nt,
-                model,
-                nstates,
-                tmin_values,
-                tmax,
-                initial_amplitudes,
-                initial_energies,
-                covariance=None,
-                priors=(),
-                lambda_prior=1.0,
-                fixed_ground_energy=None,
-                **kwargs,
-            ):
-                del (
-                    bootstrap_means,
-                    sigma,
-                    fit_mode,
-                    nt,
-                    model,
-                    tmax,
-                    initial_amplitudes,
-                    initial_energies,
-                    covariance,
-                    priors,
-                    lambda_prior,
-                    fixed_ground_energy,
-                    kwargs,
-                )
-                tmins = tuple(tmin_values)
-                captured_ranges.append((nstates, tmins))
-                rows = [
-                    FitSummaryRow(
-                        nstates=nstates,
-                        tmin=tmin,
-                        tmax=10,
-                        success_meanfit=1,
-                        bootstrap_successes=8,
-                        bootstrap_total=8,
-                        bootstrap_success_fraction=1.0,
-                        fallback_uncorrelated_successes=0,
-                        chi2_dof=1.0,
-                        pvalue=0.5,
-                        plateau_flag=0,
-                        params_mean=tuple([2.0] * nstates + [0.4] * nstates),
-                        params_err=tuple([0.2] * nstates + [0.05] * nstates),
-                    )
-                    for tmin in tmins
-                ]
-                meanfits = {
-                    tmin: FitResult(
-                        params=np.array([2.0] * nstates + [0.4] * nstates, dtype=float),
-                        chi2=1.0,
-                        chi2_dof=1.0,
-                        pvalue=0.5,
-                        success=True,
-                        message="ok",
-                    )
-                    for tmin in tmins
-                }
-                sample_tables = {
-                    tmin: np.array([[tmin, 0, 1, 1.0, 0.5, *([2.0] * nstates), *([0.4] * nstates)]], dtype=float)
-                    for tmin in tmins
-                }
-                return rows, sample_tables, meanfits
-
-            def fake_suggest_plateau(rows, **kwargs):
-                del kwargs
-                if rows[0].nstates == 1:
-                    return PlateauWindow(
-                        start_tmin=4,
-                        end_tmin=6,
-                        representative_tmin=5,
-                        energy_mean=0.4,
-                        amplitude_mean=2.0,
-                    )
-                chosen = rows[: min(3, len(rows))]
-                return PlateauWindow(
-                    start_tmin=chosen[0].tmin,
-                    end_tmin=chosen[-1].tmin,
-                    representative_tmin=chosen[len(chosen) // 2].tmin,
-                    energy_mean=0.4,
-                    amplitude_mean=2.0,
-                )
-
-            with patch("lqcd_analysis.two_point.fit_nstate.run_sliding_fits", side_effect=fake_run_sliding_fits):
-                with patch("lqcd_analysis.two_point.fit_nstate.suggest_plateau", side_effect=fake_suggest_plateau):
-                    run_single_dataset(spec, 0)
-
-            self.assertEqual(captured_ranges, [(1, (0,)), (2, (0,))])
 
 
 if __name__ == "__main__":

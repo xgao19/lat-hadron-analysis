@@ -100,8 +100,6 @@ pz0_ground_energy 0.42
 fix_ground_energy_from_dispersion true
 # notebook workflow_config: fit_window = {0: [4, 12], 5: [6, 12]}
 # plain-text input: fit_window /path/to/2pt_fit_windows.txt
-# advanced / experimental:
-# auto_search_plateau_from_fit_window true
 binsize 1
 bootstrap_samples auto
 bootstrap_size auto
@@ -112,19 +110,13 @@ plot true
 Optional input:
 
 - `pz0_ground_energy <value>`:
-  provide the pz=0 ground-state energy in lattice units. When present, the 1-state plateau search uses the lattice dispersion target `sqrt(E0_pz0^2 + (2*pi*pz/Ns)^2)` to pre-filter plateau candidates before the usual plateau ranking. This affects only plateau selection, not the nonlinear fit model.
+  provide the pz=0 ground-state energy in lattice units. This serves as the dispersion-reference input when you want to fix the ground-state energy.
 - `fix_ground_energy_from_dispersion true|false`:
-  when `true`, the nonlinear 2pt fit fixes the ground-state energy to the same lattice-dispersion target derived from `pz0_ground_energy`. This is the closest repository-native analogue to the legacy fixed-`E0` setup while preserving the current plateau-table outputs.
+  when `true`, the nonlinear 2pt fit fixes the ground-state energy to the lattice-dispersion target derived from `pz0_ground_energy`. This is the repository-native analogue to the legacy fixed-`E0` setup.
 - `fit_window <path>`:
   preferred plain-text fit-window table with rows of the form `pz tmin tmax`.
   After folding, the correlator is clipped directly to that window for the
   requested momentum.
-- `auto_search_plateau_from_fit_window true|false`:
-  advanced / experimental option. When `true`, the code first clips the folded
-  correlator to the requested fit window and then runs automatic plateau
-  suggestion inside that retained window instead of using the full window
-  directly.
-
 Recommended default usage:
 
 - fix trusted fit windows explicitly per momentum with notebook `fit_window`
@@ -151,20 +143,11 @@ Meaning:
 
 Notes on the workflow:
 
-- The 2-state fit is initialized from the suggested 1-state plateau.
-- The 3-state fit is initialized from the suggested 2-state plateau.
-- Plateau suggestion looks for the longest contiguous `tmin` window where adjacent ground-state energies are statistically consistent and the fits remain reasonably well behaved.
+- The 2-state fit is initialized from the selected 1-state fit window summary.
+- The 3-state fit is initialized from the selected 2-state fit window summary.
 - If `matplotlib` is unavailable, the code writes a small text note instead of a plot file.
 - Plotting is now handled by a reusable module in `src/lqcd_analysis/two_point/plotting.py`.
 
-Advanced / experimental note:
-
-- `auto_search_plateau_from_fit_window`
-- compatibility fallback paths that still use automatic `tmax`
-
-These automatic plateau-oriented choices are useful for exploratory testing and
-workflow development, but should currently be treated as testing options rather
-than the primary recommended default when you already have trusted fit windows.
 - Plot outputs convert fitted energies and effective masses from lattice units `E*a` into physical units in MeV using the provided lattice spacing.
 - After each 2pt fit run, an editable notebook is written under `results_dir/notebook_plots/`. The notebook calls the reusable plotting module so you can tweak paths, styles, and which state to draw.
 
@@ -189,7 +172,7 @@ This first implementation:
 - supports `T5` (`gamma_t gamma_5`) and `Z5` (`gamma_z gamma_5`)
 - supports only `1-state` and `2-state` fits
 - fits real and imaginary parts separately
-- uses fixed two-point amplitudes and energies loaded from a two-point plateau table
+- uses fixed two-point amplitudes and energies loaded from a two-point fit-summary table
 - does not yet couple to two-point bootstrap-sample amplitudes and energies
 
 Expected key input fields include:
@@ -201,14 +184,9 @@ nstates 1 2
 gmlist T5
 # notebook workflow_config: fit_window = {5: [6, 12], 6: [6, 12]}
 # plain-text input: fit_window /path/to/tmdwf_fit_windows.txt
-# advanced / experimental:
-# auto_search_shared_window_from_fit_window true
-# tmax_scan_radius 1
-# decay_constant 0.11 0.03
-# min_fit_dof 4
 qtmdwf_h5 /path/to/file_or_pattern.h5
 dataset_path_template {gm}/{eta}/pz{pz}/{Tdir}/bT{bT}/bz{bz}
-two_point_plateau_table /path/to/2pt_plateau_pz*_tmax#_plateau.txt
+two_point_plateau_table /path/to/2pt_fit_pz*_tmax#_plateau.txt
 c2pt /path/to/c2pt_pz*_real.csv
 fold_t periodic
 tsrange 0 20
@@ -217,8 +195,7 @@ tsrange 0 20
 The TMDWF workflow:
 
 - expands HDF5 dataset paths using `{gm}`, `{eta}`, `{pz}`, `{Tdir}`, `{bT}`, and `{bz}`
-- resolves `tmax` from the two-point plateau filename token `_tmax<digits>_plateau.txt`
-- can scan a bounded local `tmax` neighborhood around the retained fit-window upper edge during shared-window selection when `tmax_scan_radius > 0`
+- resolves `tmax` from the two-point fit-summary filename token `_tmax<digits>_plateau.txt`
 - averages over the requested `Tdir` entries
 - combines `+bz` and `-bz` when `bz != 0`
 - applies the phase factor `exp(-i * phase * bz / 2)` with `phase = 2*pi*pz/Ns`
@@ -231,17 +208,12 @@ The TMDWF workflow:
 - folds the time dependence after preprocessing
 - writes outputs grouped by `bT` rather than one file per `bz`
 - stores one parseable `bz` block per grouped summary file
-- records whether the final fit window came from `fit_window` or `fit_window_auto_search`
 - records two-point provenance in each summary block:
-  - `two_point_plateau_table_resolved`
+  - `two_point_fit_table_resolved`
   - `two_point_tmax_source`
   - `two_point_tmax_inferred`
 - records downstream-friendly metadata in grouped fit tables:
-  - `shared_window_flag`
-  - `reference_eta`
-  - `reference_bT`
-  - `reference_bz`
-  - `plateau_tmax_used`
+  - `fit_window_tmax_used`
 
 For a fixed `(title, gm, eta, bT, component, nstates)` combination, the grouped
 TMDWF outputs now look like:
@@ -270,19 +242,6 @@ Recommended default usage:
 
 Useful extra TMDWF fit controls:
 
-- `auto_search_shared_window_from_fit_window true|false`:
-  advanced / experimental option. When `true`, the workflow first treats the
-  requested fit window as a bounded search region, then runs shared-window
-  selection inside that region instead of using the full fit window directly.
-- `decay_constant <value> <error>`:
-  required when automatic shared-window search is enabled. The automatic
-  reference-window scan keeps the existing decay-constant / reference-value
-  philosophy.
-- `tmax_scan_radius <int>`:
-  optional bounded `tmax` scan radius for automatic shared-window selection.
-  `0` keeps the search at the retained fit-window upper edge; `1` scans
-  `fit_window_tmax-1`, `fit_window_tmax`, and `fit_window_tmax+1` after
-  clipping to valid bounds.
 - `fit_window <path>`:
   preferred plain-text fit-window table. Supported row formats are
   `pz tmin tmax` and `gm pz tmin tmax`.
@@ -292,20 +251,6 @@ Useful extra TMDWF fit controls:
   form like `{"T5": {5: [6, 12]}}` when you want `gm`-specific windows. The
   notebook helper materializes this into the backend fit-window table format
   automatically.
-- `min_fit_dof <int>`:
-  shared-window scans still enforce the hard floor `max(4, min_fit_dof)`.
-
-Advanced / experimental note:
-
-- `auto_search_shared_window_from_fit_window`
-- `tmax_scan_radius`
-- `decay_constant`
-- `min_fit_dof`
-
-These support automated reference-based window selection, but they are still in
-an early testing stage. They are useful for exploratory studies, not yet the
-primary recommended default for production analysis.
-
 These TMDWF templates are intentionally example workflow templates rather than
 fully runnable tracked examples, because they depend on user-local HDF5 data.
 
@@ -567,7 +512,7 @@ and plain-text example inputs under:
 
 These examples use repository-relative paths, so they can be run directly from the repository root.
 The `_annotated.txt` variants include inline comments describing each option and are meant to mirror the notebook `Option Guide` cells in plain-text form.
-The TMDWF templates are the exception: they are structurally complete templates, but you should point them at your own local HDF5 datasets and two-point plateau tables before running.
+The TMDWF templates are the exception: they are structurally complete templates, but you should point them at your own local HDF5 datasets and two-point fit-summary tables before running.
 
 Example outputs are intentionally ignored by git and should go under:
 

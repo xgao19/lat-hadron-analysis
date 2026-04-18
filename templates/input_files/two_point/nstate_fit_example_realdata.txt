@@ -8,7 +8,6 @@ pz0_ground_energy 0.42
 fix_ground_energy_from_dispersion true
 nstates 1 2
 fit_window /path/to/2pt_fit_windows.txt
-auto_search_plateau_from_fit_window false
 binsize 1
 bootstrap_samples 16
 bootstrap_size 16

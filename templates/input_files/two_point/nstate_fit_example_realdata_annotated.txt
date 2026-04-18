@@ -70,13 +70,6 @@ fix_ground_energy_from_dispersion true
 #   6 6 12
 fit_window /path/to/2pt_fit_windows.txt
 
-# Advanced / experimental option:
-# when true, the backend first clips the folded correlator to the requested
-# fit_window for that momentum, then performs automatic plateau suggestion
-# inside that retained window instead of using the full window directly.
-# Keep false for the current default.
-auto_search_plateau_from_fit_window false
-
 # Bootstrap and run controls.
 # Use auto for bootstrap_samples / bootstrap_size to let the backend choose.
 binsize 1
@@ -110,8 +103,4 @@ results_dir examples/outputs/nstate_fit_realdata
 # Note:
 # - By default, the backend folds the correlator and then directly clips it to
 #   the requested `fit_window` range for that momentum.
-# - If `auto_search_plateau_from_fit_window` is true, the code uses the
-#   provided fit window as a bounded search region and runs automatic plateau
-#   suggestion inside it.
-# - That automatic search mode is still intended as a higher-level testing
-#   feature rather than the primary recommended default.
+# - The fit window is now the canonical control surface for the 2pt workflow.

@@ -56,7 +56,6 @@ NSTATE_INPUT_KEYS = {
     "fix_ground_energy_from_dispersion",
     "nstates",
     "fit_window",
-    "auto_search_plateau_from_fit_window",
     "binsize",
     "bootstrap_samples",
     "bootstrap_size",
@@ -87,10 +86,6 @@ TMDWF_INPUT_KEYS = {
     "bootstrap_size",
     "seed",
     "fit_window",
-    "auto_search_shared_window_from_fit_window",
-    "tmax_scan_radius",
-    "decay_constant",
-    "min_fit_dof",
     "qtmdwf_h5",
     "dataset_path_template",
     "two_point_plateau_table",
@@ -226,7 +221,7 @@ def render_nstate_fit_input_text(config: dict[str, Any]) -> str:
     if isinstance(config.get("fit_window"), dict):
         config = dict(config)
         config["fit_window"] = str(
-            _materialize_nstate_fit_window_table(config["fit_window"])
+            _materialize_nstate_fit_window_file(config["fit_window"])
         )
     config = _subset_config(config, NSTATE_INPUT_KEYS)
     required = [
@@ -262,7 +257,6 @@ def render_nstate_fit_input_text(config: dict[str, Any]) -> str:
     for optional_key in (
         "pz0_ground_energy",
         "fix_ground_energy_from_dispersion",
-        "auto_search_plateau_from_fit_window",
         "binsize",
         "bootstrap_samples",
         "bootstrap_size",
@@ -280,7 +274,7 @@ def render_tmdwf_fit_input_text(config: dict[str, Any]) -> str:
     if isinstance(config.get("fit_window"), dict):
         config = dict(config)
         config["fit_window"] = str(
-            _materialize_tmdwf_fit_window_table(config["fit_window"])
+            _materialize_tmdwf_fit_window_file(config["fit_window"])
         )
     config = _subset_config(config, TMDWF_INPUT_KEYS)
     required = [
@@ -348,10 +342,6 @@ def render_tmdwf_fit_input_text(config: dict[str, Any]) -> str:
         "bootstrap_samples",
         "bootstrap_size",
         "seed",
-        "tmax_scan_radius",
-        "auto_search_shared_window_from_fit_window",
-        "decay_constant",
-        "min_fit_dof",
         "plot",
         "results_dir",
     ):
@@ -527,7 +517,7 @@ def _materialize_input_text(text: str, suffix: str) -> Path:
     return path
 
 
-def _materialize_tmdwf_fit_window_table(overrides: dict[Any, Any]) -> Path:
+def _materialize_tmdwf_fit_window_file(fit_window: dict[Any, Any]) -> Path:
     tmpdir = Path(tempfile.mkdtemp(prefix="lqcd_tmdwf_fit_windows_"))
     path = tmpdir / "tmdwf_fit_window.txt"
     lines: list[str] = []
@@ -545,7 +535,7 @@ def _materialize_tmdwf_fit_window_table(overrides: dict[Any, Any]) -> Path:
             )
         return tmin, tmax
 
-    for key, value in overrides.items():
+    for key, value in fit_window.items():
         if isinstance(value, dict):
             gm = str(key)
             for pz_key, window in value.items():
@@ -559,11 +549,11 @@ def _materialize_tmdwf_fit_window_table(overrides: dict[Any, Any]) -> Path:
     return path
 
 
-def _materialize_nstate_fit_window_table(overrides: dict[Any, Any]) -> Path:
+def _materialize_nstate_fit_window_file(fit_window: dict[Any, Any]) -> Path:
     tmpdir = Path(tempfile.mkdtemp(prefix="lqcd_nstate_fit_windows_"))
     path = tmpdir / "nstate_fit_window.txt"
     lines: list[str] = []
-    for key, value in overrides.items():
+    for key, value in fit_window.items():
         if not isinstance(value, (list, tuple)) or len(value) != 2:
             raise ValueError(
                 f"invalid fit_window entry for {key}; expected [tmin, tmax]"

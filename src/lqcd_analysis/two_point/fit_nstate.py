@@ -8,7 +8,6 @@ import numpy as np
 from scipy.optimize import least_squares
 from scipy.stats import chi2
 
-from ..common.fit_tables import decode_fit_table_parameter_columns, get_fit_table_layout
 from .io import load_correlator_csv
 from .plotting import plot_nstate_outputs, write_nstate_plot_notebook
 from ..common.utils import (
@@ -37,7 +36,6 @@ class NStateFitInput:
     fix_ground_energy_from_dispersion: bool
     nstates: tuple[int, ...]
     fit_window: str
-    auto_search_plateau_from_fit_window: bool
     binsize: int
     bootstrap_samples: int | None
     bootstrap_size: int | None
@@ -65,7 +63,7 @@ class FitSummaryRow:
 
 
 @dataclass(frozen=True)
-class PlateauWindow:
+class FitWindowSummary:
     start_tmin: int
     end_tmin: int
     representative_tmin: int
@@ -74,40 +72,20 @@ class PlateauWindow:
 
 
 @dataclass(frozen=True)
-class PlateauParameterSummary:
+class FitWindowParameterSummary:
     params_mean: tuple[float, ...]
     params_err: tuple[float, ...]
 
 
 @dataclass(frozen=True)
-class ParsedFitTable:
-    rows: tuple[FitSummaryRow, ...]
-    plateau: PlateauWindow | None
-
-
-@dataclass(frozen=True)
 class StateArtifacts:
     nstates: int
-    plateau: PlateauWindow
-    plateau_summary: PlateauParameterSummary
-    source: str
-    plateau_start_fallback_uncorrelated_successes: int
-    plateau_start_shrinkage_lambda: float | None
+    fit_window_summary: FitWindowSummary
+    fit_window_parameter_summary: FitWindowParameterSummary
+    fit_window_start_fallback_uncorrelated_successes: int
+    fit_window_start_shrinkage_lambda: float | None
     fit_table_path: Path
-    plateau_table_path: Path
-
-
-@dataclass(frozen=True)
-class PlateauCandidate:
-    start_tmin: int
-    end_tmin: int
-    representative_tmin: int
-    constant_chi2_dof: float
-    slope: float
-    slope_err: float
-    slope_significance: float
-    energy_mean: float
-    energy_err: float
+    fit_window_table_path: Path
 
 
 @dataclass(frozen=True)
@@ -205,9 +183,6 @@ def parse_nstate_fit_input(path: str | Path, results_dir: str | Path | None = No
         fix_ground_energy_from_dispersion=fix_ground_energy_from_dispersion,
         nstates=nstates,
         fit_window=entries["fit_window"][0],
-        auto_search_plateau_from_fit_window=parse_bool(
-            entries.get("auto_search_plateau_from_fit_window", ["false"])[0]
-        ),
         binsize=int(entries.get("binsize", ["1"])[0]),
         bootstrap_samples=parse_optional_int(entries.get("bootstrap_samples", ["auto"])[0]),
         bootstrap_size=parse_optional_int(entries.get("bootstrap_size", ["auto"])[0]),
@@ -226,7 +201,7 @@ def _load_fit_window_table(
     path: str | Path,
 ) -> dict[int, tuple[int, int]]:
     file_path = Path(path)
-    overrides: dict[int, tuple[int, int]] = {}
+    fit_windows: dict[int, tuple[int, int]] = {}
     with file_path.open("r", encoding="utf-8") as handle:
         for line_number, line in enumerate(handle, start=1):
             stripped = line.strip()
@@ -247,8 +222,8 @@ def _load_fit_window_table(
                 raise ValueError(
                     f"invalid fit window at {file_path}:{line_number}; tmax must be >= tmin"
                 )
-            overrides[pz] = (tmin, tmax)
-    return overrides
+            fit_windows[pz] = (tmin, tmax)
+    return fit_windows
 
 
 def parse_optional_int(value: str) -> int | None:
@@ -564,30 +539,6 @@ def effective_mass_with_bootstrap(
     return mean, err
 
 
-def choose_default_tmax(
-    meff_mean: np.ndarray,
-    meff_err: np.ndarray,
-    nt: int,
-    max_available_t: int,
-) -> int:
-    cap = min(max_available_t, nt // 2 - 7)
-    if cap < 4:
-        return max_available_t
-
-    candidate = None
-    for t in range(2, min(len(meff_mean), cap + 1)):
-        if not np.isfinite(meff_mean[t]) or meff_mean[t] == 0.0:
-            candidate = t
-            break
-        relative_error = abs(meff_err[t] / meff_mean[t])
-        if relative_error >= 0.5:
-            candidate = t
-            break
-    if candidate is None:
-        return cap
-    return max(4, min(candidate, cap))
-
-
 def pack_fit_parameters(amplitudes: np.ndarray, energies: np.ndarray) -> np.ndarray:
     amps = np.clip(np.asarray(amplitudes, dtype=float), 1e-16, None)
     en = np.asarray(energies, dtype=float)
@@ -876,8 +827,8 @@ def summarize_bootstrap_parameters(samples: np.ndarray) -> tuple[tuple[float, ..
     return tuple(means), tuple(errors)
 
 
-def build_energy_priors_from_plateau_summary(
-    previous_summary: PlateauParameterSummary | None,
+def build_energy_priors_from_fit_window_summary(
+    previous_summary: FitWindowParameterSummary | None,
     nstates: int,
 ) -> tuple[EnergyPrior, ...]:
     if previous_summary is None or nstates <= 1:
@@ -893,227 +844,36 @@ def build_energy_priors_from_plateau_summary(
     return tuple(priors)
 
 
-def fit_constant_window(
-    tmins: np.ndarray,
-    values: np.ndarray,
-    errors: np.ndarray,
-) -> tuple[float, float]:
-    del tmins
-    del errors
-    values = np.asarray(values, dtype=float)
-    constant = float(np.mean(values))
-    residual = values - constant
-    chi2_value = float(np.dot(residual, residual))
-    dof = max(len(values) - 1, 1)
-    return constant, chi2_value / dof
-
-
-def fit_linear_window(
-    tmins: np.ndarray,
-    values: np.ndarray,
-    errors: np.ndarray,
-) -> tuple[float, float, float, float]:
-    del errors
-    tmins = np.asarray(tmins, dtype=float)
-    values = np.asarray(values, dtype=float)
-    design = np.column_stack([np.ones_like(tmins, dtype=float), tmins])
-    normal = design.T @ design
-    if np.linalg.det(normal) <= 0.0:
-        return np.nan, np.nan, np.nan, np.nan
-    covariance = np.linalg.inv(normal)
-    beta = covariance @ (design.T @ values)
-    intercept = float(beta[0])
-    slope = float(beta[1])
-    model = intercept + slope * tmins
-    residual = values - model
-    chi2_value = float(np.dot(residual, residual))
-    dof = max(len(values) - 2, 1)
-    variance = chi2_value / dof
-    slope_err = float(np.sqrt(max(variance * covariance[1, 1], 0.0)))
-    return intercept, slope, slope_err, variance
-
-
-def window_has_no_significant_trend(slope: float, slope_err: float, slope_nsigma: float) -> bool:
-    if not np.isfinite(slope) or not np.isfinite(slope_err) or slope_err <= 0.0:
-        return False
-    return abs(slope) / slope_err < slope_nsigma
-
-
-def select_best_plateau_window(candidates: list[PlateauCandidate]) -> PlateauCandidate:
-    if not candidates:
-        raise ValueError("no plateau candidates satisfied the constant-fit and trend criteria")
-    return max(
-        candidates,
-        key=lambda item: (
-            item.end_tmin - item.start_tmin + 1,
-            item.end_tmin,
-            -item.slope_significance,
-        ),
-    )
-
-
 def target_ground_energy_from_pz0(pz0_ground_energy: float, pz: int, ns: int) -> float:
     momentum = 2.0 * np.pi * float(pz) / float(ns)
     return float(np.sqrt(float(pz0_ground_energy) ** 2 + momentum**2))
 
 
-def filter_plateau_candidates_by_target_energy(
-    candidates: list[PlateauCandidate],
-    target_energy: float,
-) -> list[PlateauCandidate]:
-    if not candidates:
-        return []
-    overlaps = [
-        candidate
-        for candidate in candidates
-        if candidate.energy_mean - candidate.energy_err <= target_energy <= candidate.energy_mean + candidate.energy_err
-    ]
-    if overlaps:
-        return overlaps
-    distances = [abs(candidate.energy_mean - target_energy) for candidate in candidates]
-    min_distance = min(distances)
-    return [
-        candidate
-        for candidate, distance in zip(candidates, distances, strict=False)
-        if np.isclose(distance, min_distance)
-    ]
-
-
-def suggest_plateau(
-    rows: list[FitSummaryRow],
-    energy_index: int = 0,
-    min_window_len: int = 2,
-    slope_nsigma: float = 1.3,
-    max_constant_chi2_dof: float = 5.0,
-    max_row_chi2_dof: float = 10.0,
-    allow_relaxed_fallback: bool = False,
-    target_energy: float | None = None,
-) -> PlateauWindow:
-    valid_rows = [
-        row
-        for row in rows
-        if row.success_meanfit and np.isfinite(row.chi2_dof) and row.chi2_dof <= max_row_chi2_dof
-    ]
-    if len(valid_rows) < 3:
-        fallback_pool = [
-            row
-            for row in rows
-            if row.success_meanfit and np.isfinite(row.chi2_dof)
-        ]
-        if len(fallback_pool) < 3:
-            raise ValueError("fewer than 3 usable fit rows exist for plateau selection")
-        valid_rows = sorted(sorted(fallback_pool, key=lambda row: row.chi2_dof)[:3], key=lambda row: row.tmin)
-
-    candidates: list[PlateauCandidate] = []
-    fallback_candidates: list[PlateauCandidate] = []
-    for start in range(len(valid_rows)):
-        for end in range(start + min_window_len - 1, len(valid_rows)):
-            window_rows = valid_rows[start : end + 1]
-            tmins = np.array([row.tmin for row in window_rows], dtype=float)
-            if not np.all(np.diff(tmins) == 1):
-                break
-            energy_column = len(window_rows[0].params_mean) // 2 + energy_index
-            energy_values = np.array([row.params_mean[energy_column] for row in window_rows], dtype=float)
-            energy_errors = np.array(
-                [max(row.params_err[energy_column], 1e-12) for row in window_rows],
-                dtype=float,
-            )
-            if not np.all(np.isfinite(energy_values)) or not np.all(np.isfinite(energy_errors)):
-                continue
-
-            _, constant_chi2_dof = fit_constant_window(tmins, energy_values, energy_errors)
-            _, slope, slope_err, _ = fit_linear_window(tmins, energy_values, energy_errors)
-            slope_significance = abs(slope) / slope_err if np.isfinite(slope_err) and slope_err > 0.0 else np.inf
-            candidate_energy_mean, candidate_energy_err = _inverse_variance_summary(
-                energy_values,
-                energy_errors,
-            )
-            candidate = PlateauCandidate(
-                start_tmin=int(window_rows[0].tmin),
-                end_tmin=int(window_rows[-1].tmin),
-                representative_tmin=int(window_rows[len(window_rows) // 2].tmin),
-                constant_chi2_dof=float(constant_chi2_dof),
-                slope=float(slope),
-                slope_err=float(slope_err),
-                slope_significance=float(slope_significance),
-                energy_mean=candidate_energy_mean,
-                energy_err=candidate_energy_err,
-            )
-            fallback_candidates.append(candidate)
-            passes = (
-                np.isfinite(constant_chi2_dof)
-                and constant_chi2_dof <= max_constant_chi2_dof
-                and window_has_no_significant_trend(slope, slope_err, slope_nsigma)
-            )
-            if passes:
-                candidates.append(candidate)
-
-    if target_energy is not None:
-        candidates = filter_plateau_candidates_by_target_energy(candidates, target_energy)
-        fallback_candidates = filter_plateau_candidates_by_target_energy(fallback_candidates, target_energy)
-
-    if candidates:
-        best_candidate = select_best_plateau_window(candidates)
-    elif allow_relaxed_fallback and fallback_candidates:
-        best_candidate = select_best_plateau_window(fallback_candidates)
-    elif allow_relaxed_fallback and valid_rows:
-        representative = max(valid_rows, key=lambda row: row.tmin)
-        best_candidate = PlateauCandidate(
-            start_tmin=representative.tmin,
-            end_tmin=representative.tmin,
-            representative_tmin=representative.tmin,
-            constant_chi2_dof=0.0,
-            slope=0.0,
-            slope_err=np.inf,
-            slope_significance=0.0,
-        )
-    else:
-        raise ValueError("no plateau candidates satisfied the constant-fit and trend criteria")
-    plateau_rows = [
-        row for row in valid_rows if best_candidate.start_tmin <= row.tmin <= best_candidate.end_tmin
-    ]
-    energy_column = len(plateau_rows[0].params_mean) // 2 + energy_index
-    amplitude_column = energy_index
-    energy_values = np.array([row.params_mean[energy_column] for row in plateau_rows])
-    energy_errors = np.array([max(row.params_err[energy_column], 1e-12) for row in plateau_rows])
-    amplitude_values = np.array([row.params_mean[amplitude_column] for row in plateau_rows])
-    amplitude_errors = np.array([max(row.params_err[amplitude_column], 1e-12) for row in plateau_rows])
-    energy_mean, _ = _inverse_variance_summary(energy_values, energy_errors)
-    amplitude_mean, _ = _inverse_variance_summary(amplitude_values, amplitude_errors)
-    return PlateauWindow(
-        start_tmin=plateau_rows[0].tmin,
-        end_tmin=plateau_rows[-1].tmin,
-        representative_tmin=best_candidate.representative_tmin,
-        energy_mean=energy_mean,
-        amplitude_mean=amplitude_mean,
-    )
-
-
-def build_initial_guess_from_plateau(
-    plateau: PlateauWindow,
+def build_initial_guess_from_fit_window(
+    fit_window: FitWindowSummary,
     nstates: int,
 ) -> tuple[np.ndarray, np.ndarray]:
-    amplitudes = np.full(nstates, plateau.amplitude_mean, dtype=float)
-    energies = np.full(nstates, plateau.energy_mean, dtype=float)
+    amplitudes = np.full(nstates, fit_window.amplitude_mean, dtype=float)
+    energies = np.full(nstates, fit_window.energy_mean, dtype=float)
     if nstates >= 2:
-        energies[1] = max(2.0 * plateau.energy_mean, plateau.energy_mean + 0.2)
+        energies[1] = max(2.0 * fit_window.energy_mean, fit_window.energy_mean + 0.2)
     if nstates >= 3:
-        energies[2] = max(1.5 * energies[1], 3.0 * plateau.energy_mean)
+        energies[2] = max(1.5 * energies[1], 3.0 * fit_window.energy_mean)
         amplitudes[2] = amplitudes[1]
     return amplitudes, energies
 
 
-def compute_plateau_parameter_summary(
+def compute_fit_window_parameter_summary(
     rows: list[FitSummaryRow],
     sample_tables: dict[int, np.ndarray],
-    plateau: PlateauWindow,
-) -> PlateauParameterSummary:
-    plateau_rows = [row for row in rows if plateau.start_tmin <= row.tmin <= plateau.end_tmin]
-    if not plateau_rows:
-        raise ValueError("plateau window does not overlap any fit rows")
+    fit_window: FitWindowSummary,
+) -> FitWindowParameterSummary:
+    fit_window_rows = [row for row in rows if fit_window.start_tmin <= row.tmin <= fit_window.end_tmin]
+    if not fit_window_rows:
+        raise ValueError("fit window does not overlap any fit rows")
 
-    nparams = len(plateau_rows[0].params_mean)
-    row_errs = np.array([[max(value, 1e-12) for value in row.params_err] for row in plateau_rows], dtype=float)
+    nparams = len(fit_window_rows[0].params_mean)
+    row_errs = np.array([[max(value, 1e-12) for value in row.params_err] for row in fit_window_rows], dtype=float)
     weights = 1.0 / row_errs**2
 
     sample_count = max(sample_table.shape[0] for sample_table in sample_tables.values())
@@ -1122,7 +882,7 @@ def compute_plateau_parameter_summary(
         for param_index in range(nparams):
             values = []
             param_weights = []
-            for row_index, row in enumerate(plateau_rows):
+            for row_index, row in enumerate(fit_window_rows):
                 sample_table = sample_tables.get(row.tmin)
                 if sample_table is None or sample_id >= sample_table.shape[0]:
                     continue
@@ -1146,7 +906,7 @@ def compute_plateau_parameter_summary(
         mean, error = robust_mean_and_error(finite_values)
         params_mean.append(mean)
         params_err.append(error)
-    return PlateauParameterSummary(params_mean=tuple(params_mean), params_err=tuple(params_err))
+    return FitWindowParameterSummary(params_mean=tuple(params_mean), params_err=tuple(params_err))
 
 
 def run_sliding_fits(
@@ -1331,10 +1091,10 @@ def serialize_fit_rows(rows: list[FitSummaryRow]) -> np.ndarray:
     return np.array(columns, dtype=float)
 
 
-def mark_plateau(rows: list[FitSummaryRow], plateau: PlateauWindow) -> list[FitSummaryRow]:
+def mark_fit_window(rows: list[FitSummaryRow], fit_window: FitWindowSummary) -> list[FitSummaryRow]:
     marked = []
     for row in rows:
-        flagged = 1 if plateau.start_tmin <= row.tmin <= plateau.end_tmin else 0
+        flagged = 1 if fit_window.start_tmin <= row.tmin <= fit_window.end_tmin else 0
         marked.append(
             FitSummaryRow(
                 nstates=row.nstates,
@@ -1375,28 +1135,6 @@ def header_for_fit_rows(max_states: int) -> str:
     return " ".join(columns)
 
 
-def recommended_plateau_note() -> str:
-    return (
-        "Recommended practical plateau strategy:\n"
-        "1. Start from the 1-state E0(tmin) table at fixed tmax.\n"
-        "2. Keep only rows whose mean fit succeeded and whose row-level chi2/dof is reasonable.\n"
-        "   The default row-level threshold is chi2/dof < 10.0.\n"
-        "3. For each consecutive candidate window, use the mean E0(tmin) values only.\n"
-        "4. Fit that mean series to both a constant and a line: E(tmin) = a + b tmin.\n"
-        "5. Accept the window if the constant-fit chi2/dof is reasonable and the slope is not significant.\n"
-        "   The default constant-fit threshold is chi2/dof < 5.0,\n"
-        "   using the default criterion |b|/sigma_b < 1.3.\n"
-        "6. Among acceptable windows, prefer the longest one; if lengths tie, prefer the later-time window;\n"
-        "   if still tied, prefer the one with the smallest slope significance.\n"
-        "7. Bootstrap samples are still used for final uncertainties, but not for the plateau decision itself.\n"
-        "8. Use the weighted average of the selected window to seed the next-state fit.\n"
-    )
-
-
-def write_plateau_note(path: Path) -> None:
-    path.write_text(recommended_plateau_note(), encoding="utf-8")
-
-
 def extract_shrinkage_lambda_from_message(message: str) -> float | None:
     match = re.search(r"shrinkage_lambda=([0-9]+(?:\.[0-9]+)?)", message)
     if match is None:
@@ -1416,7 +1154,7 @@ def _state_output_paths(
     return fit_path, sample_path
 
 
-def _plateau_output_path(
+def _fit_window_output_path(
     spec: NStateFitInput,
     title: str,
     nstates: int,
@@ -1426,149 +1164,6 @@ def _plateau_output_path(
     return dataset_dir / "tables" / f"{title}_{spec.model}_{nstates}state_tmax{tmax}_plateau.txt"
 
 
-def _weighted_average(values: np.ndarray, errors: np.ndarray) -> float:
-    safe_errors = np.clip(np.asarray(errors, dtype=float), 1e-12, None)
-    weights = 1.0 / safe_errors**2
-    return float(np.sum(weights * values) / np.sum(weights))
-
-
-def _inverse_variance_summary(values: np.ndarray, errors: np.ndarray) -> tuple[float, float]:
-    safe_errors = np.clip(np.asarray(errors, dtype=float), 1e-12, None)
-    weights = 1.0 / safe_errors**2
-    normalization = float(np.sum(weights))
-    return float(np.sum(weights * values) / normalization), float(np.sqrt(1.0 / normalization))
-
-def _decode_fit_table_row(raw: np.ndarray, nstates: int, has_fallback_column: bool) -> FitSummaryRow:
-    layout = get_fit_table_layout(nstates, 10 + 4 * nstates if has_fallback_column else 9 + 4 * nstates)
-    params_mean, params_err = decode_fit_table_parameter_columns(raw, nstates, layout)
-    return FitSummaryRow(
-        nstates=nstates,
-        tmin=int(raw[0]),
-        tmax=int(raw[1]),
-        success_meanfit=int(raw[2]),
-        bootstrap_successes=int(raw[3]),
-        bootstrap_total=int(raw[4]),
-        bootstrap_success_fraction=float(raw[5]),
-        fallback_uncorrelated_successes=int(raw[6]) if has_fallback_column else 0,
-        chi2_dof=float(raw[7] if has_fallback_column else raw[6]),
-        pvalue=float(raw[8] if has_fallback_column else raw[7]),
-        plateau_flag=int(raw[layout.plateau_flag_column]),
-        params_mean=params_mean,
-        params_err=params_err,
-    )
-
-
-def _plateau_from_rows(rows: list[FitSummaryRow]) -> PlateauWindow | None:
-    plateau_rows = [row for row in rows if row.plateau_flag > 0]
-    if not plateau_rows:
-        return None
-
-    tmins = np.array([row.tmin for row in plateau_rows], dtype=int)
-    amplitude_values = np.array([row.params_mean[0] for row in plateau_rows], dtype=float)
-    amplitude_errors = np.array([row.params_err[0] for row in plateau_rows], dtype=float)
-    energy_column = len(plateau_rows[0].params_mean) // 2
-    energy_values = np.array([row.params_mean[energy_column] for row in plateau_rows], dtype=float)
-    energy_errors = np.array([row.params_err[energy_column] for row in plateau_rows], dtype=float)
-
-    return PlateauWindow(
-        start_tmin=int(tmins[0]),
-        end_tmin=int(tmins[-1]),
-        representative_tmin=int(tmins[len(tmins) // 2]),
-        energy_mean=_weighted_average(energy_values, energy_errors),
-        amplitude_mean=_weighted_average(amplitude_values, amplitude_errors),
-    )
-
-
-def _parse_fit_table(table: np.ndarray, nstates: int) -> ParsedFitTable:
-    rows_array = np.atleast_2d(np.asarray(table, dtype=float))
-    has_fallback_column = rows_array.shape[1] >= 10 + 4 * nstates
-    rows = tuple(_decode_fit_table_row(raw, nstates, has_fallback_column) for raw in rows_array)
-    plateau = _plateau_from_rows(list(rows))
-    return ParsedFitTable(rows=rows, plateau=plateau)
-
-
-def _sample_tables_from_array(table: np.ndarray) -> dict[int, np.ndarray]:
-    rows = np.atleast_2d(np.asarray(table, dtype=float))
-    sample_tables: dict[int, np.ndarray] = {}
-    for tmin in sorted({int(value) for value in rows[:, 0]}):
-        sample_tables[tmin] = rows[np.isclose(rows[:, 0], tmin)]
-    return sample_tables
-
-
-def _load_plateau_summary_from_plateau_table(path: Path, nstates: int) -> PlateauParameterSummary | None:
-    if not path.exists() or path.stat().st_size == 0:
-        return None
-    try:
-        plateau_data = np.loadtxt(path, ndmin=2)
-        row = np.atleast_2d(np.asarray(plateau_data, dtype=float))[0]
-    except Exception:
-        return None
-    return PlateauParameterSummary(
-        params_mean=tuple(row[: 2 * nstates]),
-        params_err=tuple(row[2 * nstates : 4 * nstates]),
-    )
-
-
-def _load_previous_state_artifacts(
-    spec: NStateFitInput,
-    title: str,
-    nstates: int,
-    tmax: int,
-) -> StateArtifacts | None:
-    if nstates <= 1:
-        return None
-    return _load_cached_state_artifacts(spec, title, nstates - 1, tmax)
-
-
-def _load_cached_state_artifacts(
-    spec: NStateFitInput,
-    title: str,
-    nstates: int,
-    tmax: int,
-) -> StateArtifacts | None:
-    fit_path, sample_path = _state_output_paths(spec, title, nstates, tmax)
-    if not fit_path.exists() or not sample_path.exists():
-        return None
-    if fit_path.stat().st_size == 0 or sample_path.stat().st_size == 0:
-        return None
-
-    try:
-        fit_table = np.loadtxt(fit_path, ndmin=2)
-    except Exception:
-        return None
-    parsed = _parse_fit_table(fit_table, nstates)
-    if parsed.plateau is None:
-        return None
-
-    plateau_path = _plateau_output_path(spec, title, nstates, tmax)
-    plateau_summary = _load_plateau_summary_from_plateau_table(plateau_path, nstates)
-    if plateau_summary is None:
-        try:
-            sample_table = np.loadtxt(sample_path, ndmin=2)
-        except Exception:
-            return None
-        plateau_summary = compute_plateau_parameter_summary(
-            list(parsed.rows),
-            _sample_tables_from_array(sample_table),
-            parsed.plateau,
-        )
-
-    plateau_start_row = next((row for row in parsed.rows if row.tmin == parsed.plateau.start_tmin), None)
-    if plateau_start_row is None:
-        return None
-
-    return StateArtifacts(
-        nstates=nstates,
-        plateau=parsed.plateau,
-        plateau_summary=plateau_summary,
-        source="cache_reused",
-        plateau_start_fallback_uncorrelated_successes=plateau_start_row.fallback_uncorrelated_successes,
-        plateau_start_shrinkage_lambda=None,
-        fit_table_path=fit_path,
-        plateau_table_path=plateau_path,
-    )
-
-
 def _write_state_outputs(
     spec: NStateFitInput,
     title: str,
@@ -1576,17 +1171,17 @@ def _write_state_outputs(
     nstates: int,
     rows: list[FitSummaryRow],
     sample_tables: dict[int, np.ndarray],
-    plateau: PlateauWindow,
-    plateau_summary: PlateauParameterSummary,
+    fit_window_summary: FitWindowSummary,
+    fit_window_parameter_summary: FitWindowParameterSummary,
     meanfit_results: dict[int, FitResult],
     outputs: list[Path],
 ) -> StateArtifacts:
-    plateau_start_row = next(row for row in rows if row.tmin == plateau.start_tmin)
-    plateau_start_shrinkage_lambda = extract_shrinkage_lambda_from_message(
-        meanfit_results[plateau.start_tmin].message
+    fit_window_start_row = next(row for row in rows if row.tmin == fit_window_summary.start_tmin)
+    fit_window_start_shrinkage_lambda = extract_shrinkage_lambda_from_message(
+        meanfit_results[fit_window_summary.start_tmin].message
     )
     table_path, sample_path = _state_output_paths(spec, title, nstates, tmax)
-    plateau_table_path = _plateau_output_path(spec, title, nstates, tmax)
+    fit_window_table_path = _fit_window_output_path(spec, title, nstates, tmax)
 
     np.savetxt(
         table_path,
@@ -1596,10 +1191,13 @@ def _write_state_outputs(
     )
     outputs.append(table_path)
 
-    plateau_table = np.array([[*plateau_summary.params_mean, *plateau_summary.params_err]], dtype=float)
+    fit_window_table = np.array(
+        [[*fit_window_parameter_summary.params_mean, *fit_window_parameter_summary.params_err]],
+        dtype=float,
+    )
     np.savetxt(
-        plateau_table_path,
-        plateau_table,
+        fit_window_table_path,
+        fit_window_table,
         header=" ".join(
             [f"A{idx}_mean" for idx in range(nstates)]
             + [f"E{idx}_mean" for idx in range(nstates)]
@@ -1608,7 +1206,7 @@ def _write_state_outputs(
         ),
         fmt="%.10e",
     )
-    outputs.append(plateau_table_path)
+    outputs.append(fit_window_table_path)
 
     np.savetxt(
         sample_path,
@@ -1622,13 +1220,12 @@ def _write_state_outputs(
 
     return StateArtifacts(
         nstates=nstates,
-        plateau=plateau,
-        plateau_summary=plateau_summary,
-        source="computed_fresh",
-        plateau_start_fallback_uncorrelated_successes=plateau_start_row.fallback_uncorrelated_successes,
-        plateau_start_shrinkage_lambda=plateau_start_shrinkage_lambda,
+        fit_window_summary=fit_window_summary,
+        fit_window_parameter_summary=fit_window_parameter_summary,
+        fit_window_start_fallback_uncorrelated_successes=fit_window_start_row.fallback_uncorrelated_successes,
+        fit_window_start_shrinkage_lambda=fit_window_start_shrinkage_lambda,
         fit_table_path=table_path,
-        plateau_table_path=plateau_table_path,
+        fit_window_table_path=fit_window_table_path,
     )
 
 
@@ -1665,9 +1262,6 @@ def run_single_dataset(spec: NStateFitInput, pz: int) -> list[Path]:
     covariance = compute_bootstrap_covariance(bootstrap_means) if spec.fit_mode == "correlated" else None
 
     meff_mean, meff_err = effective_mass_with_bootstrap(bootstrap_means, spec.model, nt=spec.nt)
-    fit_window_source = (
-        "fit_window_auto_search" if spec.auto_search_plateau_from_fit_window else "fit_window"
-    )
     window_global_tmin, window_global_tmax = fit_window
     fit_tmax_local = selected.shape[1] - 1
     fit_tmax_output = fit_tmax_local + time_offset
@@ -1697,10 +1291,6 @@ def run_single_dataset(spec: NStateFitInput, pz: int) -> list[Path]:
     )
     outputs.append(meff_table)
 
-    plateau_note = dataset_dir / "plateau_recommendation.txt"
-    write_plateau_note(plateau_note)
-    outputs.append(plateau_note)
-
     one_state_energy_guess = np.nanmedian(meff_mean[np.isfinite(meff_mean) & (np.arange(len(meff_mean)) >= 2)])
     if not np.isfinite(one_state_energy_guess):
         one_state_energy_guess = 0.5
@@ -1715,12 +1305,8 @@ def run_single_dataset(spec: NStateFitInput, pz: int) -> list[Path]:
             return
 
         if nstates == 1:
-            if not spec.auto_search_plateau_from_fit_window:
-                tmin_start = 0
-                tmin_stop = 1
-            else:
-                tmin_start = 0
-                tmin_stop = max(1, fit_tmax_local)
+            tmin_start = 0
+            tmin_stop = 1
             initial_guess = current_guess
             priors: tuple[EnergyPrior, ...] = ()
         else:
@@ -1730,14 +1316,13 @@ def run_single_dataset(spec: NStateFitInput, pz: int) -> list[Path]:
                 compute_state(previous_state)
                 previous_artifact = state_artifacts[previous_state]
 
-            if not spec.auto_search_plateau_from_fit_window:
-                tmin_start = 0
-                tmin_stop = 1
-            else:
-                tmin_start = 0
-                tmin_stop = max(1, min(previous_artifact.plateau.start_tmin - time_offset, fit_tmax_local - 2)) + 1
-            initial_guess = build_initial_guess_from_plateau(previous_artifact.plateau, nstates)
-            priors = build_energy_priors_from_plateau_summary(previous_artifact.plateau_summary, nstates)
+            tmin_start = 0
+            tmin_stop = 1
+            initial_guess = build_initial_guess_from_fit_window(previous_artifact.fit_window_summary, nstates)
+            priors = build_energy_priors_from_fit_window_summary(
+                previous_artifact.fit_window_parameter_summary,
+                nstates,
+            )
             current_guess = initial_guess
 
         fixed_ground_energy = None
@@ -1770,29 +1355,20 @@ def run_single_dataset(spec: NStateFitInput, pz: int) -> list[Path]:
             initial_guess[1],
             **sliding_fit_kwargs,
         )
-        target_energy = None
-        if nstates == 1 and spec.pz0_ground_energy is not None:
-            target_energy = target_ground_energy_from_pz0(spec.pz0_ground_energy, pz, spec.ns)
-        if not spec.auto_search_plateau_from_fit_window:
-            representative_row = rows[0] if rows else None
-            if representative_row is None:
-                raise ValueError(f"fit window for pz={pz} produced no fit row")
-            plateau = PlateauWindow(
-                start_tmin=representative_row.tmin,
-                end_tmin=representative_row.tmin,
-                representative_tmin=representative_row.tmin,
-                energy_mean=representative_row.params_mean[nstates],
-                amplitude_mean=representative_row.params_mean[0],
-            )
-        else:
-            plateau = suggest_plateau(
-                rows,
-                energy_index=0,
-                allow_relaxed_fallback=True,
-                target_energy=target_energy,
-            )
-        rows = mark_plateau(rows, plateau)
-        plateau_summary = compute_plateau_parameter_summary(rows, sample_tables, plateau)
+        representative_row = rows[0] if rows else None
+        if representative_row is None:
+            raise ValueError(f"fit window for pz={pz} produced no fit row")
+        fit_window_summary = FitWindowSummary(
+            start_tmin=representative_row.tmin,
+            end_tmin=representative_row.tmin,
+            representative_tmin=representative_row.tmin,
+            energy_mean=representative_row.params_mean[nstates],
+            amplitude_mean=representative_row.params_mean[0],
+        )
+        rows = mark_fit_window(rows, fit_window_summary)
+        fit_window_parameter_summary = compute_fit_window_parameter_summary(
+            rows, sample_tables, fit_window_summary
+        )
         state_artifacts[nstates] = _write_state_outputs(
             spec=spec,
             title=title,
@@ -1800,8 +1376,8 @@ def run_single_dataset(spec: NStateFitInput, pz: int) -> list[Path]:
             nstates=nstates,
             rows=rows,
             sample_tables=sample_tables,
-            plateau=plateau,
-            plateau_summary=plateau_summary,
+            fit_window_summary=fit_window_summary,
+            fit_window_parameter_summary=fit_window_parameter_summary,
             meanfit_results=meanfit_results,
             outputs=outputs,
         )
@@ -1815,11 +1391,7 @@ def run_single_dataset(spec: NStateFitInput, pz: int) -> list[Path]:
         handle.write(f"model {spec.model}\n")
         handle.write(f"fit_mode {spec.fit_mode}\n")
         handle.write(f"tmax {fit_tmax_output}\n")
-        handle.write(f"fit_window_source {fit_window_source}\n")
         handle.write(f"fit_window {window_global_tmin} {window_global_tmax}\n")
-        handle.write(
-            f"auto_search_plateau_from_fit_window {int(spec.auto_search_plateau_from_fit_window)}\n"
-        )
         if spec.pz0_ground_energy is not None:
             handle.write(f"pz0_ground_energy {spec.pz0_ground_energy:.10e}\n")
             handle.write(
@@ -1830,26 +1402,24 @@ def run_single_dataset(spec: NStateFitInput, pz: int) -> list[Path]:
         )
         for nstates in sorted(state_artifacts):
             artifact = state_artifacts[nstates]
-            plateau = artifact.plateau
-            plateau_summary = artifact.plateau_summary
-            state_source = artifact.source
-            handle.write(f"{nstates}state source {state_source}\n")
-            handle.write(f"{nstates}state plateau_tmin {plateau.start_tmin} {plateau.end_tmin}\n")
+            fit_window_summary = artifact.fit_window_summary
+            fit_window_parameter_summary = artifact.fit_window_parameter_summary
             handle.write(
-                f"{nstates}state plateau_start_fallback_uncorrelated_successes "
-                f"{artifact.plateau_start_fallback_uncorrelated_successes}\n"
+                f"{nstates}state fit_window_tmin {fit_window_summary.start_tmin} {fit_window_summary.end_tmin}\n"
             )
-            plateau_start_lambda = artifact.plateau_start_shrinkage_lambda
-            if plateau_start_lambda is not None:
-                handle.write(
-                    f"{nstates}state plateau_start_shrinkage_lambda {plateau_start_lambda:.2f}\n"
-                )
+            handle.write(
+                f"{nstates}state fit_window_start_fallback_uncorrelated_successes "
+                f"{artifact.fit_window_start_fallback_uncorrelated_successes}\n"
+            )
+            fit_window_start_lambda = artifact.fit_window_start_shrinkage_lambda
+            if fit_window_start_lambda is not None:
+                handle.write(f"{nstates}state fit_window_start_shrinkage_lambda {fit_window_start_lambda:.2f}\n")
             for idx in range(nstates):
                 handle.write(
-                    f"{nstates}state A{idx} {plateau_summary.params_mean[idx]:.10e} "
-                    f"{plateau_summary.params_err[idx]:.10e} "
-                    f"E{idx} {plateau_summary.params_mean[nstates + idx]:.10e} "
-                    f"{plateau_summary.params_err[nstates + idx]:.10e}\n"
+                    f"{nstates}state A{idx} {fit_window_parameter_summary.params_mean[idx]:.10e} "
+                    f"{fit_window_parameter_summary.params_err[idx]:.10e} "
+                    f"E{idx} {fit_window_parameter_summary.params_mean[nstates + idx]:.10e} "
+                    f"{fit_window_parameter_summary.params_err[nstates + idx]:.10e}\n"
                 )
     outputs.append(summary_path)
 
@@ -1862,7 +1432,7 @@ def run_single_dataset(spec: NStateFitInput, pz: int) -> list[Path]:
                     correlator_table=correlator_table,
                     meff_table=meff_table,
                     fit_table=artifact.fit_table_path,
-                    plateau_table=artifact.plateau_table_path,
+                    plateau_table=artifact.fit_window_table_path,
                     nstates=nstates,
                     model=spec.model,
                     title=title,
@@ -1882,7 +1452,7 @@ def run_single_dataset(spec: NStateFitInput, pz: int) -> list[Path]:
             meff_table=meff_table,
             fit_tables={nstates: state_artifacts[nstates].fit_table_path for nstates in sorted(state_artifacts)},
             plateau_tables={
-                nstates: state_artifacts[nstates].plateau_table_path for nstates in sorted(state_artifacts)
+                nstates: state_artifacts[nstates].fit_window_table_path for nstates in sorted(state_artifacts)
             },
             model=spec.model,
             title=title,

@@ -78,16 +78,12 @@ class NotebookWorkflowTests(unittest.TestCase):
             "bootstrap_size": 16,
             "seed": 2026,
             "fit_window": {0: [3, 6]},
-            "tmax_scan_radius": 1,
             "qtmdwf_h5": "/tmp/qtmdwf_pz*.h5",
             "dataset_path_template": "{gm}/{eta}/pz{pz}/{Tdir}/bT{bT}/bz{bz}",
             "two_point_plateau_table": "/tmp/plateau_pz*.txt",
             "c2pt": "/tmp/c2pt.csv",
             "fold_t": "periodic",
             "tsrange": [0, 20],
-            "decay_constant": [0.1, 0.02],
-            "min_fit_dof": 2,
-            "auto_search_shared_window_from_fit_window": True,
         }
         self.tmdwf_normalize_config = {
             "title_pattern": "demo_pz*",
@@ -222,10 +218,6 @@ class NotebookWorkflowTests(unittest.TestCase):
         self.assertIn("gmlist T5", text)
         self.assertIn("bTlist 0", text)
         self.assertIn("bzlist 0", text)
-        self.assertIn("decay_constant 0.1 0.02", text)
-        self.assertIn("min_fit_dof 2", text)
-        self.assertIn("tmax_scan_radius 1", text)
-        self.assertIn("auto_search_shared_window_from_fit_window true", text)
         match = re.search(r"fit_window (.+)", text)
         self.assertIsNotNone(match)
         override_path = Path(match.group(1).strip())

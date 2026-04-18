@@ -316,21 +316,6 @@ def summarize_tmdwf_fourier_samples(samples: np.ndarray) -> tuple[np.ndarray, np
     return mean, err, p16, p84
 
 
-def load_tmdwf_fourier_table(path: str | Path) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    header, rows = _parse_grouped_table(path)
-    index = {name: idx for idx, name in enumerate(header)}
-    required = {"x", "q_mean", "q_err", "q_p16", "q_p84"}
-    missing = required - index.keys()
-    if missing:
-        raise ValueError(f"TMDWF Fourier table is missing columns: {sorted(missing)}")
-    x = np.array([float(row[index["x"]]) for row in rows], dtype=float)
-    q_mean = np.array([float(row[index["q_mean"]]) for row in rows], dtype=float)
-    q_err = np.array([float(row[index["q_err"]]) for row in rows], dtype=float)
-    q_p16 = np.array([float(row[index["q_p16"]]) for row in rows], dtype=float)
-    q_p84 = np.array([float(row[index["q_p84"]]) for row in rows], dtype=float)
-    return x, q_mean, q_err, q_p16, q_p84
-
-
 def load_tmdwf_fourier_sample_table(path: str | Path) -> tuple[np.ndarray, np.ndarray]:
     header, rows = _parse_grouped_table(path)
     index = {name: idx for idx, name in enumerate(header)}

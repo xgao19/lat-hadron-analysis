@@ -101,20 +101,6 @@ def apply_tmdwf_preprocessing(values: np.ndarray, nt: int, gm: str) -> np.ndarra
     return processed
 
 
-def fold_antisymmetric_complex(values: np.ndarray, nt: int) -> np.ndarray:
-    correlators = np.asarray(values, dtype=np.complex128)
-    if correlators.ndim != 2 or correlators.shape[1] != nt:
-        raise ValueError("complex correlators must have shape (n_cfg, Nt)")
-    folded_extent = nt // 2 + 1
-    folded = correlators[:, :folded_extent].copy()
-    for t in range(1, folded_extent):
-        partner = (nt - t) % nt
-        if partner == t:
-            continue
-        folded[:, t] = 0.5 * (correlators[:, t] - correlators[:, partner])
-    return folded
-
-
 def fold_symmetric_complex(values: np.ndarray, nt: int) -> np.ndarray:
     correlators = np.asarray(values, dtype=np.complex128)
     if correlators.ndim != 2 or correlators.shape[1] != nt:

@@ -45,10 +45,6 @@ class TMDWFNStateInput:
     bootstrap_size: int | None
     seed: int
     fit_window: str
-    auto_search_shared_window_from_fit_window: bool
-    tmax_scan_radius: int
-    decay_constant: tuple[float, float] | None
-    min_fit_dof: int
     qtmdwf_h5: str
     dataset_path_template: str
     c2pt: str
@@ -67,31 +63,6 @@ class TMDWFFitResult:
     pvalue: float
     success: bool
     message: str
-
-
-@dataclass(frozen=True)
-class SharedWindowScanRow:
-    tmin: int
-    tmax: int
-    success: bool
-    chi2_dof: float
-    pvalue: float
-    m0_mean: float
-    m0_err: float
-    fit_dof: int
-
-
-@dataclass(frozen=True)
-class SharedWindowCandidate:
-    tmin: int
-    tmax: int
-    length: int
-    m0_mean: float
-    m0_err: float
-    chi2_dof: float
-    overlaps_decay_constant: bool
-    normalized_distance: float
-    local_roughness: float
 
 
 @dataclass(frozen=True)
@@ -116,15 +87,10 @@ class TMDWFOutputRecord:
     pz: int
     ns: int
     gm: str
-    shared_window_flag: int
-    reference_eta: str
-    reference_bT: int
-    reference_bz: int
-    plateau_tmax_used: int
-    two_point_plateau_table_resolved: str
+    fit_window_tmax_used: int
+    two_point_fit_table_resolved: str
     two_point_tmax_source: str
     two_point_tmax_inferred: str
-    fit_window_source: str
     tsrange_start: int
     tsrange_end: int
     ratio_samples: np.ndarray
@@ -135,11 +101,9 @@ class TMDWFRatioRecord:
     bz: int
     tmin: int
     tmax: int
-    shared_window_flag: int
-    two_point_plateau_table_resolved: str
+    two_point_fit_table_resolved: str
     two_point_tmax_source: str
     two_point_tmax_inferred: str
-    fit_window_source: str
     tsrange_start: int
     tsrange_end: int
     ratio_samples: np.ndarray
@@ -149,15 +113,6 @@ def parse_optional_int(value: str) -> int | None:
     if value.lower() == "auto":
         return None
     return int(value)
-
-
-def _parse_decay_constant(entries: dict[str, list[str]]) -> tuple[float, float] | None:
-    if "decay_constant" not in entries:
-        return None
-    tokens = entries["decay_constant"]
-    if len(tokens) < 2:
-        raise ValueError("decay_constant must provide: value error")
-    return float(tokens[0]), float(tokens[1])
 
 
 def _parse_int_list_or_range(entries: dict[str, list[str]], list_key: str, range_key: str) -> tuple[int, ...]:
@@ -226,13 +181,6 @@ def parse_tmdwf_fit_input(path: str | Path, results_dir: str | Path | None = Non
         raise ValueError("TMDWF nstates must contain only 1 and/or 2")
     for gm in entries["gmlist"]:
         normalize_tmdwf_operator(gm)
-    decay_constant = _parse_decay_constant(entries)
-    auto_search_shared_window_from_fit_window = parse_bool(
-        entries.get("auto_search_shared_window_from_fit_window", ["false"])[0]
-    )
-    if auto_search_shared_window_from_fit_window and decay_constant is None:
-        raise ValueError("decay_constant is required when auto_search_shared_window_from_fit_window is true")
-
     input_path = file_path.resolve()
     return TMDWFNStateInput(
         title_pattern=first_tokens[0],
@@ -253,10 +201,6 @@ def parse_tmdwf_fit_input(path: str | Path, results_dir: str | Path | None = Non
         bootstrap_size=parse_optional_int(entries.get("bootstrap_size", ["auto"])[0]),
         seed=int(entries.get("seed", ["2026"])[0]),
         fit_window=entries["fit_window"][0],
-        auto_search_shared_window_from_fit_window=auto_search_shared_window_from_fit_window,
-        tmax_scan_radius=max(0, int(entries.get("tmax_scan_radius", ["0"])[0])),
-        decay_constant=decay_constant,
-        min_fit_dof=int(entries.get("min_fit_dof", ["1"])[0]),
         qtmdwf_h5=entries["qtmdwf_h5"][0],
         dataset_path_template=entries["dataset_path_template"][0],
         c2pt=entries["c2pt"][0],
@@ -461,15 +405,11 @@ def _select_curve_component(values: np.ndarray, component: str) -> np.ndarray:
     raise ValueError("component must be real or imag")
 
 
-def _effective_shared_window_min_fit_dof(min_fit_dof: int) -> int:
-    return max(4, int(min_fit_dof))
-
-
 def _load_fit_window_table(
     path: str | Path,
 ) -> dict[tuple[str | None, int], tuple[int, int]]:
     file_path = Path(path)
-    overrides: dict[tuple[str | None, int], tuple[int, int]] = {}
+    fit_windows: dict[tuple[str | None, int], tuple[int, int]] = {}
     with file_path.open("r", encoding="utf-8") as handle:
         for line_number, line in enumerate(handle, start=1):
             stripped = line.strip()
@@ -496,142 +436,17 @@ def _load_fit_window_table(
                 raise ValueError(
                     f"invalid fit window at {file_path}:{line_number}; tmax must be >= tmin"
                 )
-            overrides[(gm, pz)] = (tmin, tmax)
-    return overrides
+            fit_windows[(gm, pz)] = (tmin, tmax)
+    return fit_windows
 
 
-def _resolve_fit_window_override(
-    overrides: dict[tuple[str | None, int], tuple[int, int]],
+def _resolve_fit_window(
+    fit_windows: dict[tuple[str | None, int], tuple[int, int]],
     *,
     gm: str,
     pz: int,
 ) -> tuple[int, int] | None:
-    return overrides.get((gm, pz), overrides.get((None, pz)))
-
-
-def scan_reference_tmin_rows(
-    ratio_samples: np.ndarray,
-    amplitudes: np.ndarray,
-    energies: np.ndarray,
-    *,
-    nt: int,
-    pz: int,
-    ns: int,
-    gm: str,
-    tmin_start: int,
-    tmax: int,
-    nstates: int,
-    min_fit_dof: int,
-    component: str = "real",
-    tmax_values: tuple[int, ...] | None = None,
-) -> tuple[SharedWindowScanRow, ...]:
-    rows: list[SharedWindowScanRow] = []
-    effective_min_fit_dof = _effective_shared_window_min_fit_dof(min_fit_dof)
-    candidate_tmax_values = tuple(sorted(set((tmax,) if tmax_values is None else tmax_values)))
-    for candidate_tmax in candidate_tmax_values:
-        if candidate_tmax < tmin_start:
-            continue
-        for tmin in range(tmin_start, candidate_tmax + 1):
-            n_points = candidate_tmax - tmin + 1
-            fit_dof = n_points - nstates
-            if fit_dof < effective_min_fit_dof:
-                continue
-            fit_result, sample_params = fit_tmdwf_component(
-                ratio_samples,
-                amplitudes,
-                energies,
-                nt,
-                pz,
-                ns,
-                gm,
-                tmin,
-                candidate_tmax,
-                component,
-            )
-            valid_m0 = sample_params[:, 0][np.isfinite(sample_params[:, 0])]
-            _, m0_err = robust_mean_and_error(valid_m0) if len(valid_m0) > 0 else (np.nan, np.nan)
-            rows.append(
-                SharedWindowScanRow(
-                    tmin=tmin,
-                    tmax=candidate_tmax,
-                    success=fit_result.success,
-                    chi2_dof=fit_result.chi2_dof,
-                    pvalue=fit_result.pvalue,
-                    m0_mean=float(fit_result.params[0]) if fit_result.params.size > 0 else np.nan,
-                    m0_err=float(m0_err),
-                    fit_dof=fit_dof,
-                )
-            )
-    return tuple(rows)
-
-
-def build_shared_window_candidates(
-    rows: tuple[SharedWindowScanRow, ...],
-    *,
-    decay_constant: tuple[float, float],
-) -> tuple[SharedWindowCandidate, ...]:
-    valid_rows = [row for row in rows if row.success and np.isfinite(row.chi2_dof) and np.isfinite(row.m0_mean)]
-    if not valid_rows:
-        return ()
-    target, target_err = decay_constant
-    row_lookup = {(row.tmin, row.tmax): row for row in valid_rows}
-    candidates: list[SharedWindowCandidate] = []
-    for row in valid_rows:
-        distance = abs(row.m0_mean - target) if np.isfinite(row.m0_mean) else np.nan
-        overlaps = bool(
-            np.isfinite(distance) and np.isfinite(target_err) and target_err >= 0.0 and distance <= target_err
-        )
-        normalized_distance = (
-            float(distance / target_err)
-            if np.isfinite(distance) and np.isfinite(target_err) and target_err > 0.0
-            else np.inf
-        )
-        neighbors: list[float] = []
-        for delta_tmin, delta_tmax in ((-1, 0), (1, 0), (0, -1), (0, 1)):
-            neighbor = row_lookup.get((row.tmin + delta_tmin, row.tmax + delta_tmax))
-            if neighbor is not None and np.isfinite(neighbor.m0_mean):
-                neighbors.append(abs(row.m0_mean - neighbor.m0_mean))
-        local_roughness = float(np.mean(neighbors)) if neighbors else 0.0
-        candidates.append(
-            SharedWindowCandidate(
-                tmin=row.tmin,
-                tmax=row.tmax,
-                length=row.tmax - row.tmin + 1,
-                m0_mean=row.m0_mean,
-                m0_err=row.m0_err,
-                chi2_dof=row.chi2_dof,
-                overlaps_decay_constant=overlaps,
-                normalized_distance=normalized_distance,
-                local_roughness=local_roughness,
-            )
-        )
-    return tuple(candidates)
-
-
-def select_best_shared_window(candidates: tuple[SharedWindowCandidate, ...]) -> SharedWindowCandidate:
-    if not candidates:
-        raise ValueError("no valid shared-window candidates are available")
-    overlapping = [candidate for candidate in candidates if candidate.overlaps_decay_constant]
-    if overlapping:
-        return min(
-            overlapping,
-            key=lambda candidate: (
-                candidate.local_roughness,
-                -candidate.length,
-                -candidate.tmin,
-                candidate.chi2_dof,
-            ),
-        )
-    return min(
-        candidates,
-        key=lambda candidate: (
-            candidate.normalized_distance,
-            candidate.local_roughness,
-            -candidate.length,
-            -candidate.tmin,
-            candidate.chi2_dof,
-        ),
-    )
+    return fit_windows.get((gm, pz), fit_windows.get((None, pz)))
 
 
 def sanitize_token(value: str) -> str:
@@ -640,70 +455,6 @@ def sanitize_token(value: str) -> str:
 
 def _component_list(fit_component: str) -> tuple[str, ...]:
     return ("real", "imag") if fit_component == "both" else (fit_component,)
-
-
-def _write_shared_window_summary(
-    output_root: Path,
-    stem: str,
-    nstates: int,
-    reference_dataset: str,
-    rows: tuple[SharedWindowScanRow, ...],
-    selected: SharedWindowCandidate,
-    decay_constant: tuple[float, float] | None = None,
-) -> Path:
-    output_root.mkdir(parents=True, exist_ok=True)
-    path = output_root / f"{stem}_{nstates}state_shared_window.txt"
-    with path.open("w", encoding="utf-8") as handle:
-        handle.write(f"reference_dataset {reference_dataset}\n")
-        handle.write("selection_basis reference_mean_fits_only\n")
-        if decay_constant is not None:
-            handle.write(f"decay_constant_target {decay_constant[0]:.10e}\n")
-            handle.write(f"decay_constant_error {decay_constant[1]:.10e}\n")
-            handle.write("decay_constant_source input\n")
-        handle.write(f"selected_tfit {selected.tmin} {selected.tmax}\n")
-        handle.write(f"selected_window_length {selected.length}\n")
-        handle.write(f"selected_window_m0_meanfit {selected.m0_mean:.10e}\n")
-        handle.write(f"selected_window_m0_error {selected.m0_err:.10e}\n")
-        handle.write(f"selected_window_chi2_dof {selected.chi2_dof:.10e}\n")
-        handle.write(f"selected_window_local_roughness {selected.local_roughness:.10e}\n")
-        handle.write(f"selected_window_overlaps_decay_constant {int(selected.overlaps_decay_constant)}\n")
-        handle.write(f"selected_window_normalized_distance {selected.normalized_distance:.10e}\n")
-        handle.write("candidate_rows\n")
-        handle.write("tmin tmax success chi2_dof pvalue m0_meanfit m0_err fit_dof\n")
-        for row in rows:
-            handle.write(
-                f"{row.tmin} {row.tmax} {int(row.success)} {row.chi2_dof:.10e} {row.pvalue:.10e} "
-                f"{row.m0_mean:.10e} {row.m0_err:.10e} {row.fit_dof}\n"
-            )
-    return path
-
-
-def _write_reference_window_overview(
-    output_root: Path,
-    stem: str,
-    nstates: int,
-    rows: list[tuple[int, str, int, int, float, float, str]],
-) -> Path:
-    output_root.mkdir(parents=True, exist_ok=True)
-    path = output_root / f"{stem}_{nstates}state_reference_windows.txt"
-    with path.open("w", encoding="utf-8") as handle:
-        handle.write("\t".join(["pz", "title", "tmin", "tmax", "m0_mean", "m0_err", "fit_window_source"]) + "\n")
-        for pz, title, tmin, tmax, m0_mean, m0_err, fit_window_source in sorted(rows, key=lambda item: item[0]):
-            handle.write(
-                "\t".join(
-                    [
-                        str(pz),
-                        title,
-                        str(tmin),
-                        str(tmax),
-                        f"{m0_mean:.10e}",
-                        f"{m0_err:.10e}",
-                        fit_window_source,
-                    ]
-                )
-                + "\n"
-            )
-    return path
 
 
 def _write_ratio_outputs(
@@ -720,9 +471,7 @@ def _write_ratio_outputs(
     with path.open("w", encoding="utf-8") as handle:
         handle.write(f"tsrange {metadata.tsrange_start} {metadata.tsrange_end}\n")
         handle.write(f"tfit {metadata.tmin} {metadata.tmax}\n")
-        handle.write(f"fit_window_source {metadata.fit_window_source}\n")
-        handle.write(f"shared_window_flag {metadata.shared_window_flag}\n")
-        handle.write(f"two_point_plateau_table_resolved {metadata.two_point_plateau_table_resolved}\n")
+        handle.write(f"two_point_fit_table_resolved {metadata.two_point_fit_table_resolved}\n")
         handle.write(f"two_point_tmax_source {metadata.two_point_tmax_source}\n")
         handle.write(f"two_point_tmax_inferred {metadata.two_point_tmax_inferred}\n")
         handle.write(
@@ -801,16 +550,9 @@ def _write_component_outputs(
             params_mean, params_err = summarize_parameter_samples(record.sample_params)
             handle.write(f"begin_bz {record.bz}\n")
             handle.write(f"tfit {record.tmin} {record.tmax}\n")
-            handle.write(f"fit_window_source {record.fit_window_source}\n")
-            handle.write(f"two_point_plateau_table_resolved {record.two_point_plateau_table_resolved}\n")
+            handle.write(f"two_point_fit_table_resolved {record.two_point_fit_table_resolved}\n")
             handle.write(f"two_point_tmax_source {record.two_point_tmax_source}\n")
             handle.write(f"two_point_tmax_inferred {record.two_point_tmax_inferred}\n")
-            if record.shared_window_flag:
-                handle.write(f"shared_tfit {record.tmin} {record.tmax}\n")
-                handle.write(
-                    f"shared_window_reference gm={record.gm} eta={record.reference_eta} pz={record.pz} "
-                    f"bT={record.reference_bT} bz={record.reference_bz}\n"
-                )
             handle.write(f"success_meanfit {int(record.fit_result.success)}\n")
             handle.write(f"chi2_dof {record.fit_result.chi2_dof:.10e}\n")
             handle.write(f"pvalue {record.fit_result.pvalue:.10e}\n")
@@ -819,11 +561,9 @@ def _write_component_outputs(
             handle.write(f"end_bz {record.bz}\n")
 
     with table_path.open("w", encoding="utf-8") as handle:
-        header = (
-            ["bz", "tmin", "tmax", "success_meanfit", "chi2_dof", "pvalue", "shared_window_flag", "reference_eta", "reference_bT", "reference_bz", "plateau_tmax_used"]
-            + [f"m{idx}_mean" for idx in range(nstates)]
-            + [f"m{idx}_err" for idx in range(nstates)]
-        )
+        header = ["bz", "tmin", "tmax", "success_meanfit", "chi2_dof", "pvalue", "fit_window_tmax_used"]
+        header += [f"m{idx}_mean" for idx in range(nstates)]
+        header += [f"m{idx}_err" for idx in range(nstates)]
         handle.write("\t".join(header) + "\n")
         for record in records:
             params_mean, params_err = summarize_parameter_samples(record.sample_params)
@@ -834,11 +574,7 @@ def _write_component_outputs(
                 str(int(record.fit_result.success)),
                 f"{record.fit_result.chi2_dof:.10e}",
                 f"{record.fit_result.pvalue:.10e}",
-                str(record.shared_window_flag),
-                record.reference_eta,
-                str(record.reference_bT),
-                str(record.reference_bz),
-                str(record.plateau_tmax_used),
+                str(record.fit_window_tmax_used),
                 *[f"{value:.10e}" for value in params_mean],
                 *[f"{value:.10e}" for value in params_err],
             ]
@@ -991,7 +727,6 @@ def run_tmdwf_nstate_fit(
     spec = parse_tmdwf_fit_input(input_file, results_dir=results_dir)
     outputs: list[Path] = []
     fit_windows = _load_fit_window_table(spec.fit_window)
-    reference_window_overview: dict[tuple[str, int], list[tuple[int, str, int, int, float, float, str]]] = {}
 
     for pz in spec.pzlist:
         title = expand_template(spec.title_pattern, pz=pz)
@@ -1031,9 +766,6 @@ def run_tmdwf_nstate_fit(
         for gm in spec.gmlist:
             qtmdwf_path = resolve_qtmdwf_h5_path(spec.qtmdwf_h5, pz=pz, gm=gm)
             with h5py.File(qtmdwf_path, "r") as qtmdwf_handle:
-                shared_windows: dict[int, tuple[int, int, str]] = {}
-                recorded_reference_windows: set[tuple[str, int, int]] = set()
-                reference_combo = (spec.etalist[0], 0, 0) if spec.etalist else None
                 for eta in spec.etalist:
                     eta_ratio_tables: dict[int, Path] = {}
                     eta_curve_tables: dict[int, dict[str, dict[int, Path]]] = {}
@@ -1067,145 +799,21 @@ def run_tmdwf_nstate_fit(
                             )
 
                             combo_stem = f"{title}_{sanitize_token(gm)}_{sanitize_token(eta)}_bT{bT}"
-                            fit_window = _resolve_fit_window_override(fit_windows, gm=gm, pz=pz)
+                            fit_window = _resolve_fit_window(fit_windows, gm=gm, pz=pz)
                             if fit_window is None:
                                 raise ValueError(f"missing fit_window entry for gm={gm}, pz={pz}")
+                            fit_tmin, fit_tmax = fit_window
                             for nstates in spec.nstates:
                                 plateau_path, inferred_tmax, effective_tmax, amplitudes, energies = plateau_cache[nstates]
-                                fit_tmin, fit_tmax = fit_window
-                                fit_window_source = (
-                                    "fit_window_auto_search"
-                                    if spec.auto_search_shared_window_from_fit_window
-                                    else "fit_window"
-                                )
-                                shared_window_flag = 0
-                                reference_eta_value = "none"
-                                reference_bT_value = -1
-                                reference_bz_value = -1
-                                if spec.auto_search_shared_window_from_fit_window:
-                                    if nstates not in shared_windows:
-                                        if 0 not in spec.bTlist or 0 not in spec.bzlist or not spec.etalist:
-                                            raise ValueError(
-                                                "auto_search_shared_window_from_fit_window requires a reference dataset with "
-                                                "bT=0, bz=0, and a non-empty etalist"
-                                            )
-                                        reference_eta = spec.etalist[0]
-                                        reference_dataset = (
-                                            f"gm={gm} eta={reference_eta} pz={pz} bT=0 bz=0"
-                                        )
-                                        if reference_combo == (eta, bT, bz):
-                                            reference_ratio_samples = ratio_samples
-                                        else:
-                                            reference_numerator = _load_tmdwf_correlator_from_handle(
-                                                qtmdwf_handle,
-                                                spec.dataset_path_template,
-                                                gm=gm,
-                                                eta=reference_eta,
-                                                pz=pz,
-                                                tdirs=spec.tdirlist,
-                                                bT=0,
-                                                bz=0,
-                                                nt=spec.nt,
-                                                ns=spec.ns,
-                                                file_label=qtmdwf_path,
-                                            )[:, t0 : t1 + 1]
-                                            reference_ratio_samples, _, _ = build_bootstrap_ratio_samples(
-                                                reference_numerator,
-                                                c2pt_selected,
-                                                binsize=spec.binsize,
-                                                bootstrap_samples=spec.bootstrap_samples,
-                                                bootstrap_size=spec.bootstrap_size,
-                                                seed=spec.seed,
-                                            )
-                                        rows = scan_reference_tmin_rows(
-                                            reference_ratio_samples,
-                                            amplitudes,
-                                            energies,
-                                            nt=spec.nt,
-                                            pz=pz,
-                                            ns=spec.ns,
-                                            gm=gm,
-                                            tmin_start=fit_tmin,
-                                            tmax=fit_tmax,
-                                            nstates=nstates,
-                                            min_fit_dof=spec.min_fit_dof,
-                                            component="real",
-                                            tmax_values=tuple(
-                                                candidate_tmax
-                                                for candidate_tmax in range(
-                                                    max(fit_tmin, fit_tmax - spec.tmax_scan_radius),
-                                                    min(t1, fit_tmax + spec.tmax_scan_radius) + 1,
-                                                )
-                                            ),
-                                        )
-                                        candidates = build_shared_window_candidates(
-                                            rows,
-                                            decay_constant=spec.decay_constant,
-                                        )
-                                        selected = select_best_shared_window(candidates)
-                                        reference_fit_result, reference_sample_params = fit_tmdwf_component(
-                                            reference_ratio_samples,
-                                            amplitudes,
-                                            energies,
-                                            spec.nt,
-                                            pz,
-                                            spec.ns,
-                                            gm,
-                                            selected.tmin,
-                                            selected.tmax,
-                                            "real",
-                                        )
-                                        reference_valid_m0 = reference_sample_params[:, 0][
-                                            np.isfinite(reference_sample_params[:, 0])
-                                        ]
-                                        reference_m0_mean, reference_m0_err = (
-                                            robust_mean_and_error(reference_valid_m0)
-                                            if len(reference_valid_m0) > 0
-                                            else (np.nan, np.nan)
-                                        )
-                                        outputs.append(
-                                            _write_shared_window_summary(
-                                                dataset_root,
-                                                f"{title}_{sanitize_token(gm)}",
-                                                nstates,
-                                                reference_dataset,
-                                                rows,
-                                                selected,
-                                                decay_constant=spec.decay_constant,
-                                            )
-                                        )
-                                        shared_windows[nstates] = (
-                                            selected.tmin,
-                                            selected.tmax,
-                                            reference_dataset,
-                                        )
-                                        reference_window_overview.setdefault((gm, nstates), []).append(
-                                            (
-                                                pz,
-                                                title,
-                                                selected.tmin,
-                                                selected.tmax,
-                                                float(reference_m0_mean),
-                                                float(reference_m0_err),
-                                                "fit_window_auto_search",
-                                            )
-                                        )
-                                    fit_tmin, fit_tmax, _ = shared_windows[nstates]
-                                    shared_window_flag = 1
-                                    reference_eta_value = spec.etalist[0]
-                                    reference_bT_value = 0
-                                    reference_bz_value = 0
                                 if nstates == primary_nstate:
                                     grouped_ratio_records.append(
                                         TMDWFRatioRecord(
                                             bz=bz,
                                             tmin=fit_tmin,
                                             tmax=fit_tmax,
-                                            shared_window_flag=shared_window_flag,
-                                            two_point_plateau_table_resolved=str(plateau_path),
+                                            two_point_fit_table_resolved=str(plateau_path),
                                             two_point_tmax_source="inferred",
                                             two_point_tmax_inferred="none" if inferred_tmax is None else str(inferred_tmax),
-                                            fit_window_source=fit_window_source,
                                             tsrange_start=t0,
                                             tsrange_end=t1,
                                             ratio_samples=ratio_samples,
@@ -1224,32 +832,8 @@ def run_tmdwf_nstate_fit(
                                         fit_tmax,
                                         component,
                                     )
-                                    reference_window_key = (gm, nstates, pz)
-                                    if (
-                                        component == "real"
-                                        and reference_combo == (eta, bT, bz)
-                                        and reference_window_key not in recorded_reference_windows
-                                    ):
-                                        valid_m0 = sample_params[:, 0][np.isfinite(sample_params[:, 0])]
-                                        reference_m0_mean, reference_m0_err = (
-                                            robust_mean_and_error(valid_m0)
-                                            if len(valid_m0) > 0
-                                            else (np.nan, np.nan)
-                                        )
-                                        reference_window_overview.setdefault((gm, nstates), []).append(
-                                            (
-                                                pz,
-                                                title,
-                                                fit_tmin,
-                                                fit_tmax,
-                                                float(reference_m0_mean),
-                                                float(reference_m0_err),
-                                                fit_window_source,
-                                            )
-                                        )
-                                        recorded_reference_windows.add(reference_window_key)
                                     grouped_records.setdefault((component, nstates), []).append(
-                                            TMDWFOutputRecord(
+                                        TMDWFOutputRecord(
                                             bz=bz,
                                             component=component,
                                             nstates=nstates,
@@ -1262,15 +846,10 @@ def run_tmdwf_nstate_fit(
                                             pz=pz,
                                             ns=spec.ns,
                                             gm=gm,
-                                            shared_window_flag=shared_window_flag,
-                                            reference_eta=reference_eta_value,
-                                            reference_bT=reference_bT_value,
-                                            reference_bz=reference_bz_value,
-                                            plateau_tmax_used=effective_tmax,
-                                            two_point_plateau_table_resolved=str(plateau_path),
+                                            fit_window_tmax_used=effective_tmax,
+                                            two_point_fit_table_resolved=str(plateau_path),
                                             two_point_tmax_source="inferred",
                                             two_point_tmax_inferred="none" if inferred_tmax is None else str(inferred_tmax),
-                                            fit_window_source=fit_window_source,
                                             tsrange_start=t0,
                                             tsrange_end=t1,
                                             ratio_samples=ratio_samples,
@@ -1340,13 +919,4 @@ def run_tmdwf_nstate_fit(
                             lattice_spacing_fm=spec.lattice_spacing_fm,
                         )
                     )
-    for (gm, nstates), rows in reference_window_overview.items():
-        outputs.append(
-            _write_reference_window_overview(
-                spec.results_dir,
-                f"{sanitize_token(spec.title_pattern)}_{sanitize_token(gm)}",
-                nstates,
-                rows,
-            )
-        )
     return outputs
