@@ -15,6 +15,7 @@ from .tmdwf.fourier import (
 )
 from .tmdwf.fit_nstate import parse_tmdwf_fit_input, run_tmdwf_nstate_fit
 from .tmdwf.normalize import parse_tmdwf_normalize_input, run_tmdwf_normalization
+from .two_point.effective_mass import parse_effective_mass_input, run_effective_mass_workflow
 from .two_point.fit_nstate import parse_nstate_fit_input, run_nstate_fit
 from .two_point.plotting import plot_nstate_outputs
 from .two_point.tgevp import parse_tgevp_input, run_ss_2pt_tgevp
@@ -65,6 +66,23 @@ NSTATE_INPUT_KEYS = {
     "results_dir",
 }
 NSTATE_RUN_KEYS = {"results_dir"}
+EFFECTIVE_MASS_INPUT_KEYS = {
+    "title_pattern",
+    "ns",
+    "nt",
+    "lattice_spacing_fm",
+    "c2pt",
+    "pzlist",
+    "fold_t",
+    "tsrange",
+    "model",
+    "binsize",
+    "bootstrap_samples",
+    "bootstrap_size",
+    "seed",
+    "results_dir",
+}
+EFFECTIVE_MASS_RUN_KEYS = {"results_dir"}
 TMDWF_INPUT_KEYS = {
     "title_pattern",
     "ns",
@@ -265,6 +283,37 @@ def render_nstate_fit_input_text(config: dict[str, Any]) -> str:
         "plot",
         "results_dir",
     ):
+        if optional_key in config and config[optional_key] is not None:
+            lines.append(f"{optional_key} {_as_scalar_string(config[optional_key])}")
+    return "\n".join(lines) + "\n"
+
+
+def render_effective_mass_input_text(config: dict[str, Any]) -> str:
+    config = _subset_config(config, EFFECTIVE_MASS_INPUT_KEYS)
+    required = [
+        "title_pattern",
+        "ns",
+        "nt",
+        "lattice_spacing_fm",
+        "c2pt",
+        "pzlist",
+        "fold_t",
+        "model",
+    ]
+    missing = [key for key in required if key not in config]
+    if missing:
+        raise ValueError(f"missing effective-mass notebook config keys: {missing}")
+
+    lines = [
+        f"{config['title_pattern']} {config['ns']} {config['nt']} {config['lattice_spacing_fm']}",
+        f"c2pt {_as_scalar_string(config['c2pt'])}",
+        f"pzlist {_as_scalar_string(config['pzlist'])}",
+        f"fold_t {_as_scalar_string(config['fold_t'])}",
+        f"model {_as_scalar_string(config['model'])}",
+    ]
+    if "tsrange" in config and config["tsrange"] is not None:
+        lines.append(f"tsrange {_as_scalar_string(config['tsrange'])}")
+    for optional_key in ("binsize", "bootstrap_samples", "bootstrap_size", "seed", "results_dir"):
         if optional_key in config and config[optional_key] is not None:
             lines.append(f"{optional_key} {_as_scalar_string(config[optional_key])}")
     return "\n".join(lines) + "\n"
@@ -601,6 +650,11 @@ def validate_nstate_notebook_config(config: dict[str, Any]):
     return parse_nstate_fit_input(input_path)
 
 
+def validate_effective_mass_notebook_config(config: dict[str, Any]):
+    input_path = _materialize_input_text(render_effective_mass_input_text(config), "input_effective_mass.txt")
+    return parse_effective_mass_input(input_path)
+
+
 def validate_tmdwf_notebook_config(config: dict[str, Any]):
     input_path = _materialize_input_text(render_tmdwf_fit_input_text(config), "input_tmdwf.txt")
     return parse_tmdwf_fit_input(input_path)
@@ -719,6 +773,19 @@ def run_nstate_fit_from_notebook(
     if run_config["results_dir"] is None:
         run_config["results_dir"] = _guess_notebook_dir()
     return run_nstate_fit(input_path, results_dir=run_config["results_dir"])
+
+
+def run_effective_mass_from_notebook(
+    config: dict[str, Any],
+    **overrides: Any,
+) -> list[Path]:
+    input_path = _materialize_input_text(render_effective_mass_input_text(config), "input_effective_mass.txt")
+    run_config = {"results_dir": None}
+    run_config.update(_subset_config(config, EFFECTIVE_MASS_RUN_KEYS))
+    run_config.update({key: value for key, value in overrides.items() if value is not None})
+    if run_config["results_dir"] is None:
+        run_config["results_dir"] = _guess_notebook_dir()
+    return run_effective_mass_workflow(input_path, results_dir=run_config["results_dir"])
 
 
 def run_tmdwf_fit_from_notebook(

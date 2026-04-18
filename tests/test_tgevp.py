@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 
 from lqcd_analysis.two_point.tgevp import parse_tgevp_input, run_ss_2pt_tgevp, solve_tgevp
-from lqcd_analysis.common.utils import apply_antiperiodic_fold
+from lqcd_analysis.common.utils import apply_fold_t
 
 
 class TGEVPTests(unittest.TestCase):
@@ -52,7 +52,7 @@ class TGEVPTests(unittest.TestCase):
 
     def test_antiperiodic_fold(self) -> None:
         data = np.array([[10.0, 7.0, 5.0, 4.0, 2.0, 1.0]])
-        folded = apply_antiperiodic_fold(data, 6)
+        folded = apply_fold_t(data, 6, "antiperiodic")
         expected = np.array([[10.0, 3.0, 1.5, 4.0]])
         self.assertTrue(np.allclose(folded, expected))
 

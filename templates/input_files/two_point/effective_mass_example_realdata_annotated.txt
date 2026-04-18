@@ -1,0 +1,21 @@
+# Two-point effective-mass workflow example
+#
+# This workflow is independent from the N-state fit workflow.
+# It reads correlators, applies the requested fold, bootstraps the data,
+# and writes an effective-mass table for each momentum.
+
+l64c64a076_m140_fit_k0_pz* 64 64 0.076
+c2pt /path/to/c2pt_k0_pz*_real.csv
+pzlist 0 5 6
+fold_t periodic
+tsrange 0 24
+model symmetric
+
+# Analysis controls
+binsize 1
+bootstrap_samples auto
+bootstrap_size auto
+seed 2026
+
+# Optional output override
+# results_dir /path/to/results_effective_mass

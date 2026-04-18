@@ -5,9 +5,9 @@ from pathlib import Path
 
 import numpy as np
 
-from .fit_nstate import _parse_int_list_or_range
 from .io import expand_template
 from .plotting import plot_tmdwf_m0_from_fit_tables
+from ..common.parsing import parse_int_list_or_range
 
 
 @dataclass(frozen=True)
@@ -83,8 +83,8 @@ def parse_tmdwf_normalize_input(
         pzlist=tuple(int(item) for item in entries["pzlist"]),
         gmlist=tuple(entries["gmlist"]),
         etalist=tuple(entries["etalist"]),
-        bTlist=_parse_int_list_or_range(entries, "bTlist", "bTrange"),
-        bzlist=_parse_int_list_or_range(entries, "bzlist", "bzrange"),
+        bTlist=parse_int_list_or_range(entries, "bTlist", "bTrange"),
+        bzlist=parse_int_list_or_range(entries, "bzlist", "bzrange"),
         component=component,
         nstates=int(entries["nstates"][0]),
         normalization_mode=normalization_mode,

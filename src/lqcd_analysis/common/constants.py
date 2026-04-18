@@ -1,0 +1,10 @@
+from __future__ import annotations
+
+HBAR_C_GEV_FM = 0.1973269804
+HBAR_C_MEV_FM = 197.3269804
+
+MIN_POSITIVE = 1e-12
+MIN_AMPLITUDE = 1e-16
+MIN_COVARIANCE_DIAGONAL = 1e-24
+
+SHRINKAGE_LAMBDAS: tuple[float, ...] = (0.05, 0.1, 0.2, 0.3, 0.5, 1.0)

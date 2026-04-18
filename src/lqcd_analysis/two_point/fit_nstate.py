@@ -8,16 +8,26 @@ import numpy as np
 from scipy.optimize import least_squares
 from scipy.stats import chi2
 
+from ..common.constants import (
+    MIN_AMPLITUDE,
+    MIN_COVARIANCE_DIAGONAL,
+    MIN_POSITIVE,
+    SHRINKAGE_LAMBDAS,
+)
 from .io import load_correlator_csv
 from .plotting import plot_nstate_outputs, write_nstate_plot_notebook
+from ..common.bootstrap import (
+    compute_bootstrap_covariance,
+    shrink_covariance_to_diagonal,
+)
+from ..common.parsing import load_fit_window_table, parse_bool, parse_fold_t, parse_optional_int, parse_tsrange
 from ..common.utils import (
     apply_fold_t,
     bin_correlators,
     bootstrap_correlator_means,
-    parse_bool,
-    parse_fold_t,
     robust_mean_and_error,
 )
+from .effective_mass import effective_mass_with_bootstrap
 
 
 @dataclass(frozen=True)
@@ -115,15 +125,6 @@ class ResidualModel:
     shrinkage_lambda: float | None = None
 
 
-SHRINKAGE_LAMBDAS: tuple[float, ...] = (0.05, 0.1, 0.2, 0.3, 0.5, 1.0)
-
-
-def _parse_tsrange(entries: dict[str, list[str]], nt: int) -> tuple[int, int]:
-    if "tsrange" in entries:
-        return int(entries["tsrange"][0]), int(entries["tsrange"][1])
-    return 0, max(0, nt // 2 - 1)
-
-
 def parse_nstate_fit_input(path: str | Path, results_dir: str | Path | None = None) -> NStateFitInput:
     file_path = Path(path)
     entries: dict[str, list[str]] = {}
@@ -174,7 +175,7 @@ def parse_nstate_fit_input(path: str | Path, results_dir: str | Path | None = No
         correlator_path_pattern=entries["c2pt"][0],
         pzlist=tuple(int(item) for item in entries["pzlist"]),
         fold_t=parse_fold_t(entries),
-        tsrange=_parse_tsrange(entries, int(first_tokens[2])),
+        tsrange=parse_tsrange(entries, int(first_tokens[2])),
         model=model,
         fit_mode=fit_mode,
         pz0_ground_energy=(
@@ -197,53 +198,12 @@ def parse_nstate_fit_input(path: str | Path, results_dir: str | Path | None = No
     )
 
 
-def _load_fit_window_table(
-    path: str | Path,
-) -> dict[int, tuple[int, int]]:
-    file_path = Path(path)
-    fit_windows: dict[int, tuple[int, int]] = {}
-    with file_path.open("r", encoding="utf-8") as handle:
-        for line_number, line in enumerate(handle, start=1):
-            stripped = line.strip()
-            if not stripped or stripped.startswith("#"):
-                continue
-            tokens = stripped.split()
-            if tokens[0].lower() == "pz":
-                continue
-            if len(tokens) < 3:
-                raise ValueError(
-                    f"invalid fit_window row at {file_path}:{line_number}; "
-                    "expected: pz tmin tmax"
-                )
-            pz = int(tokens[0])
-            tmin = int(tokens[1])
-            tmax = int(tokens[2])
-            if tmax < tmin:
-                raise ValueError(
-                    f"invalid fit window at {file_path}:{line_number}; tmax must be >= tmin"
-                )
-            fit_windows[pz] = (tmin, tmax)
-    return fit_windows
 
 
-def parse_optional_int(value: str) -> int | None:
-    if value.lower() == "auto":
-        return None
-    return int(value)
 
 
-def compute_bootstrap_covariance(bootstrap_means: np.ndarray) -> np.ndarray:
-    values = np.asarray(bootstrap_means, dtype=float)
-    if values.ndim != 2:
-        raise ValueError("bootstrap_means must be a 2D array")
-    covariance = np.cov(values, rowvar=False, ddof=1)
-    return np.atleast_2d(np.asarray(covariance, dtype=float))
 
 
-def shrink_covariance_to_diagonal(covariance: np.ndarray, shrinkage_lambda: float) -> np.ndarray:
-    covariance = np.atleast_2d(np.asarray(covariance, dtype=float))
-    diagonal = np.diag(np.diag(covariance))
-    return (1.0 - shrinkage_lambda) * covariance + shrinkage_lambda * diagonal
 
 
 def build_residual_model(
@@ -254,18 +214,18 @@ def build_residual_model(
 ) -> ResidualModel:
     sigma = np.asarray(sigma, dtype=float)
     if fit_mode == "uncorrelated":
-        return ResidualModel(fit_mode="uncorrelated", sigma=np.clip(sigma, 1e-12, None))
+        return ResidualModel(fit_mode="uncorrelated", sigma=np.clip(sigma, MIN_POSITIVE, None))
     if covariance is None:
         raise ValueError("covariance is required for correlated fitting")
     covariance = np.atleast_2d(np.asarray(covariance, dtype=float))
     if shrinkage_lambda != 0.0:
         covariance = shrink_covariance_to_diagonal(covariance, shrinkage_lambda)
     cholesky_factor = np.linalg.cholesky(covariance)
-    fallback_sigma = np.sqrt(np.clip(np.diag(covariance), 1e-24, None))
+    fallback_sigma = np.sqrt(np.clip(np.diag(covariance), MIN_COVARIANCE_DIAGONAL, None))
     return ResidualModel(
         fit_mode="correlated",
         cholesky_factor=cholesky_factor,
-        fallback_sigma=np.clip(fallback_sigma, 1e-12, None),
+        fallback_sigma=np.clip(fallback_sigma, MIN_POSITIVE, None),
         shrinkage_lambda=shrinkage_lambda,
     )
 
@@ -309,244 +269,14 @@ def evaluate_model(
     return np.sum(a * kernel, axis=1)
 
 
-def solve_cosh_effective_mass(
-    t: int,
-    ratio: float,
-    nt: int,
-    lower: float = 2e-5,
-    upper: float = 20.0,
-    tol: float = 1e-8,
-    max_iter: int = 256,
-) -> float:
-    """Solve the periodic cosh effective-mass equation by bisection.
-
-    We solve
-
-        ratio * cosh(m * (t + 1 - Nt/2)) - cosh(m * (t - Nt/2)) = 0
-
-    for m, where ratio = C(t) / C(t+1). This is more explicit than relying only
-    on a local arccosh identity and remains consistent with the periodic/cosh
-    fit model used elsewhere in the workflow.
-
-    If the ratio is invalid, the bracket is unsafe, or no root is found
-    robustly, the function returns np.nan.
-    """
-    if nt <= 0 or t < 0 or not np.isfinite(ratio) or ratio <= 0.0:
-        return np.nan
-    if lower <= 0.0 or upper <= lower:
-        return np.nan
-
-    center = 0.5 * nt
-
-    def f(mass: float) -> float:
-        return ratio * np.cosh(mass * (t + 1 - center)) - np.cosh(mass * (t - center))
-
-    f_lower = f(lower)
-    f_upper = f(upper)
-    if not np.isfinite(f_lower) or not np.isfinite(f_upper):
-        return np.nan
-    if f_lower == 0.0:
-        return float(lower)
-    if f_upper == 0.0:
-        return float(upper)
-    if f_lower * f_upper > 0.0:
-        return np.nan
-
-    lo = float(lower)
-    hi = float(upper)
-    flo = float(f_lower)
-    fhi = float(f_upper)
-    for _ in range(max_iter):
-        mid = 0.5 * (lo + hi)
-        fmid = f(mid)
-        if not np.isfinite(fmid):
-            return np.nan
-        if abs(fmid) < tol or 0.5 * (hi - lo) < tol:
-            return float(mid)
-        if flo * fmid <= 0.0:
-            hi = mid
-            fhi = fmid
-        else:
-            lo = mid
-            flo = fmid
-    return float(0.5 * (lo + hi)) if np.isfinite(flo) and np.isfinite(fhi) else np.nan
-
-
-def solve_antisymmetric_effective_mass(
-    t: int,
-    ratio: float,
-    nt: int,
-    lower: float = 2e-5,
-    upper: float = 20.0,
-    tol: float = 1e-8,
-    max_iter: int = 256,
-) -> float:
-    """Solve the antisymmetric/sinh effective-mass equation by bisection.
-
-    For an antisymmetric correlator with time dependence
-
-        C(t) ~ exp(-m t) - exp(-m (Nt - t))
-
-    the ratio R(t) = C(t) / C(t+1) satisfies
-
-        R(t) * sinh(m * (t + 1 - Nt/2)) - sinh(m * (t - Nt/2)) = 0.
-
-    This equation is distinct from the symmetric/cosh case and should not be
-    treated as a reuse of the symmetric local estimator. Failed solves and
-    invalid ratios return np.nan.
-    """
-    if nt <= 0 or t < 0 or not np.isfinite(ratio) or ratio <= 0.0:
-        return np.nan
-    if lower <= 0.0 or upper <= lower:
-        return np.nan
-
-    center = 0.5 * nt
-
-    def f(mass: float) -> float:
-        return ratio * np.sinh(mass * (t + 1 - center)) - np.sinh(mass * (t - center))
-
-    f_lower = f(lower)
-    f_upper = f(upper)
-    if not np.isfinite(f_lower) or not np.isfinite(f_upper):
-        return np.nan
-    if f_lower == 0.0:
-        return float(lower)
-    if f_upper == 0.0:
-        return float(upper)
-    if f_lower * f_upper > 0.0:
-        return np.nan
-
-    lo = float(lower)
-    hi = float(upper)
-    flo = float(f_lower)
-    fhi = float(f_upper)
-    for _ in range(max_iter):
-        mid = 0.5 * (lo + hi)
-        fmid = f(mid)
-        if not np.isfinite(fmid):
-            return np.nan
-        if abs(fmid) < tol or 0.5 * (hi - lo) < tol:
-            return float(mid)
-        if flo * fmid <= 0.0:
-            hi = mid
-            fhi = fmid
-        else:
-            lo = mid
-            flo = fmid
-    return float(0.5 * (lo + hi)) if np.isfinite(flo) and np.isfinite(fhi) else np.nan
-
-
-def compute_effective_mass_cosh_root(
-    values: np.ndarray,
-    nt: int,
-    lower: float = 2e-5,
-    upper: float = 20.0,
-    tol: float = 1e-8,
-) -> np.ndarray:
-    """Compute m_eff(t) from C(t)/C(t+1) for a periodic/cosh correlator.
-
-    The returned array has the same length as the input correlator. Entry `t`
-    stores the solution derived from the ratio `C(t) / C(t+1)`, so valid points
-    live on `t = 0, ..., len(values)-2`. The final entry is always `np.nan`.
-    Failed solves and invalid ratios also produce `np.nan`.
-    """
-    correlator = np.asarray(values, dtype=float)
-    output = np.full(len(correlator), np.nan, dtype=float)
-    if len(correlator) < 2:
-        return output
-
-    valid = (
-        np.isfinite(correlator[:-1])
-        & np.isfinite(correlator[1:])
-        & (correlator[:-1] != 0.0)
-        & (correlator[1:] != 0.0)
-    )
-    ratios = np.full(len(correlator) - 1, np.nan, dtype=float)
-    ratios[valid] = correlator[:-1][valid] / correlator[1:][valid]
-    for t, ratio in enumerate(ratios):
-        if np.isfinite(ratio):
-            output[t] = solve_cosh_effective_mass(t, float(ratio), nt, lower=lower, upper=upper, tol=tol)
-    return output
-
-
-def compute_effective_mass_antisymmetric_root(
-    values: np.ndarray,
-    nt: int,
-    lower: float = 2e-5,
-    upper: float = 20.0,
-    tol: float = 1e-8,
-) -> np.ndarray:
-    """Compute m_eff(t) from C(t)/C(t+1) for an antisymmetric/sinh correlator.
-
-    The returned array has the same length as the input correlator. Entry `t`
-    stores the solution derived from `C(t) / C(t+1)`, so valid points live on
-    `t = 0, ..., len(values)-2`. The final entry is always `np.nan`.
-    """
-    correlator = np.asarray(values, dtype=float)
-    output = np.full(len(correlator), np.nan, dtype=float)
-    if len(correlator) < 2:
-        return output
-
-    valid = (
-        np.isfinite(correlator[:-1])
-        & np.isfinite(correlator[1:])
-        & (correlator[:-1] != 0.0)
-        & (correlator[1:] != 0.0)
-    )
-    ratios = np.full(len(correlator) - 1, np.nan, dtype=float)
-    ratios[valid] = correlator[:-1][valid] / correlator[1:][valid]
-    for t, ratio in enumerate(ratios):
-        if np.isfinite(ratio):
-            output[t] = solve_antisymmetric_effective_mass(
-                t,
-                float(ratio),
-                nt,
-                lower=lower,
-                upper=upper,
-                tol=tol,
-            )
-    return output
-
-
-def effective_mass_single(correlator: np.ndarray, model: str, nt: int | None = None) -> np.ndarray:
-    values = np.asarray(correlator, dtype=float)
-    if model == "normal":
-        output = np.full(len(values) - 1, np.nan, dtype=float)
-        valid = (values[:-1] > 0.0) & (values[1:] > 0.0)
-        output[valid] = np.log(values[:-1][valid] / values[1:][valid])
-        return output
-
-    if model == "symmetric":
-        if nt is None:
-            raise ValueError("nt is required for symmetric effective-mass estimation")
-        return compute_effective_mass_cosh_root(values, nt)
-
-    if model == "antisymmetric":
-        if nt is None:
-            raise ValueError("nt is required for antisymmetric effective-mass estimation")
-        return compute_effective_mass_antisymmetric_root(values, nt)
-    raise ValueError(f"unsupported model for effective mass: {model}")
-
-
-def effective_mass_with_bootstrap(
-    bootstrap_means: np.ndarray,
-    model: str,
-    nt: int | None = None,
-) -> tuple[np.ndarray, np.ndarray]:
-    samples = np.array([effective_mass_single(sample, model, nt=nt) for sample in bootstrap_means])
-    mean = np.nanmean(samples, axis=0)
-    err = np.nanstd(samples, axis=0, ddof=1)
-    return mean, err
-
-
 def pack_fit_parameters(amplitudes: np.ndarray, energies: np.ndarray) -> np.ndarray:
-    amps = np.clip(np.asarray(amplitudes, dtype=float), 1e-16, None)
+    amps = np.clip(np.asarray(amplitudes, dtype=float), MIN_AMPLITUDE, None)
     en = np.asarray(energies, dtype=float)
-    ordered = np.maximum.accumulate(np.clip(en, 1e-12, None))
+    ordered = np.maximum.accumulate(np.clip(en, MIN_POSITIVE, None))
 
     theta = [*np.log(amps), np.log(ordered[0])]
     for idx in range(1, len(ordered)):
-        theta.append(np.log(max(ordered[idx] - ordered[idx - 1], 1e-12)))
+        theta.append(np.log(max(ordered[idx] - ordered[idx - 1], MIN_POSITIVE)))
     return np.array(theta, dtype=float)
 
 
@@ -569,13 +299,13 @@ def pack_fit_parameters_with_fixed_ground_energy(
     if fixed_ground_energy is None:
         return pack_fit_parameters(amplitudes, energies)
 
-    amps = np.clip(np.asarray(amplitudes, dtype=float), 1e-16, None)
-    ordered = np.maximum.accumulate(np.clip(np.asarray(energies, dtype=float), 1e-12, None))
-    ground_energy = max(float(fixed_ground_energy), 1e-12)
+    amps = np.clip(np.asarray(amplitudes, dtype=float), MIN_AMPLITUDE, None)
+    ordered = np.maximum.accumulate(np.clip(np.asarray(energies, dtype=float), MIN_POSITIVE, None))
+    ground_energy = max(float(fixed_ground_energy), MIN_POSITIVE)
     theta = [*np.log(amps)]
     previous_energy = ground_energy
     for idx in range(1, len(ordered)):
-        theta.append(np.log(max(ordered[idx] - previous_energy, 1e-12)))
+        theta.append(np.log(max(ordered[idx] - previous_energy, MIN_POSITIVE)))
         previous_energy = ordered[idx]
     return np.array(theta, dtype=float)
 
@@ -592,7 +322,7 @@ def unpack_fit_parameters_with_fixed_ground_energy(
     amps = np.exp(theta[:nstates])
     gap_parts = theta[nstates:]
     energies = np.empty(nstates, dtype=float)
-    energies[0] = max(float(fixed_ground_energy), 1e-12)
+    energies[0] = max(float(fixed_ground_energy), MIN_POSITIVE)
     previous_energy = energies[0]
     for idx in range(1, nstates):
         previous_energy = previous_energy + np.exp(gap_parts[idx - 1])
@@ -764,7 +494,7 @@ def fit_nstate_sample(
     if residual_model is not None and residual_model.fit_mode == "correlated" and covariance is not None:
         current_lambda = 0.0 if residual_model.shrinkage_lambda is None else residual_model.shrinkage_lambda
         for shrinkage_lambda in SHRINKAGE_LAMBDAS:
-            if shrinkage_lambda <= current_lambda + 1e-12:
+            if shrinkage_lambda <= current_lambda + MIN_POSITIVE:
                 continue
             try:
                 shrunk_model = build_residual_model(
@@ -787,7 +517,7 @@ def fit_nstate_sample(
                         f"correlated fit failed; retried with shrinkage_lambda={shrinkage_lambda:.2f}; "
                         f"{fallback_result.message}"
                     ),
-                    used_uncorrelated_fallback=abs(shrinkage_lambda - 1.0) < 1e-12,
+                    used_uncorrelated_fallback=abs(shrinkage_lambda - 1.0) < MIN_POSITIVE,
                 )
 
     return result
@@ -798,7 +528,7 @@ def build_fallback_fit_attempts(
     energies: np.ndarray,
     nstates: int,
 ) -> list[tuple[np.ndarray, np.ndarray]]:
-    base_amp = np.clip(np.asarray(amplitudes, dtype=float), 1e-16, None)
+    base_amp = np.clip(np.asarray(amplitudes, dtype=float), MIN_AMPLITUDE, None)
     base_energy = np.asarray(energies, dtype=float)
     amplitude_scales = [1.0, 0.5, 2.0]
     excited_scales = [1.0, 1.3, 1.6]
@@ -873,7 +603,7 @@ def compute_fit_window_parameter_summary(
         raise ValueError("fit window does not overlap any fit rows")
 
     nparams = len(fit_window_rows[0].params_mean)
-    row_errs = np.array([[max(value, 1e-12) for value in row.params_err] for row in fit_window_rows], dtype=float)
+    row_errs = np.array([[max(value, MIN_POSITIVE) for value in row.params_err] for row in fit_window_rows], dtype=float)
     weights = 1.0 / row_errs**2
 
     sample_count = max(sample_table.shape[0] for sample_table in sample_tables.values())
@@ -909,6 +639,153 @@ def compute_fit_window_parameter_summary(
     return FitWindowParameterSummary(params_mean=tuple(params_mean), params_err=tuple(params_err))
 
 
+def _prepare_fit_window_data(
+    mean_correlator: np.ndarray,
+    sigma: np.ndarray,
+    covariance: np.ndarray | None,
+    tmin: int,
+    tmax: int,
+    time_offset: int,
+) -> tuple[int, int, np.ndarray, np.ndarray, np.ndarray, np.ndarray | None]:
+    label_tmin = int(tmin + time_offset)
+    label_tmax = int(tmax + time_offset)
+    times = np.arange(label_tmin, label_tmax + 1)
+    data_mean = mean_correlator[tmin : tmax + 1]
+    sigma_slice = np.clip(sigma[tmin : tmax + 1], MIN_POSITIVE, None)
+    covariance_slice = None if covariance is None else covariance[tmin : tmax + 1, tmin : tmax + 1]
+    return label_tmin, label_tmax, times, data_mean, sigma_slice, covariance_slice
+
+
+def _build_window_residual_model(
+    fit_mode: str,
+    sigma_slice: np.ndarray,
+    covariance_slice: np.ndarray | None,
+    *,
+    label_tmin: int,
+    label_tmax: int,
+) -> tuple[ResidualModel, str | None]:
+    residual_model_note: str | None = None
+    if fit_mode == "correlated" and covariance_slice is not None:
+        residual_model, chosen_lambda = find_first_usable_correlated_residual_model(sigma_slice, covariance_slice)
+        if residual_model is None:
+            residual_model = build_residual_model("uncorrelated", sigma_slice)
+            residual_model_note = (
+                f"correlated window covariance setup failed for tmin={label_tmin}, tmax={label_tmax}; "
+                "no usable shrinkage_lambda found"
+            )
+            print(f"[nstate-fit] {residual_model_note}")
+        elif chosen_lambda is not None and chosen_lambda > 0.0:
+            residual_model_note = (
+                f"correlated window covariance setup used shrinkage_lambda={chosen_lambda:.2f} "
+                f"for tmin={label_tmin}, tmax={label_tmax}"
+            )
+            print(f"[nstate-fit] {residual_model_note}")
+        return residual_model, residual_model_note
+    return build_residual_model(fit_mode, sigma_slice, covariance_slice), residual_model_note
+
+
+def _run_mean_window_fit(
+    times: np.ndarray,
+    data_mean: np.ndarray,
+    sigma_slice: np.ndarray,
+    residual_model: ResidualModel,
+    previous_meanfit: FitResult | None,
+    initial_amplitudes: np.ndarray,
+    initial_energies: np.ndarray,
+    *,
+    nt: int,
+    model: str,
+    nstates: int,
+    priors: tuple[EnergyPrior, ...],
+    lambda_prior: float,
+    covariance_slice: np.ndarray | None,
+    fixed_ground_energy: float | None,
+) -> FitResult:
+    meanfit_amplitudes = initial_amplitudes
+    meanfit_energies = initial_energies
+    if previous_meanfit is not None and previous_meanfit.success and np.all(np.isfinite(previous_meanfit.params)):
+        meanfit_amplitudes = previous_meanfit.params[:nstates]
+        meanfit_energies = previous_meanfit.params[nstates:]
+    meanfit = fit_nstate_sample(
+        times,
+        data_mean,
+        sigma_slice if residual_model.sigma is None else residual_model.sigma,
+        nt,
+        model,
+        meanfit_amplitudes,
+        meanfit_energies,
+        nstates,
+        priors=priors,
+        lambda_prior=lambda_prior,
+        residual_model=residual_model,
+        covariance=covariance_slice,
+        fixed_ground_energy=fixed_ground_energy,
+    )
+    return meanfit
+
+
+def _run_sample_window_fits(
+    bootstrap_means: np.ndarray,
+    times: np.ndarray,
+    tmin: int,
+    tmax: int,
+    sigma_slice: np.ndarray,
+    residual_model: ResidualModel,
+    previous_sample_fits: list[FitResult | None],
+    meanfit: FitResult,
+    initial_amplitudes: np.ndarray,
+    initial_energies: np.ndarray,
+    *,
+    nt: int,
+    model: str,
+    nstates: int,
+    priors: tuple[EnergyPrior, ...],
+    lambda_prior: float,
+    covariance_slice: np.ndarray | None,
+    fixed_ground_energy: float | None,
+) -> tuple[np.ndarray, list[FitResult | None], list[np.ndarray], int]:
+    sample_rows = np.full((len(bootstrap_means), 5 + 2 * nstates), np.nan, dtype=float)
+    success_params: list[np.ndarray] = []
+    fallback_uncorrelated_successes = 0
+    next_previous_sample_fits = previous_sample_fits
+    for sample_id, sample in enumerate(bootstrap_means):
+        sample_amplitudes = meanfit.params[:nstates] if meanfit.success else initial_amplitudes
+        sample_energies = meanfit.params[nstates:] if meanfit.success else initial_energies
+        previous_sample = next_previous_sample_fits[sample_id]
+        if previous_sample is not None and previous_sample.success and np.all(np.isfinite(previous_sample.params)):
+            sample_amplitudes = previous_sample.params[:nstates]
+            sample_energies = previous_sample.params[nstates:]
+        fit_result = fit_nstate_sample(
+            times,
+            sample[tmin : tmax + 1],
+            sigma_slice if residual_model.sigma is None else residual_model.sigma,
+            nt,
+            model,
+            sample_amplitudes,
+            sample_energies,
+            nstates,
+            priors=priors,
+            lambda_prior=lambda_prior,
+            residual_model=residual_model,
+            covariance=covariance_slice,
+            fixed_ground_energy=fixed_ground_energy,
+        )
+        next_previous_sample_fits[sample_id] = (
+            fit_result if fit_result.success and np.all(np.isfinite(fit_result.params)) else None
+        )
+        sample_rows[sample_id, 0] = tmin
+        sample_rows[sample_id, 1] = sample_id
+        sample_rows[sample_id, 2] = 1.0 if fit_result.success else 0.0
+        sample_rows[sample_id, 3] = fit_result.chi2_dof
+        sample_rows[sample_id, 4] = fit_result.pvalue
+        sample_rows[sample_id, 5:] = fit_result.params
+        if fit_result.success and np.all(np.isfinite(fit_result.params)):
+            success_params.append(fit_result.params)
+            if fit_result.used_uncorrelated_fallback:
+                fallback_uncorrelated_successes += 1
+    return sample_rows, next_previous_sample_fits, success_params, fallback_uncorrelated_successes
+
+
 def run_sliding_fits(
     bootstrap_means: np.ndarray,
     sigma: np.ndarray,
@@ -934,53 +811,35 @@ def run_sliding_fits(
     previous_meanfit: FitResult | None = None
     previous_sample_fits: list[FitResult | None] = [None] * len(bootstrap_means)
     for tmin in tmin_values:
-        label_tmin = int(tmin + time_offset)
-        label_tmax = int(tmax + time_offset)
-        times = np.arange(label_tmin, label_tmax + 1)
-        data_mean = mean_correlator[tmin : tmax + 1]
-        sigma_slice = np.clip(sigma[tmin : tmax + 1], 1e-12, None)
-        residual_model_note: str | None = None
-        covariance_slice = None if covariance is None else covariance[tmin : tmax + 1, tmin : tmax + 1]
-        if fit_mode == "correlated" and covariance_slice is not None:
-            residual_model, chosen_lambda = find_first_usable_correlated_residual_model(sigma_slice, covariance_slice)
-            if residual_model is None:
-                residual_model = build_residual_model("uncorrelated", sigma_slice)
-                residual_model_note = (
-                    f"correlated window covariance setup failed for tmin={label_tmin}, tmax={label_tmax}; "
-                    "no usable shrinkage_lambda found"
-                )
-                print(f"[nstate-fit] {residual_model_note}")
-            elif chosen_lambda is not None and chosen_lambda > 0.0:
-                residual_model_note = (
-                    f"correlated window covariance setup used shrinkage_lambda={chosen_lambda:.2f} "
-                    f"for tmin={label_tmin}, tmax={label_tmax}"
-                )
-                print(f"[nstate-fit] {residual_model_note}")
-        else:
-            residual_model = build_residual_model(fit_mode, sigma_slice, covariance_slice)
-
-        meanfit_amplitudes = initial_amplitudes
-        meanfit_energies = initial_energies
-        if (
-            previous_meanfit is not None
-            and previous_meanfit.success
-            and np.all(np.isfinite(previous_meanfit.params))
-        ):
-            meanfit_amplitudes = previous_meanfit.params[:nstates]
-            meanfit_energies = previous_meanfit.params[nstates:]
-        meanfit = fit_nstate_sample(
+        label_tmin, label_tmax, times, data_mean, sigma_slice, covariance_slice = _prepare_fit_window_data(
+            mean_correlator,
+            sigma,
+            covariance,
+            tmin,
+            tmax,
+            time_offset,
+        )
+        residual_model, residual_model_note = _build_window_residual_model(
+            fit_mode,
+            sigma_slice,
+            covariance_slice,
+            label_tmin=label_tmin,
+            label_tmax=label_tmax,
+        )
+        meanfit = _run_mean_window_fit(
             times,
             data_mean,
-            sigma_slice if residual_model.sigma is None else residual_model.sigma,
-            nt,
-            model,
-            meanfit_amplitudes,
-            meanfit_energies,
-            nstates,
+            sigma_slice,
+            residual_model,
+            previous_meanfit,
+            initial_amplitudes,
+            initial_energies,
+            nt=nt,
+            model=model,
+            nstates=nstates,
             priors=priors,
             lambda_prior=lambda_prior,
-            residual_model=residual_model,
-            covariance=covariance_slice,
+            covariance_slice=covariance_slice,
             fixed_ground_energy=fixed_ground_energy,
         )
         if residual_model_note is not None and not meanfit.success:
@@ -995,44 +854,25 @@ def run_sliding_fits(
         meanfit_results[label_tmin] = meanfit
         previous_meanfit = meanfit if meanfit.success and np.all(np.isfinite(meanfit.params)) else None
 
-        sample_rows = np.full((len(bootstrap_means), 5 + 2 * nstates), np.nan, dtype=float)
-        success_params: list[np.ndarray] = []
-        fallback_uncorrelated_successes = 0
-        for sample_id, sample in enumerate(bootstrap_means):
-            sample_amplitudes = meanfit.params[:nstates] if meanfit.success else initial_amplitudes
-            sample_energies = meanfit.params[nstates:] if meanfit.success else initial_energies
-            previous_sample = previous_sample_fits[sample_id]
-            if previous_sample is not None and previous_sample.success and np.all(np.isfinite(previous_sample.params)):
-                sample_amplitudes = previous_sample.params[:nstates]
-                sample_energies = previous_sample.params[nstates:]
-            fit_result = fit_nstate_sample(
-                times,
-                sample[tmin : tmax + 1],
-                sigma_slice if residual_model.sigma is None else residual_model.sigma,
-                nt,
-                model,
-                sample_amplitudes,
-                sample_energies,
-                nstates,
-                priors=priors,
-                lambda_prior=lambda_prior,
-                residual_model=residual_model,
-                covariance=covariance_slice,
-                fixed_ground_energy=fixed_ground_energy,
-            )
-            previous_sample_fits[sample_id] = (
-                fit_result if fit_result.success and np.all(np.isfinite(fit_result.params)) else None
-            )
-            sample_rows[sample_id, 0] = label_tmin
-            sample_rows[sample_id, 1] = sample_id
-            sample_rows[sample_id, 2] = 1.0 if fit_result.success else 0.0
-            sample_rows[sample_id, 3] = fit_result.chi2_dof
-            sample_rows[sample_id, 4] = fit_result.pvalue
-            sample_rows[sample_id, 5:] = fit_result.params
-            if fit_result.success and np.all(np.isfinite(fit_result.params)):
-                success_params.append(fit_result.params)
-                if fit_result.used_uncorrelated_fallback:
-                    fallback_uncorrelated_successes += 1
+        sample_rows, previous_sample_fits, success_params, fallback_uncorrelated_successes = _run_sample_window_fits(
+            bootstrap_means,
+            times,
+            tmin,
+            tmax,
+            sigma_slice,
+            residual_model,
+            previous_sample_fits,
+            meanfit,
+            initial_amplitudes,
+            initial_energies,
+            nt=nt,
+            model=model,
+            nstates=nstates,
+            priors=priors,
+            lambda_prior=lambda_prior,
+            covariance_slice=covariance_slice,
+            fixed_ground_energy=fixed_ground_energy,
+        )
 
         sample_tables[tmin] = sample_rows
         if success_params:
@@ -1174,7 +1014,6 @@ def _write_state_outputs(
     fit_window_summary: FitWindowSummary,
     fit_window_parameter_summary: FitWindowParameterSummary,
     meanfit_results: dict[int, FitResult],
-    outputs: list[Path],
 ) -> StateArtifacts:
     fit_window_start_row = next(row for row in rows if row.tmin == fit_window_summary.start_tmin)
     fit_window_start_shrinkage_lambda = extract_shrinkage_lambda_from_message(
@@ -1189,7 +1028,6 @@ def _write_state_outputs(
         header=header_for_fit_rows(nstates),
         fmt="%.10e",
     )
-    outputs.append(table_path)
 
     fit_window_table = np.array(
         [[*fit_window_parameter_summary.params_mean, *fit_window_parameter_summary.params_err]],
@@ -1206,7 +1044,6 @@ def _write_state_outputs(
         ),
         fmt="%.10e",
     )
-    outputs.append(fit_window_table_path)
 
     np.savetxt(
         sample_path,
@@ -1216,7 +1053,6 @@ def _write_state_outputs(
         ),
         fmt="%.10e",
     )
-    outputs.append(sample_path)
 
     return StateArtifacts(
         nstates=nstates,
@@ -1229,7 +1065,29 @@ def _write_state_outputs(
     )
 
 
-def run_single_dataset(spec: NStateFitInput, pz: int) -> list[Path]:
+@dataclass(frozen=True)
+class _PreparedDataset:
+    title: str
+    fit_window: tuple[int, int]
+    time_offset: int
+    selected: np.ndarray
+    bootstrap_means: np.ndarray
+    sigma: np.ndarray
+    covariance: np.ndarray | None
+    meff_mean: np.ndarray
+    meff_err: np.ndarray
+    fit_tmax_output: int
+    dataset_dir: Path
+    tables_dir: Path
+    plots_dir: Path
+    samples_dir: Path
+    correlator_table: Path
+    meff_table: Path
+    window_global_tmin: int
+    window_global_tmax: int
+
+
+def _load_and_preprocess_correlators(spec: NStateFitInput, pz: int) -> _PreparedDataset:
     title = spec.title_pattern.replace("*", str(pz))
     csv_path = spec.correlator_path_pattern.replace("*", str(pz))
     _, correlators = load_correlator_csv(csv_path)
@@ -1239,8 +1097,8 @@ def run_single_dataset(spec: NStateFitInput, pz: int) -> list[Path]:
     processed = apply_fold_t(correlators, spec.nt, spec.fold_t)
     full_t0, full_t1 = spec.tsrange
     processed = processed[:, full_t0 : full_t1 + 1]
-    fit_windows = _load_fit_window_table(spec.fit_window)
-    fit_window = fit_windows.get(pz)
+    fit_windows = load_fit_window_table(spec.fit_window)
+    fit_window = fit_windows.get((None, pz))
     if fit_window is None:
         raise ValueError(f"missing fit_window entry for pz={pz}")
     fit_start, fit_end = fit_window
@@ -1258,11 +1116,10 @@ def run_single_dataset(spec: NStateFitInput, pz: int) -> list[Path]:
         seed=spec.seed,
     )
     sigma = np.nanstd(bootstrap_means, axis=0, ddof=1)
-    sigma = np.where(np.isfinite(sigma) & (sigma > 0.0), sigma, 1e-12)
+    sigma = np.where(np.isfinite(sigma) & (sigma > 0.0), sigma, MIN_POSITIVE)
     covariance = compute_bootstrap_covariance(bootstrap_means) if spec.fit_mode == "correlated" else None
 
     meff_mean, meff_err = effective_mass_with_bootstrap(bootstrap_means, spec.model, nt=spec.nt)
-    window_global_tmin, window_global_tmax = fit_window
     fit_tmax_local = selected.shape[1] - 1
     fit_tmax_output = fit_tmax_local + time_offset
 
@@ -1273,30 +1130,53 @@ def run_single_dataset(spec: NStateFitInput, pz: int) -> list[Path]:
     for directory in (tables_dir, plots_dir, samples_dir):
         directory.mkdir(parents=True, exist_ok=True)
 
-    outputs: list[Path] = []
     correlator_table = tables_dir / f"{title}_{spec.model}_correlator_mean.txt"
-    np.savetxt(
-        correlator_table,
-        np.column_stack([np.arange(time_offset, time_offset + selected.shape[1]), np.mean(bootstrap_means, axis=0), sigma]),
-        header="t corr_mean corr_err",
-        fmt="%.10e",
-    )
-    outputs.append(correlator_table)
     meff_table = tables_dir / f"{title}_{spec.model}_effective_mass_tmax{fit_tmax_output}.txt"
-    np.savetxt(
-        meff_table,
-        np.column_stack([np.arange(time_offset, time_offset + len(meff_mean)), meff_mean, meff_err]),
-        header="t meff_mean meff_err",
-        fmt="%.10e",
+    return _PreparedDataset(
+        title=title,
+        fit_window=fit_window,
+        time_offset=time_offset,
+        selected=selected,
+        bootstrap_means=bootstrap_means,
+        sigma=sigma,
+        covariance=covariance,
+        meff_mean=meff_mean,
+        meff_err=meff_err,
+        fit_tmax_output=fit_tmax_output,
+        dataset_dir=dataset_dir,
+        tables_dir=tables_dir,
+        plots_dir=plots_dir,
+        samples_dir=samples_dir,
+        correlator_table=correlator_table,
+        meff_table=meff_table,
+        window_global_tmin=fit_start,
+        window_global_tmax=fit_end,
     )
-    outputs.append(meff_table)
 
-    one_state_energy_guess = np.nanmedian(meff_mean[np.isfinite(meff_mean) & (np.arange(len(meff_mean)) >= 2)])
-    if not np.isfinite(one_state_energy_guess):
-        one_state_energy_guess = 0.5
-    one_state_amplitude_guess = max(bootstrap_means.mean(axis=0)[2] * np.exp(one_state_energy_guess * 2), 1e-12)
-    current_guess = (np.array([one_state_amplitude_guess]), np.array([one_state_energy_guess]))
 
+def _initialize_fit_guesses(
+    bootstrap_means: np.ndarray,
+    fixed_ground_energy: float | None,
+) -> tuple[np.ndarray, np.ndarray]:
+    one_state_energy_guess = 0.1 if fixed_ground_energy is None else float(fixed_ground_energy)
+    sample_index = 2 if bootstrap_means.shape[1] > 2 else max(0, bootstrap_means.shape[1] - 1)
+    one_state_amplitude_guess = max(
+        bootstrap_means.mean(axis=0)[sample_index] * np.exp(one_state_energy_guess * sample_index),
+        MIN_POSITIVE,
+    )
+    return (
+        np.array([one_state_amplitude_guess]),
+        np.array([one_state_energy_guess]),
+    )
+
+
+def _run_state_fits(
+    spec: NStateFitInput,
+    pz: int,
+    dataset: _PreparedDataset,
+    initial_guess: tuple[np.ndarray, np.ndarray],
+) -> dict[int, StateArtifacts]:
+    current_guess = initial_guess
     state_artifacts: dict[int, StateArtifacts] = {}
 
     def compute_state(nstates: int) -> None:
@@ -1307,7 +1187,7 @@ def run_single_dataset(spec: NStateFitInput, pz: int) -> list[Path]:
         if nstates == 1:
             tmin_start = 0
             tmin_stop = 1
-            initial_guess = current_guess
+            state_initial_guess = current_guess
             priors: tuple[EnergyPrior, ...] = ()
         else:
             previous_state = nstates - 1
@@ -1318,42 +1198,37 @@ def run_single_dataset(spec: NStateFitInput, pz: int) -> list[Path]:
 
             tmin_start = 0
             tmin_stop = 1
-            initial_guess = build_initial_guess_from_fit_window(previous_artifact.fit_window_summary, nstates)
+            state_initial_guess = build_initial_guess_from_fit_window(previous_artifact.fit_window_summary, nstates)
             priors = build_energy_priors_from_fit_window_summary(
                 previous_artifact.fit_window_parameter_summary,
                 nstates,
             )
-            current_guess = initial_guess
+            current_guess = state_initial_guess
 
         fixed_ground_energy = None
         if spec.fix_ground_energy_from_dispersion and spec.pz0_ground_energy is not None:
             fixed_ground_energy = target_ground_energy_from_pz0(spec.pz0_ground_energy, pz, spec.ns)
-            if initial_guess[1].size > 0:
-                fixed_energies = np.asarray(initial_guess[1], dtype=float).copy()
+            if state_initial_guess[1].size > 0:
+                fixed_energies = np.asarray(state_initial_guess[1], dtype=float).copy()
                 fixed_energies[0] = fixed_ground_energy
-                initial_guess = (np.asarray(initial_guess[0], dtype=float), fixed_energies)
+                state_initial_guess = (np.asarray(state_initial_guess[0], dtype=float), fixed_energies)
 
-        tmin_values = range(tmin_start, tmin_stop)
-        sliding_fit_kwargs = dict(
-            covariance=covariance,
-            priors=priors,
-            lambda_prior=spec.lambda_prior,
-            fixed_ground_energy=fixed_ground_energy,
-        )
-        if time_offset != 0:
-            sliding_fit_kwargs["time_offset"] = time_offset
         rows, sample_tables, meanfit_results = run_sliding_fits(
-            bootstrap_means,
-            sigma,
+            dataset.bootstrap_means,
+            dataset.sigma,
             spec.fit_mode,
             spec.nt,
             spec.model,
             nstates,
-            tmin_values,
-            fit_tmax_local,
-            initial_guess[0],
-            initial_guess[1],
-            **sliding_fit_kwargs,
+            range(tmin_start, tmin_stop),
+            dataset.selected.shape[1] - 1,
+            state_initial_guess[0],
+            state_initial_guess[1],
+            covariance=dataset.covariance,
+            priors=priors,
+            lambda_prior=spec.lambda_prior,
+            fixed_ground_energy=fixed_ground_energy,
+            time_offset=dataset.time_offset,
         )
         representative_row = rows[0] if rows else None
         if representative_row is None:
@@ -1371,27 +1246,56 @@ def run_single_dataset(spec: NStateFitInput, pz: int) -> list[Path]:
         )
         state_artifacts[nstates] = _write_state_outputs(
             spec=spec,
-            title=title,
-            tmax=fit_tmax_output,
+            title=dataset.title,
+            tmax=dataset.fit_tmax_output,
             nstates=nstates,
             rows=rows,
             sample_tables=sample_tables,
             fit_window_summary=fit_window_summary,
             fit_window_parameter_summary=fit_window_parameter_summary,
             meanfit_results=meanfit_results,
-            outputs=outputs,
         )
 
     for nstates in spec.nstates:
         compute_state(nstates)
+    return state_artifacts
 
-    summary_path = dataset_dir / f"{title}_{spec.model}_summary.txt"
+
+def _write_dataset_outputs(
+    spec: NStateFitInput,
+    pz: int,
+    dataset: _PreparedDataset,
+    state_artifacts: dict[int, StateArtifacts],
+) -> list[Path]:
+    outputs: list[Path] = []
+    np.savetxt(
+        dataset.correlator_table,
+        np.column_stack(
+            [
+                np.arange(dataset.time_offset, dataset.time_offset + dataset.selected.shape[1]),
+                np.mean(dataset.bootstrap_means, axis=0),
+                dataset.sigma,
+            ]
+        ),
+        header="t corr_mean corr_err",
+        fmt="%.10e",
+    )
+    outputs.append(dataset.correlator_table)
+    np.savetxt(
+        dataset.meff_table,
+        np.column_stack([np.arange(dataset.time_offset, dataset.time_offset + len(dataset.meff_mean)), dataset.meff_mean, dataset.meff_err]),
+        header="t meff_mean meff_err",
+        fmt="%.10e",
+    )
+    outputs.append(dataset.meff_table)
+
+    summary_path = dataset.dataset_dir / f"{dataset.title}_{spec.model}_summary.txt"
     with summary_path.open("w", encoding="utf-8") as handle:
-        handle.write(f"title {title}\n")
+        handle.write(f"title {dataset.title}\n")
         handle.write(f"model {spec.model}\n")
         handle.write(f"fit_mode {spec.fit_mode}\n")
-        handle.write(f"tmax {fit_tmax_output}\n")
-        handle.write(f"fit_window {window_global_tmin} {window_global_tmax}\n")
+        handle.write(f"tmax {dataset.fit_tmax_output}\n")
+        handle.write(f"fit_window {dataset.window_global_tmin} {dataset.window_global_tmax}\n")
         if spec.pz0_ground_energy is not None:
             handle.write(f"pz0_ground_energy {spec.pz0_ground_energy:.10e}\n")
             handle.write(
@@ -1428,39 +1332,49 @@ def run_single_dataset(spec: NStateFitInput, pz: int) -> list[Path]:
             artifact = state_artifacts[nstates]
             outputs.extend(
                 plot_nstate_outputs(
-                    output_dir=plots_dir,
-                    correlator_table=correlator_table,
-                    meff_table=meff_table,
+                    output_dir=dataset.plots_dir,
+                    correlator_table=dataset.correlator_table,
+                    meff_table=dataset.meff_table,
                     fit_table=artifact.fit_table_path,
                     plateau_table=artifact.fit_window_table_path,
                     nstates=nstates,
                     model=spec.model,
-                    title=title,
+                    title=dataset.title,
                     nt=spec.nt,
                     lattice_spacing_fm=spec.lattice_spacing_fm,
                 )
             )
 
-    notebook_root = spec.results_dir / "notebook_plots" / title
+    notebook_root = spec.results_dir / "notebook_plots" / dataset.title
     notebook_generated = notebook_root / "generated_plots"
-    notebook_path = notebook_root / f"{title}_{spec.model}_nstate_plots.ipynb"
+    notebook_path = notebook_root / f"{dataset.title}_{spec.model}_nstate_plots.ipynb"
     outputs.append(
         write_nstate_plot_notebook(
             notebook_path=notebook_path,
             notebook_output_dir=notebook_generated,
-            correlator_table=correlator_table,
-            meff_table=meff_table,
+            correlator_table=dataset.correlator_table,
+            meff_table=dataset.meff_table,
             fit_tables={nstates: state_artifacts[nstates].fit_table_path for nstates in sorted(state_artifacts)},
             plateau_tables={
                 nstates: state_artifacts[nstates].fit_window_table_path for nstates in sorted(state_artifacts)
             },
             model=spec.model,
-            title=title,
+            title=dataset.title,
             nt=spec.nt,
             lattice_spacing_fm=spec.lattice_spacing_fm,
         )
     )
     return outputs
+
+
+def run_single_dataset(spec: NStateFitInput, pz: int) -> list[Path]:
+    dataset = _load_and_preprocess_correlators(spec, pz)
+    fixed_ground_energy = None
+    if spec.fix_ground_energy_from_dispersion and spec.pz0_ground_energy is not None:
+        fixed_ground_energy = target_ground_energy_from_pz0(spec.pz0_ground_energy, pz, spec.ns)
+    initial_guess = _initialize_fit_guesses(dataset.bootstrap_means, fixed_ground_energy)
+    state_artifacts = _run_state_fits(spec, pz, dataset, initial_guess)
+    return _write_dataset_outputs(spec, pz, dataset, state_artifacts)
 
 
 def run_nstate_fit(

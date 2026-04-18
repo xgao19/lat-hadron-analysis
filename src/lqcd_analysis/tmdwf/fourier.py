@@ -6,8 +6,8 @@ from pathlib import Path
 import numpy as np
 from scipy.interpolate import interp1d
 
-from .fit_nstate import _parse_int_list_or_range
 from .io import expand_template
+from ..common.parsing import parse_int_list_or_range
 from ..two_point.plotting import prepare_matplotlib, save_plot_status
 
 DEFAULT_X_VALUES = np.linspace(-0.5, 1.5, 201)
@@ -112,7 +112,7 @@ def parse_tmdwf_fourier_input(
         pzlist=tuple(int(item) for item in entries["pzlist"]),
         gmlist=tuple(entries["gmlist"]),
         etalist=tuple(entries["etalist"]),
-        bTlist=_parse_int_list_or_range(entries, "bTlist", "bTrange"),
+        bTlist=parse_int_list_or_range(entries, "bTlist", "bTrange"),
         component=component,
         nstates=int(entries["nstates"][0]),
         normalization_mode=normalization_mode,

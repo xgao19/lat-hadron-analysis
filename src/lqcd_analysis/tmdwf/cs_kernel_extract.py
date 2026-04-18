@@ -14,9 +14,9 @@ from .cs_kernel_matching import (
     perturbative_order_from_label,
 )
 from .fourier import load_tmdwf_fourier_sample_table, resolve_tmdwf_fourier_output_paths
-from .fit_nstate import _parse_int_list_or_range
 from .io import expand_template
 from .plotting import CSKernelBreakdownSeries, plot_tmdwf_cs_kernel_adjacent_breakdown, plot_tmdwf_cs_kernel_band
+from ..common.parsing import parse_int_list_or_range
 
 
 @dataclass(frozen=True)
@@ -132,8 +132,8 @@ def parse_tmdwf_cs_kernel_input(
         extraction_type=extraction_type,
         pair_mode=pair_mode,
         kernel_labels=tuple(kernel_tokens),
-        bTlist=_parse_int_list_or_range(entries, "bTlist", "bTrange"),
-        pzlist=_parse_int_list_or_range(entries, "pzlist", "pzrange"),
+        bTlist=parse_int_list_or_range(entries, "bTlist", "bTrange"),
+        pzlist=parse_int_list_or_range(entries, "pzlist", "pzrange"),
         x_window=(xmin, xmax),
         make_plots=entries.get("plot", ["false"])[0].lower() not in {"false", "0", "no"},
         results_dir=output_root,

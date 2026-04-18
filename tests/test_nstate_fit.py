@@ -13,9 +13,6 @@ from lqcd_analysis.two_point.fit_nstate import (
     compute_fit_window_parameter_summary,
     build_energy_priors_from_fit_window_summary,
     compute_bootstrap_covariance,
-    compute_effective_mass_antisymmetric_root,
-    compute_effective_mass_cosh_root,
-    effective_mass_single,
     evaluate_model,
     extract_shrinkage_lambda_from_message,
     find_first_usable_correlated_residual_model,
@@ -32,9 +29,14 @@ from lqcd_analysis.two_point.fit_nstate import (
     run_sliding_fits,
     run_nstate_fit,
     shrink_covariance_to_diagonal,
+    target_ground_energy_from_pz0,
+)
+from lqcd_analysis.two_point.effective_mass import (
+    compute_effective_mass_antisymmetric_root,
+    compute_effective_mass_cosh_root,
+    effective_mass_single,
     solve_antisymmetric_effective_mass,
     solve_cosh_effective_mass,
-    target_ground_energy_from_pz0,
 )
 from lqcd_analysis.two_point.plotting import (
     build_reconstruction_band,
@@ -104,7 +106,7 @@ class NStateFitTests(unittest.TestCase):
     def test_antisymmetric_effective_mass_dispatch_uses_root_solver(self) -> None:
         correlator = np.linspace(1.0, 0.2, 8)
         with patch(
-            "lqcd_analysis.two_point.fit_nstate.compute_effective_mass_antisymmetric_root",
+            "lqcd_analysis.two_point.effective_mass.compute_effective_mass_antisymmetric_root",
             return_value=np.full(len(correlator), 0.123),
         ) as mock_solver:
             meff = effective_mass_single(correlator, "antisymmetric", nt=16)

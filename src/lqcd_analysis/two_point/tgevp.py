@@ -7,16 +7,15 @@ import numpy as np
 from scipy.linalg import LinAlgError, eigh
 from scipy.stats import gaussian_kde
 
+from ..common.constants import HBAR_C_GEV_FM, MIN_POSITIVE
 from .io import load_correlator_csv
+from ..common.parsing import parse_fold_t
 from ..common.utils import (
     apply_fold_t,
     bin_correlators,
     bootstrap_correlator_means,
-    parse_fold_t,
     robust_mean_and_error,
 )
-
-HBAR_C_GEV_FM = 0.1973269804
 
 
 @dataclass(frozen=True)
@@ -145,7 +144,7 @@ def solve_tgevp(
     correlator: np.ndarray,
     ts: int,
     n_states: int = 2,
-    regularization: float = 1e-12,
+    regularization: float = MIN_POSITIVE,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     t_matrix, v_matrix = build_tgevp_matrices(correlator, ts)
     dim = t_matrix.shape[0]

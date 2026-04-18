@@ -82,6 +82,38 @@ The analysis writes:
 - `results/<title>_tgevp_correlation.txt`
 - `results/samples/<title>_tgevp_samples.txt`
 
+## Standalone Effective Mass
+
+If you want the effective-mass tables without running the full N-state fit,
+use the standalone two-point effective-mass workflow:
+
+```bash
+lqcd-analysis 2pt-effective-mass templates/input_files/two_point/effective_mass_example_realdata.txt
+```
+
+or:
+
+```bash
+python -m lqcd_analysis.cli 2pt-effective-mass \
+  templates/input_files/two_point/effective_mass_example_realdata.txt
+```
+
+This workflow:
+
+- reads correlator CSV files
+- applies the requested folding and retained `tsrange`
+- bootstraps the correlator data
+- writes one effective-mass table per momentum
+
+Template inputs are provided in:
+
+- `templates/input_files/two_point/effective_mass_example_realdata.txt`
+- `templates/input_files/two_point/effective_mass_example_realdata_annotated.txt`
+
+A matching notebook template is also provided in:
+
+- `templates/two_point/effective_mass_template.ipynb`
+
 ## Bootstrap N-State 2pt Fit
 
 Traditional multi-exponential fits are available as a separate workflow:
@@ -523,8 +555,8 @@ This lets the repository keep realistic data and templates tracked, while avoidi
 ## Package Organization
 
 - `lqcd_analysis.common` contains genuinely shared infrastructure such as bootstrap helpers, folding utilities, generic correlator helpers, and fit-table schema parsing.
-- `lqcd_analysis.two_point` contains the current two-point analysis implementations, including N-state fitting, plotting, TGEVP, and two-point-specific CSV loading.
-- `lqcd_analysis.tmdwf` contains the current TMDWF ratio-fitting workflow and TMDWF-specific HDF5/data-model helpers.
+- `lqcd_analysis.two_point` submodules contain the current two-point analysis implementations, including N-state fitting, effective-mass extraction, plotting, TGEVP, and two-point-specific CSV loading. Import from the submodules directly.
+- `lqcd_analysis.tmdwf` submodules contain the current TMDWF ratio-fitting workflow and TMDWF-specific HDF5/data-model helpers. Import from the submodules directly.
 - `lqcd_analysis.tmdpdf_pion` is a reserved subpackage for future pion TMDPDF workflows.
 - `lqcd_analysis.tmdpdf_proton` is a reserved subpackage for future proton TMDPDF workflows.
 - `lqcd_analysis.gpd_pion` is a reserved subpackage for future pion GPD workflows.

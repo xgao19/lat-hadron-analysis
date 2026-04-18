@@ -7,6 +7,7 @@ from .tmdwf.cs_kernel_extract import run_tmdwf_cs_kernel_workflow
 from .tmdwf.fourier import run_tmdwf_fourier_workflow
 from .tmdwf.fit_nstate import run_tmdwf_nstate_fit
 from .tmdwf.normalize import run_tmdwf_normalization
+from .two_point.effective_mass import run_effective_mass_workflow
 from .two_point.fit_nstate import run_nstate_fit
 from .two_point.tgevp import run_ss_2pt_tgevp
 
@@ -59,6 +60,20 @@ def build_parser() -> argparse.ArgumentParser:
         "--results-dir",
         default=None,
         help="Directory for fit tables, sample outputs, and plots",
+    )
+
+    effective_mass_parser = subparsers.add_parser(
+        "2pt-effective-mass",
+        help="Run standalone effective-mass extraction for two-point correlators.",
+    )
+    effective_mass_parser.add_argument(
+        "input_file",
+        help="Input control file for the effective-mass workflow",
+    )
+    effective_mass_parser.add_argument(
+        "--results-dir",
+        default=None,
+        help="Directory for effective-mass tables and outputs",
     )
 
     tmdwf_parser = subparsers.add_parser(
@@ -135,6 +150,15 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.command == "2pt-nstate-fit":
         outputs = run_nstate_fit(
+            args.input_file,
+            results_dir=args.results_dir,
+        )
+        for output in outputs:
+            print(output)
+        return
+
+    if args.command == "2pt-effective-mass":
+        outputs = run_effective_mass_workflow(
             args.input_file,
             results_dir=args.results_dir,
         )

@@ -7,10 +7,9 @@ from pathlib import Path
 
 import numpy as np
 
+from ..common.constants import HBAR_C_MEV_FM, MIN_AMPLITUDE, MIN_POSITIVE
 from ..common.fit_tables import parse_fit_table_scan
-
 PLOT_SUFFIX = ".pdf"
-HBAR_C_MEV_FM = 197.3269804
 
 
 def save_plot_status(output_path: Path, message: str) -> Path:
@@ -197,10 +196,10 @@ def build_reconstruction_band(
         energy_trial = energies.copy()
         for idx in range(len(amplitudes)):
             sign = 1.0 if (mask & (1 << idx)) else -1.0
-            amp_trial[idx] = max(amplitudes[idx] + sign * amplitude_errs[idx], 1e-16)
+            amp_trial[idx] = max(amplitudes[idx] + sign * amplitude_errs[idx], MIN_AMPLITUDE)
         for idx in range(len(energies)):
             sign = 1.0 if (mask & (1 << (len(amplitudes) + idx))) else -1.0
-            energy_trial[idx] = max(energies[idx] + sign * energy_errs[idx], 1e-12)
+            energy_trial[idx] = max(energies[idx] + sign * energy_errs[idx], MIN_POSITIVE)
         energy_trial = np.maximum.accumulate(energy_trial)
         trial_curve = evaluate_model(times, amp_trial, energy_trial, nt, model)
         lower = np.minimum(lower, trial_curve)
@@ -249,7 +248,7 @@ def plot_nstate_outputs(
     energy_values = lattice_energy_to_mev(fit_scan.energy_values, lattice_spacing_fm)
     energy_errs = lattice_energy_to_mev(fit_scan.energy_errs, lattice_spacing_fm)
     plateau_tmin_range = fit_scan.plateau_tmin_range
-    plateau_start_tmin = fit_scan.plateau_start_tmin
+    plateau_start_tmin = plateau_tmin_range[0]
     amplitudes = np.asarray(fit_scan.fallback_params_mean[:nstates], dtype=float)
     amplitude_band_errs = np.asarray(fit_scan.fallback_params_err[:nstates], dtype=float)
     energies = np.asarray(fit_scan.fallback_params_mean[nstates : 2 * nstates], dtype=float)

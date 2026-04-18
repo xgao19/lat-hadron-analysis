@@ -8,17 +8,20 @@ from unittest.mock import patch
 
 from lqcd_analysis.notebook_workflows import (
     _guess_notebook_dir,
+    render_effective_mass_input_text,
     render_nstate_fit_input_text,
     render_tmdwf_cs_kernel_input_text,
     render_tmdwf_fourier_input_text,
     render_tmdwf_fit_input_text,
     render_tmdwf_normalize_input_text,
     render_tgevp_input_text,
+    run_effective_mass_from_notebook,
     run_nstate_fit_from_notebook,
     run_tmdwf_cs_kernel_from_notebook,
     run_tmdwf_fourier_from_notebook,
     run_tmdwf_fit_from_notebook,
     run_tmdwf_normalize_from_notebook,
+    validate_effective_mass_notebook_config,
     run_tgevp_from_notebook,
     validate_nstate_notebook_config,
     validate_plot_2pt_notebook_config,
@@ -138,6 +141,68 @@ class NotebookWorkflowTests(unittest.TestCase):
         self.assertIn("pzlist 0 1", text)
         self.assertIn("binsize 2", text)
         self.assertIn("seed 2026", text)
+
+    def test_render_effective_mass_text(self) -> None:
+        text = render_effective_mass_input_text(
+            {
+                "title_pattern": "demo_pz*",
+                "ns": 64,
+                "nt": 64,
+                "lattice_spacing_fm": 0.076,
+                "c2pt": "/tmp/c2pt.csv",
+                "pzlist": [0, 1],
+                "fold_t": "periodic",
+                "tsrange": [0, 20],
+                "model": "symmetric",
+                "binsize": 2,
+                "bootstrap_samples": 32,
+                "bootstrap_size": 32,
+                "seed": 2026,
+                "results_dir": "/tmp/effective_mass",
+            }
+        )
+        self.assertTrue(text.startswith("demo_pz* 64 64 0.076\n"))
+        self.assertIn("c2pt /tmp/c2pt.csv", text)
+        self.assertIn("pzlist 0 1", text)
+        self.assertIn("model symmetric", text)
+        self.assertIn("results_dir /tmp/effective_mass", text)
+
+    def test_validate_effective_mass_notebook_config(self) -> None:
+        parsed = validate_effective_mass_notebook_config(
+            {
+                "title_pattern": "demo_pz*",
+                "ns": 64,
+                "nt": 64,
+                "lattice_spacing_fm": 0.076,
+                "c2pt": "/tmp/c2pt.csv",
+                "pzlist": [0, 1],
+                "fold_t": "periodic",
+                "tsrange": [0, 20],
+                "model": "symmetric",
+            }
+        )
+        self.assertEqual(parsed.title_pattern, "demo_pz*")
+        self.assertEqual(parsed.pzlist, (0, 1))
+
+    def test_run_effective_mass_from_notebook_dispatches(self) -> None:
+        fake_outputs = [Path("/tmp/meff.txt")]
+        with patch("lqcd_analysis.notebook_workflows.run_effective_mass_workflow", return_value=fake_outputs) as mock_run:
+            outputs = run_effective_mass_from_notebook(
+                {
+                    "title_pattern": "demo_pz*",
+                    "ns": 64,
+                    "nt": 64,
+                    "lattice_spacing_fm": 0.076,
+                    "c2pt": "/tmp/c2pt.csv",
+                    "pzlist": [0],
+                    "fold_t": "periodic",
+                    "tsrange": [0, 20],
+                    "model": "symmetric",
+                    "results_dir": "/tmp/effective_mass",
+                }
+            )
+        self.assertEqual(outputs, fake_outputs)
+        self.assertEqual(Path(mock_run.call_args.kwargs["results_dir"]), Path("/tmp/effective_mass"))
 
     def test_render_nstate_text(self) -> None:
         text = render_nstate_fit_input_text(

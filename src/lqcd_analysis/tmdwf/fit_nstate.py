@@ -7,10 +7,18 @@ import numpy as np
 from scipy.optimize import least_squares
 from scipy.stats import chi2
 
-from ..common.utils import (
-    apply_fold_t,
+from ..common.bootstrap import bin_samples, bootstrap_indices as common_bootstrap_indices, bootstrap_means
+from ..common.constants import MIN_POSITIVE
+from ..common.parsing import (
+    load_fit_window_table,
     parse_bool,
     parse_fold_t,
+    parse_int_list_or_range,
+    parse_optional_int,
+    parse_tsrange,
+)
+from ..common.utils import (
+    apply_fold_t,
     robust_mean_and_error,
 )
 from ..two_point.io import load_correlator_csv
@@ -109,26 +117,10 @@ class TMDWFRatioRecord:
     ratio_samples: np.ndarray
 
 
-def parse_optional_int(value: str) -> int | None:
-    if value.lower() == "auto":
-        return None
-    return int(value)
 
 
-def _parse_int_list_or_range(entries: dict[str, list[str]], list_key: str, range_key: str) -> tuple[int, ...]:
-    if list_key in entries:
-        return tuple(int(item) for item in entries[list_key])
-    if range_key in entries:
-        start, stop = (int(item) for item in entries[range_key][:2])
-        step = 1 if stop >= start else -1
-        return tuple(range(start, stop + step, step))
-    raise ValueError(f"missing required key: {list_key} or {range_key}")
 
 
-def _parse_tsrange(entries: dict[str, list[str]], nt: int) -> tuple[int, int]:
-    if "tsrange" in entries:
-        return int(entries["tsrange"][0]), int(entries["tsrange"][1])
-    return 0, max(0, nt // 2 - 1)
 
 
 def parse_tmdwf_fit_input(path: str | Path, results_dir: str | Path | None = None) -> TMDWFNStateInput:
@@ -194,8 +186,8 @@ def parse_tmdwf_fit_input(path: str | Path, results_dir: str | Path | None = Non
         gmlist=tuple(entries["gmlist"]),
         etalist=tuple(entries["etalist"]),
         tdirlist=tuple(entries["Tdirlist"]),
-        bTlist=_parse_int_list_or_range(entries, "bTlist", "bTrange"),
-        bzlist=_parse_int_list_or_range(entries, "bzlist", "bzrange"),
+        bTlist=parse_int_list_or_range(entries, "bTlist", "bTrange"),
+        bzlist=parse_int_list_or_range(entries, "bzlist", "bzrange"),
         binsize=int(entries.get("binsize", ["1"])[0]),
         bootstrap_samples=parse_optional_int(entries.get("bootstrap_samples", ["auto"])[0]),
         bootstrap_size=parse_optional_int(entries.get("bootstrap_size", ["auto"])[0]),
@@ -205,7 +197,7 @@ def parse_tmdwf_fit_input(path: str | Path, results_dir: str | Path | None = Non
         dataset_path_template=entries["dataset_path_template"][0],
         c2pt=entries["c2pt"][0],
         fold_t=parse_fold_t(entries),
-        tsrange=_parse_tsrange(entries, int(first_tokens[2])),
+        tsrange=parse_tsrange(entries, int(first_tokens[2])),
         two_point_plateau_table=entries["two_point_plateau_table"][0],
         make_plots=parse_bool(entries.get("plot", ["false"])[0]),
         results_dir=(
@@ -214,67 +206,6 @@ def parse_tmdwf_fit_input(path: str | Path, results_dir: str | Path | None = Non
             else ((input_path.parent / "results_tmdwf_fit") if results_dir is None else Path(results_dir))
         ),
     )
-
-
-def bootstrap_indices(
-    n_cfg: int,
-    n_samples: int | None,
-    sample_size: int | None,
-    seed: int | None,
-) -> np.ndarray:
-    if n_cfg < 2:
-        raise ValueError("bootstrap requires at least two samples")
-    n_boot = n_cfg if n_samples is None else n_samples
-    draw_size = n_cfg if sample_size is None else sample_size
-    rng = np.random.default_rng(seed)
-    return rng.integers(0, n_cfg, size=(n_boot, draw_size))
-
-
-def bootstrap_means_from_indices(values: np.ndarray, indices: np.ndarray) -> np.ndarray:
-    return np.asarray(values, dtype=np.complex128)[indices].mean(axis=1)
-
-
-def _bin_numeric_samples(values: np.ndarray, binsize: int = 1) -> np.ndarray:
-    samples = np.asarray(values)
-    if samples.ndim != 2:
-        raise ValueError("samples must be two-dimensional")
-    if binsize < 1:
-        raise ValueError("binsize must be positive")
-    if binsize == 1:
-        return samples.copy()
-
-    n_cfg = samples.shape[0]
-    n_bins = n_cfg // binsize
-    if n_bins < 2:
-        raise ValueError("binning leaves fewer than two bins")
-    trimmed = samples[: n_bins * binsize]
-    return trimmed.reshape(n_bins, binsize, samples.shape[1]).mean(axis=1)
-
-
-def build_bootstrap_ratio_samples(
-    numerator_correlators: np.ndarray,
-    denominator_correlators: np.ndarray,
-    *,
-    binsize: int = 1,
-    bootstrap_samples: int | None = None,
-    bootstrap_size: int | None = None,
-    seed: int | None = None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    numerator_binned = _bin_numeric_samples(np.asarray(numerator_correlators, dtype=np.complex128), binsize=binsize)
-    denominator_binned = _bin_numeric_samples(np.asarray(denominator_correlators, dtype=float), binsize=binsize)
-    if numerator_binned.shape != denominator_binned.shape:
-        raise ValueError("numerator and denominator must have matching post-binning shapes")
-    indices = bootstrap_indices(numerator_binned.shape[0], bootstrap_samples, bootstrap_size, seed)
-    numerator_boot = bootstrap_means_from_indices(numerator_binned, indices)
-    denominator_boot = bootstrap_means_from_indices(denominator_binned, indices)
-    ratio_boot = np.divide(
-        numerator_boot,
-        denominator_boot,
-        out=np.full_like(numerator_boot, np.nan + 0.0j),
-        where=denominator_boot != 0.0,
-    )
-    return ratio_boot, numerator_boot, denominator_boot
-
 
 def _prepare_fit_data(
     ratio_samples: np.ndarray,
@@ -294,7 +225,7 @@ def _prepare_fit_data(
         data_samples = np.imag(sample_window)
     mean_data = np.nanmean(data_samples, axis=0)
     sigma = np.nanstd(data_samples, axis=0, ddof=1)
-    sigma = np.where(np.isfinite(sigma) & (sigma > 0.0), sigma, 1e-12)
+    sigma = np.where(np.isfinite(sigma) & (sigma > 0.0), sigma, MIN_POSITIVE)
     return _PreparedFitData(
         times=times,
         data_samples=data_samples,
@@ -405,48 +336,8 @@ def _select_curve_component(values: np.ndarray, component: str) -> np.ndarray:
     raise ValueError("component must be real or imag")
 
 
-def _load_fit_window_table(
-    path: str | Path,
-) -> dict[tuple[str | None, int], tuple[int, int]]:
-    file_path = Path(path)
-    fit_windows: dict[tuple[str | None, int], tuple[int, int]] = {}
-    with file_path.open("r", encoding="utf-8") as handle:
-        for line_number, line in enumerate(handle, start=1):
-            stripped = line.strip()
-            if not stripped or stripped.startswith("#"):
-                continue
-            tokens = stripped.split()
-            if tokens[0].lower() in {"pz", "gm"}:
-                continue
-            if len(tokens) == 3:
-                gm = None
-                pz_text, tmin_text, tmax_text = tokens
-            elif len(tokens) >= 4:
-                gm = tokens[0]
-                pz_text, tmin_text, tmax_text = tokens[1:4]
-            else:
-                raise ValueError(
-                    f"invalid fit_window row at {file_path}:{line_number}; "
-                    "expected: pz tmin tmax or gm pz tmin tmax"
-                )
-            pz = int(pz_text)
-            tmin = int(tmin_text)
-            tmax = int(tmax_text)
-            if tmax < tmin:
-                raise ValueError(
-                    f"invalid fit window at {file_path}:{line_number}; tmax must be >= tmin"
-                )
-            fit_windows[(gm, pz)] = (tmin, tmax)
-    return fit_windows
 
 
-def _resolve_fit_window(
-    fit_windows: dict[tuple[str | None, int], tuple[int, int]],
-    *,
-    gm: str,
-    pz: int,
-) -> tuple[int, int] | None:
-    return fit_windows.get((gm, pz), fit_windows.get((None, pz)))
 
 
 def sanitize_token(value: str) -> str:
@@ -726,7 +617,7 @@ def run_tmdwf_nstate_fit(
 ) -> list[Path]:
     spec = parse_tmdwf_fit_input(input_file, results_dir=results_dir)
     outputs: list[Path] = []
-    fit_windows = _load_fit_window_table(spec.fit_window)
+    fit_windows = load_fit_window_table(spec.fit_window)
 
     for pz in spec.pzlist:
         title = expand_template(spec.title_pattern, pz=pz)
@@ -789,17 +680,27 @@ def run_tmdwf_nstate_fit(
                                 ns=spec.ns,
                                 file_label=qtmdwf_path,
                             )[:, t0 : t1 + 1]
-                            ratio_samples, _, _ = build_bootstrap_ratio_samples(
-                                numerator_selected,
-                                c2pt_selected,
-                                binsize=spec.binsize,
-                                bootstrap_samples=spec.bootstrap_samples,
-                                bootstrap_size=spec.bootstrap_size,
-                                seed=spec.seed,
+                            numerator_binned = bin_samples(numerator_selected, binsize=spec.binsize)
+                            denominator_binned = bin_samples(c2pt_selected, binsize=spec.binsize)
+                            if numerator_binned.shape != denominator_binned.shape:
+                                raise ValueError("numerator and denominator must have matching post-binning shapes")
+                            n_cfg = numerator_binned.shape[0]
+                            if n_cfg < 2:
+                                raise ValueError("bootstrap requires at least two samples")
+                            n_boot = n_cfg if spec.bootstrap_samples is None else spec.bootstrap_samples
+                            draw_size = n_cfg if spec.bootstrap_size is None else spec.bootstrap_size
+                            indices = common_bootstrap_indices(n_cfg, draw_size, seed=spec.seed, n_boot=n_boot)
+                            numerator_boot = bootstrap_means(numerator_binned, indices=indices)
+                            denominator_boot = bootstrap_means(denominator_binned, indices=indices)
+                            ratio_samples = np.divide(
+                                numerator_boot,
+                                denominator_boot,
+                                out=np.full_like(numerator_boot, np.nan + 0.0j),
+                                where=denominator_boot != 0.0,
                             )
 
                             combo_stem = f"{title}_{sanitize_token(gm)}_{sanitize_token(eta)}_bT{bT}"
-                            fit_window = _resolve_fit_window(fit_windows, gm=gm, pz=pz)
+                            fit_window = fit_windows.get((gm, pz), fit_windows.get((None, pz)))
                             if fit_window is None:
                                 raise ValueError(f"missing fit_window entry for gm={gm}, pz={pz}")
                             fit_tmin, fit_tmax = fit_window

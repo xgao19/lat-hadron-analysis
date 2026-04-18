@@ -33,6 +33,19 @@ Annotated version:
 templates/input_files/two_point/nstate_fit_example_realdata_annotated.txt
 ```
 
+### Effective Mass Example
+
+```bash
+lqcd-analysis 2pt-effective-mass \
+  templates/input_files/two_point/effective_mass_example_realdata.txt
+```
+
+Annotated version:
+
+```text
+templates/input_files/two_point/effective_mass_example_realdata_annotated.txt
+```
+
 ## TMDWF Templates
 
 ### TMDWF Ratio-Fit Example

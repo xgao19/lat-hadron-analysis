@@ -11,9 +11,22 @@ class CLITests(unittest.TestCase):
     def test_build_parser_includes_new_tmdwf_subcommands(self) -> None:
         parser = build_parser()
         help_text = parser.format_help()
+        self.assertIn("2pt-effective-mass", help_text)
         self.assertIn("tmdwf-normalize", help_text)
         self.assertIn("tmdwf-fourier", help_text)
         self.assertIn("tmdwf-cs-kernel", help_text)
+
+    def test_two_point_effective_mass_cli_dispatches_to_workflow(self) -> None:
+        output_buffer = io.StringIO()
+        fake_outputs = [Path("/tmp/meff.txt")]
+        with patch("lqcd_analysis.cli.run_effective_mass_workflow", return_value=fake_outputs) as mock_run:
+            with redirect_stdout(output_buffer):
+                main(["2pt-effective-mass", "meff_input.txt", "--results-dir", "/tmp/meff_results"])
+
+        self.assertEqual(mock_run.call_args.args[0], "meff_input.txt")
+        self.assertEqual(mock_run.call_args.kwargs["results_dir"], "/tmp/meff_results")
+        printed = output_buffer.getvalue()
+        self.assertIn("/tmp/meff.txt", printed)
 
     def test_tmdwf_normalize_cli_dispatches_to_workflow(self) -> None:
         output_buffer = io.StringIO()

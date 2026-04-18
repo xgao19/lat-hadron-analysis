@@ -9,7 +9,6 @@ import numpy as np
 from lqcd_analysis.tmdwf.fit_nstate import (
     _select_curve_component,
     _write_component_outputs,
-    build_bootstrap_ratio_samples,
     fit_tmdwf_component,
     fit_tmdwf_mean_component,
     parse_tmdwf_fit_input,
@@ -461,38 +460,6 @@ class TMDWFFitTests(unittest.TestCase):
             )
 
         self.assertTrue(np.allclose(loaded, expected))
-
-    def test_bootstrap_ratio_construction_preserves_complex_values(self) -> None:
-        numerator = np.array(
-            [
-                [1.0 + 1.0j, 2.0 + 0.5j],
-                [1.2 + 1.1j, 2.1 + 0.6j],
-                [0.9 + 0.8j, 1.8 + 0.4j],
-                [1.1 + 0.9j, 2.2 + 0.7j],
-            ]
-        )
-        denominator = np.array(
-            [
-                [2.0, 4.0],
-                [2.1, 4.2],
-                [1.9, 3.8],
-                [2.2, 4.4],
-            ]
-        )
-
-        ratio_boot, numerator_boot, denominator_boot = build_bootstrap_ratio_samples(
-            numerator,
-            denominator,
-            binsize=2,
-            bootstrap_samples=6,
-            bootstrap_size=2,
-            seed=5,
-        )
-
-        self.assertEqual(ratio_boot.shape, (6, 2))
-        self.assertEqual(numerator_boot.shape, (6, 2))
-        self.assertEqual(denominator_boot.shape, (6, 2))
-        self.assertTrue(np.any(np.abs(np.imag(ratio_boot)) > 0.0))
 
     def test_select_curve_component_uses_requested_part(self) -> None:
         values = np.array([[1.0 + 3.0j, 2.0 + 4.0j], [5.0 + 7.0j, 6.0 + 8.0j]])
