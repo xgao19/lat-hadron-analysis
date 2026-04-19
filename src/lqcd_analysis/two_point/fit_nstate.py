@@ -240,11 +240,6 @@ def find_first_usable_correlated_residual_model(
     sigma: np.ndarray,
     covariance: np.ndarray,
 ) -> tuple[ResidualModel | None, float | None]:
-    try:
-        return build_residual_model("correlated", sigma, covariance, shrinkage_lambda=0.0), 0.0
-    except np.linalg.LinAlgError:
-        pass
-
     for shrinkage_lambda in SHRINKAGE_LAMBDAS:
         try:
             return (
@@ -1179,7 +1174,7 @@ def _initialize_fit_guesses(
     bootstrap_means: np.ndarray,
     fixed_ground_energy: float | None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    one_state_energy_guess = 0.01 if fixed_ground_energy is None else float(fixed_ground_energy)
+    one_state_energy_guess = 0.1 if fixed_ground_energy is None else float(fixed_ground_energy)
     sample_index = 2 if bootstrap_means.shape[1] > 2 else max(0, bootstrap_means.shape[1] - 1)
     one_state_amplitude_guess = max(
         bootstrap_means.mean(axis=0)[sample_index] * np.exp(one_state_energy_guess * sample_index),
@@ -1189,6 +1184,57 @@ def _initialize_fit_guesses(
         np.array([one_state_amplitude_guess]),
         np.array([one_state_energy_guess]),
     )
+
+
+def _uncorrelated_pretty_fit(
+    bootstrap_means: np.ndarray,
+    sigma: np.ndarray,
+    nt: int,
+    model: str,
+    fixed_ground_energy: float | None = None,
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """
+    Perform an uncorrelated pretraining fit for 1-state fit using fixed time window tmin=2, tmax=8.
+    Returns fitted amplitudes and energies, or None if the fit fails.
+    """
+    # Fixed time window
+    tmin = 2
+    tmax = 8
+    
+    # Check if data length is sufficient
+    if bootstrap_means.shape[1] <= tmax:
+        return None
+    
+    # Use data mean for fitting
+    data_mean = np.mean(bootstrap_means, axis=0)
+    times = np.arange(tmin, tmax + 1)
+    data_slice = data_mean[tmin:tmax + 1]
+    sigma_slice = np.clip(sigma[tmin:tmax + 1], MIN_POSITIVE, None)
+    
+    # Use default initial guess
+    initial_amplitudes = np.array([data_slice[0] * np.exp(0.1 * tmin)])
+    initial_energies = np.array([0.1])
+    
+    # Build uncorrelated residual model
+    residual_model = build_residual_model("uncorrelated", sigma_slice)
+    
+    # Perform uncorrelated fit
+    fit_result = fit_nstate_sample(
+        times=times,
+        data=data_slice,
+        sigma=sigma_slice,
+        nt=nt,
+        model=model,
+        initial_amplitudes=initial_amplitudes,
+        initial_energies=initial_energies,
+        nstates=1,
+        residual_model=residual_model,
+        fixed_ground_energy=fixed_ground_energy,
+    )
+    
+    if fit_result.success and np.all(np.isfinite(fit_result.params)):
+        return fit_result.params[:1], fit_result.params[1:]
+    return None
 
 
 def _run_state_fits(
@@ -1205,11 +1251,30 @@ def _run_state_fits(
         if nstates in state_artifacts:
             return
 
+        # Compute fixed_ground_energy early for use in pretraining fit
+        fixed_ground_energy = None
+        if spec.fix_ground_energy_from_dispersion and spec.pz0_ground_energy is not None:
+            fixed_ground_energy = target_ground_energy_from_pz0(spec.pz0_ground_energy, pz, spec.ns)
+
         if nstates == 1:
             tmin_start = dataset.scan_tmin_start
             tmin_stop = dataset.scan_tmin_stop + 1
             state_initial_guess = current_guess
             priors: tuple[EnergyPrior, ...] = ()
+            
+            # For pz=0 1-state fit, try to improve initial guess with uncorrelated pretraining fit
+            if pz == 0:
+                pretrained_result = _uncorrelated_pretty_fit(
+                    bootstrap_means=dataset.bootstrap_means,
+                    sigma=dataset.sigma,
+                    nt=spec.nt,
+                    model=spec.model,
+                    fixed_ground_energy=fixed_ground_energy,
+                )
+                if pretrained_result is not None:
+                    state_initial_guess = pretrained_result
+                    print(f"[nstate-fit] pz=0 1state fit: using pretrained uncorrelated fit result as initial guess")
+                    print(f"[nstate-fit]   amplitude: {state_initial_guess[0][0]:.6f}, energy: {state_initial_guess[1][0]:.6f}")
         else:
             previous_state = nstates - 1
             previous_artifact = state_artifacts.get(previous_state)
@@ -1226,13 +1291,10 @@ def _run_state_fits(
             )
             current_guess = state_initial_guess
 
-        fixed_ground_energy = None
-        if spec.fix_ground_energy_from_dispersion and spec.pz0_ground_energy is not None:
-            fixed_ground_energy = target_ground_energy_from_pz0(spec.pz0_ground_energy, pz, spec.ns)
-            if state_initial_guess[1].size > 0:
-                fixed_energies = np.asarray(state_initial_guess[1], dtype=float).copy()
-                fixed_energies[0] = fixed_ground_energy
-                state_initial_guess = (np.asarray(state_initial_guess[0], dtype=float), fixed_energies)
+        if fixed_ground_energy is not None and state_initial_guess[1].size > 0:
+            fixed_energies = np.asarray(state_initial_guess[1], dtype=float).copy()
+            fixed_energies[0] = fixed_ground_energy
+            state_initial_guess = (np.asarray(state_initial_guess[0], dtype=float), fixed_energies)
 
         rows, sample_tables, meanfit_results = run_sliding_fits(
             dataset.bootstrap_means,

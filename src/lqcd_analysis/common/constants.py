@@ -7,4 +7,4 @@ MIN_POSITIVE = 1e-12
 MIN_AMPLITUDE = 1e-16
 MIN_COVARIANCE_DIAGONAL = 1e-24
 
-SHRINKAGE_LAMBDAS: tuple[float, ...] = (0.05, 0.1, 0.2, 0.3, 0.5, 1.0)
+SHRINKAGE_LAMBDAS: tuple[float, ...] = (0.2, 0.3, 0.5, 1.0)
