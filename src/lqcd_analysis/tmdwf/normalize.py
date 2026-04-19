@@ -159,7 +159,7 @@ def _normalized_fit_header(target_header: list[str]) -> list[str]:
         "reference_eta",
         "reference_bT",
         "reference_bz",
-        "fit_window_tmax_used",
+        "two_point_fit_tmax",
         "m0_mean",
         "m0_err",
     ]

@@ -55,12 +55,12 @@ class NotebookWorkflowTests(unittest.TestCase):
             "c2pt": "/tmp/c2pt.csv",
             "pzlist": [0],
             "fold_t": "none",
-            "tsrange": [0, 24],
             "model": "normal",
             "fit_mode": "uncorrelated",
             "fix_ground_energy_from_dispersion": False,
             "nstates": [1, 2],
-            "fit_window": {0: [4, 12]},
+            "tmin_window": {0: [0, 4]},
+            "tmax": {0: 12},
         }
         self.tmdwf_config = {
             "title_pattern": "demo_pz*",
@@ -83,7 +83,8 @@ class NotebookWorkflowTests(unittest.TestCase):
             "fit_window": {0: [3, 6]},
             "qtmdwf_h5": "/tmp/qtmdwf_pz*.h5",
             "dataset_path_template": "{gm}/{eta}/pz{pz}/{Tdir}/bT{bT}/bz{bz}",
-            "two_point_plateau_table": "/tmp/plateau_pz*.txt",
+            "two_point_fit_root": "/tmp/two_point_fit_root",
+            "two_point_fit_window_by_pz": {0: [3, 6]},
             "c2pt": "/tmp/c2pt.csv",
             "fold_t": "periodic",
             "tsrange": [0, 20],
@@ -214,13 +215,13 @@ class NotebookWorkflowTests(unittest.TestCase):
                 "c2pt": "/tmp/c2pt.csv",
                 "pzlist": [0, 1],
                 "fold_t": "none",
-                "tsrange": [0, 24],
                 "model": "normal",
                 "fit_mode": "correlated",
                 "pz0_ground_energy": 0.42,
                 "fix_ground_energy_from_dispersion": False,
                 "nstates": [1, 2],
-                "fit_window": {0: [4, 12]},
+                "tmin_window": {0: [0, 4]},
+                "tmax": {0: 12},
                 "lambda_prior": 0.5,
                 "plot": True,
                 "results_dir": "examples/outputs/demo",
@@ -230,25 +231,31 @@ class NotebookWorkflowTests(unittest.TestCase):
         self.assertIn("fit_mode correlated", text)
         self.assertIn("pz0_ground_energy 0.42", text)
         self.assertIn("fix_ground_energy_from_dispersion false", text)
-        match = re.search(r"fit_window (.+)", text)
+        match = re.search(r"tmin_window (.+)", text)
         self.assertIsNotNone(match)
         override_path = Path(match.group(1).strip())
-        self.assertEqual(override_path.read_text(encoding="utf-8"), "0 4 12\n")
+        self.assertEqual(override_path.read_text(encoding="utf-8"), "0 0 4\n")
+        match = re.search(r"tmax (.+)", text)
+        self.assertIsNotNone(match)
+        tmax_path = Path(match.group(1).strip())
+        self.assertEqual(tmax_path.read_text(encoding="utf-8"), "0 12\n")
         self.assertIn("nstates 1 2", text)
         self.assertIn("lambda_prior 0.5", text)
         self.assertIn("results_dir examples/outputs/demo", text)
 
     def test_render_nstate_text_without_tsrange(self) -> None:
         config = dict(self.nstate_config)
-        config.pop("tsrange")
         text = render_nstate_fit_input_text(config)
         self.assertNotIn("tsrange", text)
 
-    def test_validate_nstate_notebook_config_supports_fit_window_dict(self) -> None:
+    def test_validate_nstate_notebook_config_supports_tmin_window_dict(self) -> None:
         parsed = validate_nstate_notebook_config(self.nstate_config)
-        override_path = Path(parsed.fit_window)
+        override_path = Path(parsed.tmin_window)
         self.assertTrue(override_path.exists())
-        self.assertEqual(override_path.read_text(encoding="utf-8"), "0 4 12\n")
+        self.assertEqual(override_path.read_text(encoding="utf-8"), "0 0 4\n")
+        tmax_path = Path(parsed.tmax)
+        self.assertTrue(tmax_path.exists())
+        self.assertEqual(tmax_path.read_text(encoding="utf-8"), "0 12\n")
         parsed = parse_nstate_fit_input(
             Path("templates/input_files/two_point/nstate_fit_example_realdata.txt")
         )
@@ -327,9 +334,9 @@ class NotebookWorkflowTests(unittest.TestCase):
 
     def test_validate_nstate_and_tmdwf_configs_without_tsrange(self) -> None:
         nstate_config = dict(self.nstate_config)
-        nstate_config.pop("tsrange")
         parsed_nstate = validate_nstate_notebook_config(nstate_config)
-        self.assertEqual(parsed_nstate.tsrange, (0, 31))
+        self.assertTrue(Path(parsed_nstate.tmin_window).exists())
+        self.assertTrue(Path(parsed_nstate.tmax).exists())
 
         tmdwf_config = dict(self.tmdwf_config)
         tmdwf_config.pop("tsrange")

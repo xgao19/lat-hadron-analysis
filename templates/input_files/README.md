@@ -70,7 +70,9 @@ templates/input_files/tmdwf/tmdwf_nstate_example_annotated.txt
 
 This TMDWF template is a workflow template rather than a fully runnable tracked
 example dataset. You should replace the HDF5 path, dataset template details, and
-two-point plateau table path with values that match your local data layout.
+the two-point fit root plus `two_point_fit_window_by_pz` mapping with values
+that match your local data layout. Each mapping entry should give the explicit
+`[tmin, tmax]` window to reuse for a given momentum.
 
 Current grouped-output behavior:
 

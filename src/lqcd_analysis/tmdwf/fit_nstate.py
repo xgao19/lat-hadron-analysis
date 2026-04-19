@@ -25,9 +25,8 @@ from ..two_point.io import load_correlator_csv
 from .io import (
     _load_tmdwf_correlator_from_handle,
     expand_template,
-    load_two_point_plateau_values,
     resolve_qtmdwf_h5_path,
-    resolve_two_point_plateau_table,
+    resolve_two_point_fit_reference,
 )
 from .models import evaluate_tmdwf_ratio, normalize_tmdwf_operator
 from .plotting import RatioFitPlotSeries, plot_tmdwf_m0_from_fit_tables, plot_tmdwf_ratio_fit, write_tmdwf_plot_notebook
@@ -58,7 +57,8 @@ class TMDWFNStateInput:
     c2pt: str
     fold_t: str
     tsrange: tuple[int, int]
-    two_point_plateau_table: str
+    two_point_fit_root: str
+    two_point_fit_window_by_pz: dict[int, tuple[int, int]]
     make_plots: bool
     results_dir: Path
 
@@ -95,10 +95,9 @@ class TMDWFOutputRecord:
     pz: int
     ns: int
     gm: str
-    fit_window_tmax_used: int
+    two_point_fit_tmax: int
     two_point_fit_table_resolved: str
-    two_point_tmax_source: str
-    two_point_tmax_inferred: str
+    two_point_fit_tmax_source: str
     tsrange_start: int
     tsrange_end: int
     ratio_samples: np.ndarray
@@ -110,8 +109,8 @@ class TMDWFRatioRecord:
     tmin: int
     tmax: int
     two_point_fit_table_resolved: str
-    two_point_tmax_source: str
-    two_point_tmax_inferred: str
+    two_point_fit_tmax_source: str
+    two_point_fit_tmax: int
     tsrange_start: int
     tsrange_end: int
     ratio_samples: np.ndarray
@@ -151,7 +150,8 @@ def parse_tmdwf_fit_input(path: str | Path, results_dir: str | Path | None = Non
         "Tdirlist",
         "qtmdwf_h5",
         "dataset_path_template",
-        "two_point_plateau_table",
+        "two_point_fit_root",
+        "two_point_fit_window_by_pz",
         "c2pt",
         "fold_t",
     }
@@ -174,6 +174,13 @@ def parse_tmdwf_fit_input(path: str | Path, results_dir: str | Path | None = Non
     for gm in entries["gmlist"]:
         normalize_tmdwf_operator(gm)
     input_path = file_path.resolve()
+    two_point_fit_window_path = Path(entries["two_point_fit_window_by_pz"][0])
+    two_point_fit_window_by_pz = load_fit_window_table(two_point_fit_window_path)
+    missing_windows = sorted(set(int(pz) for pz in entries["pzlist"]) - {pz for gm, pz in two_point_fit_window_by_pz if gm is None})
+    if missing_windows:
+        raise ValueError(
+            f"two_point_fit_window_by_pz is missing entries for pz values: {missing_windows}"
+        )
     return TMDWFNStateInput(
         title_pattern=first_tokens[0],
         ns=int(first_tokens[1]),
@@ -198,7 +205,10 @@ def parse_tmdwf_fit_input(path: str | Path, results_dir: str | Path | None = Non
         c2pt=entries["c2pt"][0],
         fold_t=parse_fold_t(entries),
         tsrange=parse_tsrange(entries, int(first_tokens[2])),
-        two_point_plateau_table=entries["two_point_plateau_table"][0],
+        two_point_fit_root=entries["two_point_fit_root"][0],
+        two_point_fit_window_by_pz={
+            pz: window for (gm, pz), window in two_point_fit_window_by_pz.items() if gm is None
+        },
         make_plots=parse_bool(entries.get("plot", ["false"])[0]),
         results_dir=(
             Path(entries["results_dir"][0])
@@ -363,8 +373,8 @@ def _write_ratio_outputs(
         handle.write(f"tsrange {metadata.tsrange_start} {metadata.tsrange_end}\n")
         handle.write(f"tfit {metadata.tmin} {metadata.tmax}\n")
         handle.write(f"two_point_fit_table_resolved {metadata.two_point_fit_table_resolved}\n")
-        handle.write(f"two_point_tmax_source {metadata.two_point_tmax_source}\n")
-        handle.write(f"two_point_tmax_inferred {metadata.two_point_tmax_inferred}\n")
+        handle.write(f"two_point_fit_tmax_source {metadata.two_point_fit_tmax_source}\n")
+        handle.write(f"two_point_fit_tmax {metadata.two_point_fit_tmax}\n")
         handle.write(
             "\t".join(
                 [
@@ -442,8 +452,8 @@ def _write_component_outputs(
             handle.write(f"begin_bz {record.bz}\n")
             handle.write(f"tfit {record.tmin} {record.tmax}\n")
             handle.write(f"two_point_fit_table_resolved {record.two_point_fit_table_resolved}\n")
-            handle.write(f"two_point_tmax_source {record.two_point_tmax_source}\n")
-            handle.write(f"two_point_tmax_inferred {record.two_point_tmax_inferred}\n")
+            handle.write(f"two_point_fit_tmax_source {record.two_point_fit_tmax_source}\n")
+            handle.write(f"two_point_fit_tmax {record.two_point_fit_tmax}\n")
             handle.write(f"success_meanfit {int(record.fit_result.success)}\n")
             handle.write(f"chi2_dof {record.fit_result.chi2_dof:.10e}\n")
             handle.write(f"pvalue {record.fit_result.pvalue:.10e}\n")
@@ -452,7 +462,7 @@ def _write_component_outputs(
             handle.write(f"end_bz {record.bz}\n")
 
     with table_path.open("w", encoding="utf-8") as handle:
-        header = ["bz", "tmin", "tmax", "success_meanfit", "chi2_dof", "pvalue", "fit_window_tmax_used"]
+        header = ["bz", "tmin", "tmax", "success_meanfit", "chi2_dof", "pvalue", "two_point_fit_tmax"]
         header += [f"m{idx}_mean" for idx in range(nstates)]
         header += [f"m{idx}_err" for idx in range(nstates)]
         handle.write("\t".join(header) + "\n")
@@ -465,7 +475,7 @@ def _write_component_outputs(
                 str(int(record.fit_result.success)),
                 f"{record.fit_result.chi2_dof:.10e}",
                 f"{record.fit_result.pvalue:.10e}",
-                str(record.fit_window_tmax_used),
+                str(record.two_point_fit_tmax),
                 *[f"{value:.10e}" for value in params_mean],
                 *[f"{value:.10e}" for value in params_err],
             ]
@@ -630,24 +640,25 @@ def run_tmdwf_nstate_fit(
         dataset_root = spec.results_dir / title
         dataset_root.mkdir(parents=True, exist_ok=True)
 
-        plateau_cache: dict[int, tuple[Path, int | None, int, np.ndarray, np.ndarray]] = {}
+        fit_reference_cache: dict[int, tuple[Path, int, np.ndarray, np.ndarray]] = {}
+        two_point_window = spec.two_point_fit_window_by_pz.get(pz)
+        if two_point_window is None:
+            raise ValueError(f"missing two_point_fit_window_by_pz entry for pz={pz}")
+        two_point_tmin, two_point_tmax = two_point_window
         for nstates in spec.nstates:
-            plateau_path, inferred_tmax = resolve_two_point_plateau_table(
-                spec.two_point_plateau_table,
-                pz=pz,
+            fit_reference = resolve_two_point_fit_reference(
+                spec.two_point_fit_root,
+                title=title,
+                nstates=nstates,
+                tmin=two_point_tmin,
+                tmax=two_point_tmax,
             )
-            if inferred_tmax is None:
-                raise ValueError(
-                    "could not infer tmax from plateau filename: "
-                    f"{plateau_path}"
-                )
-            effective_tmax = inferred_tmax
-            amplitudes, energies = load_two_point_plateau_values(plateau_path, nstates)
-            plateau_cache[nstates] = (plateau_path, inferred_tmax, effective_tmax, amplitudes, energies)
-            if "#" in str(spec.two_point_plateau_table):
-                print(
-                    f"[tmdwf-fit] Selected plateau table {plateau_path} with inferred tmax={inferred_tmax} for pz={pz}, nstates={nstates}."
-                )
+            fit_reference_cache[nstates] = (
+                fit_reference.path,
+                fit_reference.tmax,
+                fit_reference.amplitudes,
+                fit_reference.energies,
+            )
 
         try:
             import h5py  # type: ignore
@@ -705,16 +716,16 @@ def run_tmdwf_nstate_fit(
                                 raise ValueError(f"missing fit_window entry for gm={gm}, pz={pz}")
                             fit_tmin, fit_tmax = fit_window
                             for nstates in spec.nstates:
-                                plateau_path, inferred_tmax, effective_tmax, amplitudes, energies = plateau_cache[nstates]
+                                fit_table_path, two_point_tmax, amplitudes, energies = fit_reference_cache[nstates]
                                 if nstates == primary_nstate:
                                     grouped_ratio_records.append(
                                         TMDWFRatioRecord(
                                             bz=bz,
                                             tmin=fit_tmin,
                                             tmax=fit_tmax,
-                                            two_point_fit_table_resolved=str(plateau_path),
-                                            two_point_tmax_source="inferred",
-                                            two_point_tmax_inferred="none" if inferred_tmax is None else str(inferred_tmax),
+                                            two_point_fit_table_resolved=str(fit_table_path),
+                                            two_point_fit_tmax_source="config",
+                                            two_point_fit_tmax=two_point_tmax,
                                             tsrange_start=t0,
                                             tsrange_end=t1,
                                             ratio_samples=ratio_samples,
@@ -747,10 +758,9 @@ def run_tmdwf_nstate_fit(
                                             pz=pz,
                                             ns=spec.ns,
                                             gm=gm,
-                                            fit_window_tmax_used=effective_tmax,
-                                            two_point_fit_table_resolved=str(plateau_path),
-                                            two_point_tmax_source="inferred",
-                                            two_point_tmax_inferred="none" if inferred_tmax is None else str(inferred_tmax),
+                                            two_point_fit_tmax=two_point_tmax,
+                                            two_point_fit_table_resolved=str(fit_table_path),
+                                            two_point_fit_tmax_source="config",
                                             tsrange_start=t0,
                                             tsrange_end=t1,
                                             ratio_samples=ratio_samples,

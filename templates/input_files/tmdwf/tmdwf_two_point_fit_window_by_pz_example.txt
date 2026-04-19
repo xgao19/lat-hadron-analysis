@@ -1,0 +1,2 @@
+# Example mapping from pz to the two-point n-state fit window to reuse
+0 4 12

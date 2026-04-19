@@ -25,10 +25,6 @@ processed data.
 ├── src/lqcd_analysis/    Python source package
 │   ├── common/           Shared reusable helpers and infrastructure
 │   ├── two_point/        Two-point analysis workflows
-│   ├── tmdpdf_pion/      Pion TMDPDF scaffolding
-│   ├── tmdpdf_proton/    Proton TMDPDF scaffolding
-│   ├── gpd_pion/         Pion GPD scaffolding
-│   ├── gpd_proton/       Proton GPD scaffolding
 │   └── tmdwf/            TMDWF analysis scaffolding
 ├── templates/            Domain-organized notebook and input-file templates
 └── tests/                Unit tests
@@ -130,8 +126,10 @@ nstates 1 2 3
 fold_t periodic
 pz0_ground_energy 0.42
 fix_ground_energy_from_dispersion true
-# notebook workflow_config: fit_window = {0: [4, 12], 5: [6, 12]}
-# plain-text input: fit_window /path/to/2pt_fit_windows.txt
+# notebook workflow_config: tmin_window = {0: [0, 4], 5: [0, 6]}
+# notebook workflow_config: tmax = {0: 12, 5: 12}
+# plain-text input: tmin_window /path/to/2pt_tmin_windows.txt
+# plain-text input: tmax /path/to/2pt_tmax.txt
 binsize 1
 bootstrap_samples auto
 bootstrap_size auto
@@ -145,14 +143,17 @@ Optional input:
   provide the pz=0 ground-state energy in lattice units. This serves as the dispersion-reference input when you want to fix the ground-state energy.
 - `fix_ground_energy_from_dispersion true|false`:
   when `true`, the nonlinear 2pt fit fixes the ground-state energy to the lattice-dispersion target derived from `pz0_ground_energy`. This is the repository-native analogue to the legacy fixed-`E0` setup.
-- `fit_window <path>`:
-  preferred plain-text fit-window table with rows of the form `pz tmin tmax`.
-  After folding, the correlator is clipped directly to that window for the
-  requested momentum.
+- `tmin_window <path>`:
+  preferred plain-text scan-window table with rows of the form `pz tmin_start tmin_end`.
+  The fit scans `tmin` from the start up to the end while keeping `tmax` fixed.
+- `tmax <value or path>`:
+  fixed upper bound for each momentum. For multi-momentum notebook configs,
+  this can be provided as a per-momentum mapping that the notebook helper
+  materializes into a temporary table.
 Recommended default usage:
 
-- fix trusted fit windows explicitly per momentum with notebook `fit_window`
-  or plain-text `fit_window`
+- fix trusted scan windows explicitly per momentum with notebook `tmin_window`
+  and `tmax`, or the plain-text equivalents
 - provide `pz0_ground_energy`
 - set `fix_ground_energy_from_dispersion true`
 
@@ -181,6 +182,7 @@ Notes on the workflow:
 - Plotting is now handled by a reusable module in `src/lqcd_analysis/two_point/plotting.py`.
 
 - Plot outputs convert fitted energies and effective masses from lattice units `E*a` into physical units in MeV using the provided lattice spacing.
+- Effective-mass plots no longer draw a `tmax` guide line; both effective-mass and energy plots start their displayed data from `tmin = 2` by default.
 - After each 2pt fit run, an editable notebook is written under `results_dir/notebook_plots/`. The notebook calls the reusable plotting module so you can tweak paths, styles, and which state to draw.
 
 ## TMDWF N-State Ratio Fit
@@ -218,7 +220,7 @@ gmlist T5
 # plain-text input: fit_window /path/to/tmdwf_fit_windows.txt
 qtmdwf_h5 /path/to/file_or_pattern.h5
 dataset_path_template {gm}/{eta}/pz{pz}/{Tdir}/bT{bT}/bz{bz}
-two_point_plateau_table /path/to/2pt_fit_pz*_tmax#_plateau.txt
+two_point_fit_window_table /path/to/2pt_fit_pz*_tmax#_fit_window.txt
 c2pt /path/to/c2pt_pz*_real.csv
 fold_t periodic
 tsrange 0 20
@@ -227,7 +229,7 @@ tsrange 0 20
 The TMDWF workflow:
 
 - expands HDF5 dataset paths using `{gm}`, `{eta}`, `{pz}`, `{Tdir}`, `{bT}`, and `{bz}`
-- resolves `tmax` from the two-point fit-summary filename token `_tmax<digits>_plateau.txt`
+- resolves `tmax` from the two-point fit-summary filename token `_tmax<digits>_fit_window.txt`
 - averages over the requested `Tdir` entries
 - combines `+bz` and `-bz` when `bz != 0`
 - applies the phase factor `exp(-i * phase * bz / 2)` with `phase = 2*pi*pz/Ns`
@@ -557,7 +559,3 @@ This lets the repository keep realistic data and templates tracked, while avoidi
 - `lqcd_analysis.common` contains genuinely shared infrastructure such as bootstrap helpers, folding utilities, generic correlator helpers, and fit-table schema parsing.
 - `lqcd_analysis.two_point` submodules contain the current two-point analysis implementations, including N-state fitting, effective-mass extraction, plotting, TGEVP, and two-point-specific CSV loading. Import from the submodules directly.
 - `lqcd_analysis.tmdwf` submodules contain the current TMDWF ratio-fitting workflow and TMDWF-specific HDF5/data-model helpers. Import from the submodules directly.
-- `lqcd_analysis.tmdpdf_pion` is a reserved subpackage for future pion TMDPDF workflows.
-- `lqcd_analysis.tmdpdf_proton` is a reserved subpackage for future proton TMDPDF workflows.
-- `lqcd_analysis.gpd_pion` is a reserved subpackage for future pion GPD workflows.
-- `lqcd_analysis.gpd_proton` is a reserved subpackage for future proton GPD workflows.

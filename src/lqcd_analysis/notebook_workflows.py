@@ -50,13 +50,13 @@ NSTATE_INPUT_KEYS = {
     "c2pt",
     "pzlist",
     "fold_t",
-    "tsrange",
+    "tmax",
     "model",
     "fit_mode",
     "pz0_ground_energy",
     "fix_ground_energy_from_dispersion",
     "nstates",
-    "fit_window",
+    "tmin_window",
     "binsize",
     "bootstrap_samples",
     "bootstrap_size",
@@ -106,7 +106,8 @@ TMDWF_INPUT_KEYS = {
     "fit_window",
     "qtmdwf_h5",
     "dataset_path_template",
-    "two_point_plateau_table",
+    "two_point_fit_root",
+    "two_point_fit_window_by_pz",
     "c2pt",
     "fold_t",
     "tsrange",
@@ -191,7 +192,7 @@ PLOT_REQUIRED_KEYS = {
     "nt",
     "lattice_spacing_fm",
 }
-PLOT_OPTIONAL_KEYS = {"plateau_table"}
+PLOT_OPTIONAL_KEYS = set()
 
 
 def _as_scalar_string(value: Any) -> str:
@@ -204,6 +205,22 @@ def _as_scalar_string(value: Any) -> str:
 
 def _subset_config(config: dict[str, Any], allowed_keys: set[str]) -> dict[str, Any]:
     return {key: value for key, value in config.items() if key in allowed_keys and value is not None}
+
+
+def _materialize_tmdwf_two_point_fit_window_file(window_by_pz: dict[Any, Any]) -> Path:
+    tmpdir = Path(tempfile.mkdtemp(prefix="lqcd_tmdwf_two_point_fit_window_"))
+    path = tmpdir / "two_point_fit_window_by_pz.txt"
+    lines: list[str] = []
+    for pz, window in window_by_pz.items():
+        if not isinstance(window, (list, tuple)) or len(window) != 2:
+            raise ValueError(f"invalid two_point_fit_window entry for pz={pz}; expected [tmin, tmax]")
+        tmin = int(window[0])
+        tmax = int(window[1])
+        if tmax < tmin:
+            raise ValueError(f"invalid two_point_fit_window entry for pz={pz}; tmax must be >= tmin")
+        lines.append(f"{int(pz)} {tmin} {tmax}")
+    path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+    return path
 
 
 def render_tgevp_input_text(config: dict[str, Any]) -> str:
@@ -236,10 +253,13 @@ def render_tgevp_input_text(config: dict[str, Any]) -> str:
 
 
 def render_nstate_fit_input_text(config: dict[str, Any]) -> str:
-    if isinstance(config.get("fit_window"), dict):
+    if isinstance(config.get("tmax"), dict):
         config = dict(config)
-        config["fit_window"] = str(
-            _materialize_nstate_fit_window_file(config["fit_window"])
+        config["tmax"] = str(_materialize_nstate_tmax_file(config["tmax"]))
+    if isinstance(config.get("tmin_window"), dict):
+        config = dict(config)
+        config["tmin_window"] = str(
+            _materialize_nstate_tmin_window_file(config["tmin_window"])
         )
     config = _subset_config(config, NSTATE_INPUT_KEYS)
     required = [
@@ -250,10 +270,11 @@ def render_nstate_fit_input_text(config: dict[str, Any]) -> str:
         "c2pt",
         "pzlist",
         "fold_t",
+        "tmax",
         "model",
         "fit_mode",
         "nstates",
-        "fit_window",
+        "tmin_window",
     ]
     missing = [key for key in required if key not in config]
     if missing:
@@ -264,13 +285,12 @@ def render_nstate_fit_input_text(config: dict[str, Any]) -> str:
         f"c2pt {_as_scalar_string(config['c2pt'])}",
         f"pzlist {_as_scalar_string(config['pzlist'])}",
         f"fold_t {_as_scalar_string(config['fold_t'])}",
+        f"tmax {_as_scalar_string(config['tmax'])}",
         f"model {_as_scalar_string(config['model'])}",
         f"fit_mode {_as_scalar_string(config.get('fit_mode', 'uncorrelated'))}",
         f"nstates {_as_scalar_string(config['nstates'])}",
-        f"fit_window {_as_scalar_string(config['fit_window'])}",
+        f"tmin_window {_as_scalar_string(config['tmin_window'])}",
     ]
-    if "tsrange" in config and config["tsrange"] is not None:
-        lines.append(f"tsrange {_as_scalar_string(config['tsrange'])}")
 
     for optional_key in (
         "pz0_ground_energy",
@@ -325,6 +345,11 @@ def render_tmdwf_fit_input_text(config: dict[str, Any]) -> str:
         config["fit_window"] = str(
             _materialize_tmdwf_fit_window_file(config["fit_window"])
         )
+    if isinstance(config.get("two_point_fit_window_by_pz"), dict):
+        config = dict(config)
+        config["two_point_fit_window_by_pz"] = str(
+            _materialize_tmdwf_two_point_fit_window_file(config["two_point_fit_window_by_pz"])
+        )
     config = _subset_config(config, TMDWF_INPUT_KEYS)
     required = [
         "title_pattern",
@@ -341,7 +366,8 @@ def render_tmdwf_fit_input_text(config: dict[str, Any]) -> str:
         "fit_window",
         "qtmdwf_h5",
         "dataset_path_template",
-        "two_point_plateau_table",
+        "two_point_fit_root",
+        "two_point_fit_window_by_pz",
         "c2pt",
         "fold_t",
     ]
@@ -379,7 +405,8 @@ def render_tmdwf_fit_input_text(config: dict[str, Any]) -> str:
             # either {pz}/{gm} placeholders or the legacy * pz wildcard.
             f"qtmdwf_h5 {_as_scalar_string(config['qtmdwf_h5'])}",
             f"dataset_path_template {_as_scalar_string(config['dataset_path_template'])}",
-            f"two_point_plateau_table {_as_scalar_string(config['two_point_plateau_table'])}",
+            f"two_point_fit_root {_as_scalar_string(config['two_point_fit_root'])}",
+            f"two_point_fit_window_by_pz {_as_scalar_string(config['two_point_fit_window_by_pz'])}",
             f"c2pt {_as_scalar_string(config['c2pt'])}",
             f"fold_t {_as_scalar_string(config['fold_t'])}",
         ]
@@ -598,22 +625,34 @@ def _materialize_tmdwf_fit_window_file(fit_window: dict[Any, Any]) -> Path:
     return path
 
 
-def _materialize_nstate_fit_window_file(fit_window: dict[Any, Any]) -> Path:
-    tmpdir = Path(tempfile.mkdtemp(prefix="lqcd_nstate_fit_windows_"))
-    path = tmpdir / "nstate_fit_window.txt"
+def _materialize_nstate_tmin_window_file(tmin_window: dict[Any, Any]) -> Path:
+    tmpdir = Path(tempfile.mkdtemp(prefix="lqcd_nstate_tmin_windows_"))
+    path = tmpdir / "nstate_tmin_window.txt"
     lines: list[str] = []
-    for key, value in fit_window.items():
+    for key, value in tmin_window.items():
         if not isinstance(value, (list, tuple)) or len(value) != 2:
             raise ValueError(
-                f"invalid fit_window entry for {key}; expected [tmin, tmax]"
+                f"invalid tmin_window entry for {key}; expected [tmin, tmax]"
             )
         tmin = int(value[0])
         tmax = int(value[1])
         if tmax < tmin:
             raise ValueError(
-                f"invalid fit_window entry for {key}; tmax must be >= tmin"
+                f"invalid tmin_window entry for {key}; tmax must be >= tmin"
             )
         lines.append(f"{int(key)} {tmin} {tmax}")
+    path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+    return path
+
+
+def _materialize_nstate_tmax_file(tmax_by_pz: dict[Any, Any]) -> Path:
+    tmpdir = Path(tempfile.mkdtemp(prefix="lqcd_nstate_tmax_"))
+    path = tmpdir / "nstate_tmax.txt"
+    lines: list[str] = []
+    for key, value in tmax_by_pz.items():
+        if isinstance(value, (list, tuple)) or isinstance(value, dict):
+            raise ValueError(f"invalid tmax entry for {key}; expected an integer")
+        lines.append(f"{int(key)} {int(value)}")
     path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
     return path
 
@@ -855,7 +894,6 @@ def run_plot_2pt_from_notebook(config: dict[str, Any]) -> list[Path]:
         correlator_table=validated["correlator_table"],
         meff_table=validated["meff_table"],
         fit_table=validated["fit_table"],
-        plateau_table=validated.get("plateau_table"),
         nstates=int(validated["nstates"]),
         model=str(validated["model"]),
         title=str(validated["title"]),

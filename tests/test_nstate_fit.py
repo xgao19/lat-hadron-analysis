@@ -197,10 +197,10 @@ class NStateFitTests(unittest.TestCase):
                         "c2pt /tmp/c2pt_pz*.csv",
                         "pzlist 0",
                         "fold_t none",
-                        "tsrange 0 24",
+                        "tmax 24",
                         "model normal",
                         "nstates 1",
-                        "fit_window /tmp/fit_windows.txt",
+                        "tmin_window /tmp/tmin_windows.txt",
                     ]
                 ),
                 encoding="utf-8",
@@ -220,11 +220,11 @@ class NStateFitTests(unittest.TestCase):
                         "c2pt /tmp/c2pt_pz*.csv",
                         "pzlist 0 1",
                         "fold_t none",
-                        "tsrange 0 24",
+                        "tmax 24",
                         "model normal",
                         "pz0_ground_energy 0.42",
                         "nstates 1",
-                        "fit_window /tmp/fit_windows.txt",
+                        "tmin_window /tmp/tmin_windows.txt",
                     ]
                 ),
                 encoding="utf-8",
@@ -244,13 +244,15 @@ class NStateFitTests(unittest.TestCase):
                         "fold_t none",
                         "model normal",
                         "nstates 1",
-                        "fit_window /tmp/fit_windows.txt",
+                        "tmax 24",
+                        "tmin_window /tmp/tmin_windows.txt",
                     ]
                 ),
                 encoding="utf-8",
             )
             parsed = parse_nstate_fit_input(path)
-        self.assertEqual(parsed.fit_window, "/tmp/fit_windows.txt")
+        self.assertEqual(parsed.tmin_window, "/tmp/tmin_windows.txt")
+        self.assertEqual(parsed.tmax, 24)
 
     def test_parse_fixed_ground_energy_requires_anchor(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -265,7 +267,8 @@ class NStateFitTests(unittest.TestCase):
                         "model normal",
                         "fix_ground_energy_from_dispersion true",
                         "nstates 1",
-                        "fit_window /tmp/fit_windows.txt",
+                        "tmax 24",
+                        "tmin_window /tmp/tmin_windows.txt",
                     ]
                 ),
                 encoding="utf-8",
@@ -719,11 +722,11 @@ class NStateFitTests(unittest.TestCase):
                         "c2pt /tmp/c2pt_pz*.csv",
                         "pzlist 0 1",
                         "fold_t antiperiodic",
-                        "tsrange 0 24",
+                        "tmax 24",
                         "model symmetric",
                         "fit_mode correlated",
                         "nstates 1 2 3",
-                        "fit_window /tmp/fit_windows.txt",
+                        "tmin_window /tmp/tmin_windows.txt",
                         "results_dir /tmp/nstate_results",
                     ]
                 ),
@@ -736,7 +739,7 @@ class NStateFitTests(unittest.TestCase):
         self.assertEqual(parsed.fold_t, "antiperiodic")
         self.assertEqual(parsed.results_dir, Path("/tmp/nstate_results"))
 
-    def test_parse_input_defaults_tsrange_when_missing(self) -> None:
+    def test_parse_input_requires_tmax(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "input.txt"
             path.write_text(
@@ -749,13 +752,14 @@ class NStateFitTests(unittest.TestCase):
                         "model symmetric",
                         "fit_mode correlated",
                         "nstates 1 2 3",
-                        "fit_window /tmp/fit_windows.txt",
+                        "tmax 24",
+                        "tmin_window /tmp/tmin_windows.txt",
                     ]
                 ),
                 encoding="utf-8",
             )
             parsed = parse_nstate_fit_input(path)
-        self.assertEqual(parsed.tsrange, (0, 31))
+        self.assertEqual(parsed.tmax, 24)
 
     def test_end_to_end_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -782,7 +786,7 @@ class NStateFitTests(unittest.TestCase):
                         + "\n"
                     )
 
-            fit_window_path.write_text("0 2 10\n", encoding="utf-8")
+            fit_window_path.write_text("0 0 2\n", encoding="utf-8")
             input_path.write_text(
                 "\n".join(
                     [
@@ -790,10 +794,10 @@ class NStateFitTests(unittest.TestCase):
                         f"c2pt {csv_path.as_posix().replace('pz0', 'pz*')}",
                         "pzlist 0",
                         "fold_t none",
-                        "tsrange 0 14",
+                        "tmax 10",
                         "model normal",
                         "nstates 1 2",
-                        f"fit_window {fit_window_path}",
+                        f"tmin_window {fit_window_path}",
                         "bootstrap_samples 16",
                         "bootstrap_size 16",
                         "plot false",
@@ -826,7 +830,6 @@ class NStateFitTests(unittest.TestCase):
                 correlator_table=tmp / "corr.txt",
                 meff_table=tmp / "meff.txt",
                 fit_tables={1: tmp / "fit1.txt", 2: tmp / "fit2.txt"},
-                plateau_tables={1: tmp / "plateau1.txt", 2: tmp / "plateau2.txt"},
                 model="normal",
                 title="demo",
                 nt=64,
@@ -835,7 +838,6 @@ class NStateFitTests(unittest.TestCase):
             self.assertTrue(notebook.exists())
             text = notebook.read_text(encoding="utf-8")
             self.assertIn("plot_nstate_outputs", text)
-            self.assertIn("plateau_tables", text)
             self.assertIn("lattice_spacing_fm = 0.076", text)
 
     def test_reconstruction_band_brackets_center_curve(self) -> None:
@@ -902,31 +904,31 @@ class NStateFitTests(unittest.TestCase):
         p16, p84 = np.percentile(amp_boot, [16.0, 84.0])
         self.assertAlmostEqual(summary.params_err[0], 0.5 * (p84 - p16))
 
-    def test_plotting_uses_fit_window_table_values_for_plateau_band(self) -> None:
+    def test_plotting_uses_best_chi2_selected_row_for_band(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
             correlator = np.column_stack([np.arange(6), np.linspace(1.0, 0.2, 6), np.full(6, 0.01)])
             meff = np.column_stack([np.arange(6), np.full(6, 0.4), np.full(6, 0.02)])
             fit = np.array(
                 [
-                    [2, 5, 1, 2, 2, 1.0, 0, 1.0, 0.5, 1, 10.0, 0.2, 1.0, 0.1],
-                    [3, 5, 1, 2, 2, 1.0, 0, 1.0, 0.5, 1, 10.5, 0.2, 1.05, 0.1],
+                    [2, 5, 1, 2, 2, 1.0, 0, 2.0, 0.5, 1, 10.0, 0.2, 1.0, 0.1],
+                    [3, 5, 1, 2, 2, 1.0, 0, 0.5, 0.5, 1, 20.5, 0.2, 2.05, 0.1],
                 ],
                 dtype=float,
             )
-            plateau = np.array([[3.0, 0.30, 0.4, 0.04]], dtype=float)
             corr_path = tmp / "corr.txt"
             meff_path = tmp / "meff.txt"
             fit_path = tmp / "fit.txt"
-            plateau_path = tmp / "plateau.txt"
             np.savetxt(corr_path, correlator)
             np.savetxt(meff_path, meff)
             np.savetxt(fit_path, fit)
-            np.savetxt(plateau_path, plateau)
 
             with patch("lqcd_analysis.two_point.plotting.prepare_matplotlib", return_value=None):
                 with patch("lqcd_analysis.two_point.plotting.plot_parameter_scan") as mock_scan:
-                    with patch("lqcd_analysis.two_point.plotting.plot_effective_mass", return_value=tmp / "meff.pdf"):
+                    with patch(
+                        "lqcd_analysis.two_point.plotting.plot_effective_mass",
+                        return_value=tmp / "meff.pdf",
+                    ) as mock_meff:
                         with patch(
                             "lqcd_analysis.two_point.plotting.plot_best_fit_reconstruction",
                             return_value=tmp / "recon.pdf",
@@ -936,17 +938,72 @@ class NStateFitTests(unittest.TestCase):
                                 correlator_table=corr_path,
                                 meff_table=meff_path,
                                 fit_table=fit_path,
-                                plateau_table=plateau_path,
                                 nstates=1,
                                 model="normal",
                                 title="demo",
                                 nt=16,
                                 lattice_spacing_fm=0.1,
-                            )
+            )
             energy_call = mock_scan.call_args_list[0]
             amplitude_call = mock_scan.call_args_list[1]
-            self.assertAlmostEqual(energy_call.kwargs["plateau_values"][0], 0.3 * 197.3269804 / 0.1)
-            self.assertAlmostEqual(amplitude_call.kwargs["plateau_values"][0], 3.0)
+            self.assertIsNone(energy_call.kwargs["selected_values"])
+            self.assertIsNone(energy_call.kwargs["selected_errors"])
+            self.assertAlmostEqual(amplitude_call.kwargs["selected_values"][0], 20.5)
+            self.assertAlmostEqual(amplitude_call.kwargs["selected_errors"][0], 0.2)
+            self.assertIsNone(mock_meff.call_args.kwargs["reference_value"])
+
+    def test_plotting_uses_dispersion_reference_for_energy_and_meff_band(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            correlator = np.column_stack([np.arange(6), np.linspace(1.0, 0.2, 6), np.full(6, 0.01)])
+            meff = np.column_stack([np.arange(6), np.full(6, 0.4), np.full(6, 0.02)])
+            fit = np.array([[2, 5, 1, 2, 2, 1.0, 0, 0.5, 0.5, 1, 10.0, 0.2, 1.0, 0.1]], dtype=float)
+            tables_dir = tmp / "tables"
+            tables_dir.mkdir(parents=True, exist_ok=True)
+            corr_path = tables_dir / "corr.txt"
+            meff_path = tables_dir / "meff.txt"
+            fit_path = tables_dir / "fit.txt"
+            summary_path = tmp / "demo_pz1_normal_summary.txt"
+            np.savetxt(corr_path, correlator)
+            np.savetxt(meff_path, meff)
+            np.savetxt(fit_path, fit)
+            summary_path.write_text(
+                "\n".join(
+                    [
+                        "title demo_pz1",
+                        "model normal",
+                        "1state_target_energy_pz1 3.0000000000e-01",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            with patch("lqcd_analysis.two_point.plotting.prepare_matplotlib", return_value=None):
+                with patch("lqcd_analysis.two_point.plotting.plot_parameter_scan") as mock_scan:
+                    with patch(
+                        "lqcd_analysis.two_point.plotting.plot_effective_mass",
+                        return_value=tmp / "meff.pdf",
+                    ) as mock_meff:
+                        with patch(
+                            "lqcd_analysis.two_point.plotting.plot_best_fit_reconstruction",
+                            return_value=tmp / "recon.pdf",
+                        ):
+                            plot_nstate_outputs(
+                                output_dir=tmp,
+                                correlator_table=corr_path,
+                                meff_table=meff_path,
+                                fit_table=fit_path,
+                                nstates=1,
+                                model="normal",
+                                title="demo_pz1",
+                                nt=16,
+                                lattice_spacing_fm=0.1,
+                            )
+            energy_call = mock_scan.call_args_list[0]
+            dispersion_mev = 0.3 * 197.3269804 / 0.1
+            self.assertAlmostEqual(energy_call.kwargs["selected_values"][0], dispersion_mev)
+            self.assertAlmostEqual(mock_meff.call_args.kwargs["reference_value"], dispersion_mev)
 
     def test_plotting_reconstruction_starts_at_fit_window_start(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -961,15 +1018,15 @@ class NStateFitTests(unittest.TestCase):
                 ],
                 dtype=float,
             )
-            plateau = np.array([[3.0, 0.30, 0.4, 0.04]], dtype=float)
+            fit_window = np.array([[3.0, 0.30, 0.4, 0.04]], dtype=float)
             corr_path = tmp / "corr.txt"
             meff_path = tmp / "meff.txt"
             fit_path = tmp / "fit.txt"
-            plateau_path = tmp / "plateau.txt"
+            fit_window_path = tmp / "fit_window.txt"
             np.savetxt(corr_path, correlator)
             np.savetxt(meff_path, meff)
             np.savetxt(fit_path, fit)
-            np.savetxt(plateau_path, plateau)
+            np.savetxt(fit_window_path, fit_window)
 
             with patch("lqcd_analysis.two_point.plotting.prepare_matplotlib", return_value=None):
                 with patch("lqcd_analysis.two_point.plotting.plot_effective_mass", return_value=tmp / "meff.pdf"):
@@ -983,13 +1040,12 @@ class NStateFitTests(unittest.TestCase):
                                 correlator_table=corr_path,
                                 meff_table=meff_path,
                                 fit_table=fit_path,
-                                plateau_table=plateau_path,
                                 nstates=1,
                                 model="normal",
                                 title="demo",
                                 nt=16,
                                 lattice_spacing_fm=0.1,
-                            )
+            )
             reconstruction_args = mock_reconstruction.call_args.args
             self.assertTrue(np.array_equal(reconstruction_args[1], np.arange(3, 6)))
             self.assertEqual(len(reconstruction_args[2]), 3)
@@ -1011,7 +1067,7 @@ class NStateFitTests(unittest.TestCase):
                 for t in range(len(times)):
                     handle.write(str(t) + "," + ",".join(f"{value:.12e}" for value in data[t]) + "\n")
 
-            fit_window_path.write_text("0 2 5\n", encoding="utf-8")
+            fit_window_path.write_text("0 0 2\n", encoding="utf-8")
             input_path.write_text(
                 "\n".join(
                     [
@@ -1019,10 +1075,10 @@ class NStateFitTests(unittest.TestCase):
                         f"c2pt {csv_path.as_posix().replace('pz0', 'pz*')}",
                         "pzlist 0",
                         "fold_t none",
-                        "tsrange 0 10",
+                        "tmax 10",
                         "model normal",
                         "nstates 1",
-                        f"fit_window {fit_window_path}",
+                        f"tmin_window {fit_window_path}",
                         "bootstrap_samples 8",
                         "bootstrap_size 8",
                         "plot false",
@@ -1034,18 +1090,18 @@ class NStateFitTests(unittest.TestCase):
             def fake_run_sliding_fits(*args, **kwargs):
                 del args, kwargs
                 rows = [
-                    FitSummaryRow(1, 2, 5, 1, 8, 8, 1.0, 0, 1.0, 0.5, 0, (2.0, 0.4), (0.2, 0.05)),
-                    FitSummaryRow(1, 3, 5, 1, 8, 8, 1.0, 0, 1.1, 0.5, 0, (2.1, 0.41), (0.2, 0.05)),
-                    FitSummaryRow(1, 4, 5, 1, 8, 8, 1.0, 0, 1.2, 0.5, 0, (2.2, 0.42), (0.2, 0.05)),
+                    FitSummaryRow(1, 0, 5, 1, 8, 8, 1.0, 0, 1.0, 0.5, 0, (2.0, 0.4), (0.2, 0.05)),
+                    FitSummaryRow(1, 1, 5, 1, 8, 8, 1.0, 0, 1.1, 0.5, 0, (2.1, 0.41), (0.2, 0.05)),
+                    FitSummaryRow(1, 2, 5, 1, 8, 8, 1.0, 0, 1.2, 0.5, 0, (2.2, 0.42), (0.2, 0.05)),
                 ]
                 sample_tables = {
                     row.tmin: np.array([[row.tmin, 0, 1, 1.0, 0.5, *row.params_mean]], dtype=float)
                     for row in rows
                 }
                 meanfits = {
-                    2: FitResult(np.array([2.0, 0.4]), 1.0, 1.0, 0.5, True, "shrinkage_lambda=0.30; ok"),
-                    3: FitResult(np.array([2.1, 0.41]), 1.0, 1.0, 0.5, True, "shrinkage_lambda=0.10; ok"),
-                    4: FitResult(np.array([2.2, 0.42]), 1.0, 1.0, 0.5, True, "ok"),
+                    0: FitResult(np.array([2.0, 0.4]), 1.0, 1.0, 0.5, True, "shrinkage_lambda=0.30; ok"),
+                    1: FitResult(np.array([2.1, 0.41]), 1.0, 1.0, 0.5, True, "shrinkage_lambda=0.10; ok"),
+                    2: FitResult(np.array([2.2, 0.42]), 1.0, 1.0, 0.5, True, "ok"),
                 }
                 return rows, sample_tables, meanfits
 
@@ -1074,8 +1130,8 @@ class NStateFitTests(unittest.TestCase):
                 for t in range(len(times)):
                     handle.write(str(t) + "," + ",".join(f"{value:.12e}" for value in data[t]) + "\n")
 
-            override_path.write_text("0 4 6\n", encoding="utf-8")
-            fit_window_path.write_text("0 2 6\n", encoding="utf-8")
+            override_path.write_text("0 0 4\n", encoding="utf-8")
+            fit_window_path.write_text("0 0 2\n", encoding="utf-8")
             input_path.write_text(
                 "\n".join(
                     [
@@ -1083,12 +1139,12 @@ class NStateFitTests(unittest.TestCase):
                         f"c2pt {csv_path.as_posix().replace('pz0', 'pz*')}",
                         "pzlist 0",
                         "fold_t none",
-                        "tsrange 0 10",
+                        "tmax 6",
                         "model normal",
                         "nstates 1 2",
                         "bootstrap_samples 8",
                         "bootstrap_size 8",
-                        f"fit_window {override_path}",
+                        f"tmin_window {override_path}",
                         "plot false",
                     ]
                 ),
@@ -1102,11 +1158,11 @@ class NStateFitTests(unittest.TestCase):
             summary_text = summary.read_text(encoding="utf-8")
             fit_rows = np.loadtxt(fit_table, ndmin=2)
 
-        self.assertIn("fit_window 4 6", summary_text)
-        self.assertIn("1state fit_window_tmin 4 4", summary_text)
-        self.assertEqual(fit_rows.shape[0], 1)
-        self.assertEqual(int(fit_rows[0, 0]), 4)
-        self.assertEqual(int(fit_rows[0, 1]), 6)
+        self.assertIn("tmin_window 0 4", summary_text)
+        self.assertIn("1state fit_window_tmin 0 4", summary_text)
+        self.assertEqual(fit_rows.shape[0], 5)
+        self.assertTrue(np.array_equal(fit_rows[:, 0].astype(int), np.array([0, 1, 2, 3, 4])))
+        self.assertTrue(np.all(fit_rows[:, 1].astype(int) == 6))
 
     def test_auto_computed_lower_states_are_included_in_plots_and_notebook(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1124,7 +1180,7 @@ class NStateFitTests(unittest.TestCase):
                 for t in range(len(times)):
                     handle.write(str(t) + "," + ",".join(f"{value:.12e}" for value in data[t]) + "\n")
 
-            fit_window_path.write_text("0 2 6\n", encoding="utf-8")
+            fit_window_path.write_text("0 0 2\n", encoding="utf-8")
             input_path.write_text(
                 "\n".join(
                     [
@@ -1132,10 +1188,10 @@ class NStateFitTests(unittest.TestCase):
                         f"c2pt {csv_path.as_posix().replace('pz0', 'pz*')}",
                         "pzlist 0",
                         "fold_t none",
-                        "tsrange 0 10",
+                        "tmax 6",
                         "model normal",
                         "nstates 2",
-                        f"fit_window {fit_window_path}",
+                        f"tmin_window {fit_window_path}",
                         "bootstrap_samples 8",
                         "bootstrap_size 8",
                         "plot true",

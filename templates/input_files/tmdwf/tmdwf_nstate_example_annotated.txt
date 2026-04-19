@@ -69,14 +69,17 @@ qtmdwf_h5 /path/to/qtmdwf_pz*.h5
 #   {gm} {eta} {pz} {Tdir} {bT} {bz}
 dataset_path_template {gm}/{eta}/pz{pz}/{Tdir}/bT{bT}/bz{bz}
 
-# Two-point plateau table providing the fixed A_i and E_i inputs.
-# This should point to a plateau table produced by the existing two-point workflow.
-# You may use:
-#   *  for the pz substitution
-#   #  for numeric tmax wildcard matching in filenames like `_tmax12_plateau.txt`
-# Example:
-#   ..._normal_1state_tmax#_plateau.txt
-two_point_plateau_table examples/outputs/nstate_fit_realdata/l64c64a076_m140_fit_k0_pz*/tables/l64c64a076_m140_fit_k0_pz*_normal_1state_tmax#_plateau.txt
+# Root directory containing the two-point n-state fit outputs reused by this workflow.
+# Point this at the root directory that contains the existing two-point n-state
+# fit outputs. The backend will look under
+#   <two_point_fit_root>/<title>/tables/
+# and select the matching `*_tmax<tmax>_fits.txt` file.
+two_point_fit_root examples/outputs/tmdwf_two_point_fit_ref
+
+# Per-momentum tmin/tmax choice for reusing the two-point fit table directly.
+# The notebook version accepts this as a dict and materializes it to a tiny
+# three-column mapping file before running the workflow.
+two_point_fit_window_by_pz templates/input_files/tmdwf/tmdwf_two_point_fit_window_by_pz_example.txt
 
 # Two-point correlator CSV used to build the denominator part of the ratio.
 c2pt examples/data/l64c64a076_m140/comb_c2pt_csv/c2pt_5_5_k0_pz*_real.csv
@@ -102,7 +105,8 @@ results_dir examples/outputs/tmdwf_fit_example
 
 # Notes:
 # - The first implementation fits the real and imaginary parts separately.
-# - A_i and E_i are loaded from the two-point plateau table as fixed central values.
+# - A_i and E_i are loaded from the selected row of the two-point fit table as
+#   fixed central values.
 # - The code does not yet couple to two-point bootstrap-sample A_i/E_i.
 # - T5 keeps the original sign-pattern preprocessing.
 # - Z5 multiplies the correlator by -i before folding and uses an extra Pz/E_i factor in the numerator model.
@@ -111,6 +115,7 @@ results_dir examples/outputs/tmdwf_fit_example
 # - Grouped summary files contain one `begin_bz ...` / `end_bz ...` block per bz.
 # - Grouped summary blocks record:
 #     two_point_fit_table_resolved
-#     two_point_tmax_source
-#     two_point_tmax_inferred
-# - Grouped fit tables include fit_window_tmax_used plus the fit results.
+#     two_point_fit_tmax_source
+#     two_point_fit_tmax
+#   where the tmax value now comes from the explicit two-point fit-window config.
+# - Grouped fit tables include two_point_fit_tmax plus the fit results.

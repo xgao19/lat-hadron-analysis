@@ -147,3 +147,31 @@ def load_fit_window_table(
                 )
             fit_windows[(gm, pz)] = (tmin, tmax)
     return fit_windows
+
+
+def load_int_mapping_table(path: str | Path) -> dict[tuple[str | None, int], int]:
+    """Load a simple integer mapping table with rows of the form `pz value` or `gm pz value`."""
+    file_path = Path(path)
+    mapping: dict[tuple[str | None, int], int] = {}
+    with file_path.open("r", encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            tokens = stripped.split()
+            if tokens[0].lower() in {"pz", "gm"}:
+                continue
+
+            if len(tokens) == 2:
+                gm = None
+                pz_text, value_text = tokens
+            elif len(tokens) >= 3:
+                gm = tokens[0]
+                pz_text, value_text = tokens[1:3]
+            else:
+                raise ValueError(
+                    f"invalid mapping row at {file_path}:{line_number}; expected: pz value or gm pz value"
+                )
+
+            mapping[(gm, int(pz_text))] = int(value_text)
+    return mapping

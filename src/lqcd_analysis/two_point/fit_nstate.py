@@ -20,7 +20,7 @@ from ..common.bootstrap import (
     compute_bootstrap_covariance,
     shrink_covariance_to_diagonal,
 )
-from ..common.parsing import load_fit_window_table, parse_bool, parse_fold_t, parse_optional_int, parse_tsrange
+from ..common.parsing import load_fit_window_table, load_int_mapping_table, parse_bool, parse_fold_t, parse_optional_int
 from ..common.utils import (
     apply_fold_t,
     bin_correlators,
@@ -39,13 +39,13 @@ class NStateFitInput:
     correlator_path_pattern: str
     pzlist: tuple[int, ...]
     fold_t: str
-    tsrange: tuple[int, int]
+    tmax: int | str
     model: str
     fit_mode: str
     pz0_ground_energy: float | None
     fix_ground_energy_from_dispersion: bool
     nstates: tuple[int, ...]
-    fit_window: str
+    tmin_window: str
     binsize: int
     bootstrap_samples: int | None
     bootstrap_size: int | None
@@ -67,7 +67,7 @@ class FitSummaryRow:
     fallback_uncorrelated_successes: int
     chi2_dof: float
     pvalue: float
-    plateau_flag: int
+    selected_window_flag: int
     params_mean: tuple[float, ...]
     params_err: tuple[float, ...]
 
@@ -143,7 +143,7 @@ def parse_nstate_fit_input(path: str | Path, results_dir: str | Path | None = No
     if first_tokens is None or len(first_tokens) < 4:
         raise ValueError("the first non-empty line must be: title Ns Nt a_fm")
 
-    required = {"c2pt", "pzlist", "model", "nstates", "fit_window"}
+    required = {"c2pt", "pzlist", "model", "nstates", "tmin_window", "tmax"}
     missing = required - entries.keys()
     if missing:
         raise ValueError(f"missing required keys in {file_path}: {sorted(missing)}")
@@ -167,6 +167,12 @@ def parse_nstate_fit_input(path: str | Path, results_dir: str | Path | None = No
         raise ValueError("pz0_ground_energy is required when fix_ground_energy_from_dispersion is true")
 
     input_path = file_path.resolve()
+    tmax_value = entries["tmax"][0]
+    try:
+        parsed_tmax: int | str = int(tmax_value)
+    except ValueError:
+        parsed_tmax = tmax_value
+
     return NStateFitInput(
         title_pattern=first_tokens[0],
         ns=int(first_tokens[1]),
@@ -175,7 +181,7 @@ def parse_nstate_fit_input(path: str | Path, results_dir: str | Path | None = No
         correlator_path_pattern=entries["c2pt"][0],
         pzlist=tuple(int(item) for item in entries["pzlist"]),
         fold_t=parse_fold_t(entries),
-        tsrange=parse_tsrange(entries, int(first_tokens[2])),
+        tmax=parsed_tmax,
         model=model,
         fit_mode=fit_mode,
         pz0_ground_energy=(
@@ -183,7 +189,7 @@ def parse_nstate_fit_input(path: str | Path, results_dir: str | Path | None = No
         ),
         fix_ground_energy_from_dispersion=fix_ground_energy_from_dispersion,
         nstates=nstates,
-        fit_window=entries["fit_window"][0],
+        tmin_window=entries["tmin_window"][0],
         binsize=int(entries.get("binsize", ["1"])[0]),
         bootstrap_samples=parse_optional_int(entries.get("bootstrap_samples", ["auto"])[0]),
         bootstrap_size=parse_optional_int(entries.get("bootstrap_size", ["auto"])[0]),
@@ -893,7 +899,7 @@ def run_sliding_fits(
                 fallback_uncorrelated_successes=fallback_uncorrelated_successes,
                 chi2_dof=meanfit.chi2_dof,
                 pvalue=meanfit.pvalue,
-                plateau_flag=0,
+                selected_window_flag=0,
                 params_mean=params_mean,
                 params_err=params_err,
             )
@@ -916,7 +922,7 @@ def serialize_fit_rows(rows: list[FitSummaryRow]) -> np.ndarray:
             row.fallback_uncorrelated_successes,
             row.chi2_dof,
             row.pvalue,
-            row.plateau_flag,
+            row.selected_window_flag,
         ]
         amps = list(row.params_mean[: row.nstates])
         amp_errs = list(row.params_err[: row.nstates])
@@ -947,7 +953,7 @@ def mark_fit_window(rows: list[FitSummaryRow], fit_window: FitWindowSummary) -> 
                 fallback_uncorrelated_successes=row.fallback_uncorrelated_successes,
                 chi2_dof=row.chi2_dof,
                 pvalue=row.pvalue,
-                plateau_flag=flagged,
+                selected_window_flag=flagged,
                 params_mean=row.params_mean,
                 params_err=row.params_err,
             )
@@ -966,7 +972,7 @@ def header_for_fit_rows(max_states: int) -> str:
         "fallback_uncorrelated_successes",
         "chi2_dof",
         "pvalue",
-        "plateau_flag",
+        "selected_window_flag",
     ]
     columns += [f"A{idx}_mean" for idx in range(max_states)]
     columns += [f"A{idx}_err" for idx in range(max_states)]
@@ -1001,7 +1007,7 @@ def _fit_window_output_path(
     tmax: int,
 ) -> Path:
     dataset_dir = spec.results_dir / title
-    return dataset_dir / "tables" / f"{title}_{spec.model}_{nstates}state_tmax{tmax}_plateau.txt"
+    return dataset_dir / "tables" / f"{title}_{spec.model}_{nstates}state_tmax{tmax}_fit_window.txt"
 
 
 def _write_state_outputs(
@@ -1068,7 +1074,7 @@ def _write_state_outputs(
 @dataclass(frozen=True)
 class _PreparedDataset:
     title: str
-    fit_window: tuple[int, int]
+    tmin_window: tuple[int, int]
     time_offset: int
     selected: np.ndarray
     bootstrap_means: np.ndarray
@@ -1083,8 +1089,8 @@ class _PreparedDataset:
     samples_dir: Path
     correlator_table: Path
     meff_table: Path
-    window_global_tmin: int
-    window_global_tmax: int
+    scan_tmin_start: int
+    scan_tmin_stop: int
 
 
 def _load_and_preprocess_correlators(spec: NStateFitInput, pz: int) -> _PreparedDataset:
@@ -1095,19 +1101,35 @@ def _load_and_preprocess_correlators(spec: NStateFitInput, pz: int) -> _Prepared
         raise ValueError(f"{csv_path} has Nt={correlators.shape[1]}, expected {spec.nt}")
 
     processed = apply_fold_t(correlators, spec.nt, spec.fold_t)
-    full_t0, full_t1 = spec.tsrange
-    processed = processed[:, full_t0 : full_t1 + 1]
-    fit_windows = load_fit_window_table(spec.fit_window)
-    fit_window = fit_windows.get((None, pz))
-    if fit_window is None:
-        raise ValueError(f"missing fit_window entry for pz={pz}")
-    fit_start, fit_end = fit_window
-    if fit_start < full_t0 or fit_end > full_t1:
+    if isinstance(spec.tmax, int):
+        tmax_by_pz = {pz_value: spec.tmax for pz_value in spec.pzlist}
+    else:
+        tmax_by_pz = {
+            pz_value: value
+            for (gm, pz_value), value in load_int_mapping_table(spec.tmax).items()
+            if gm is None
+        }
+    if pz not in tmax_by_pz:
+        raise ValueError(f"missing tmax entry for pz={pz}")
+    local_tmax = int(tmax_by_pz[pz])
+    if local_tmax < 0:
+        raise ValueError("tmax must be non-negative")
+    if local_tmax >= processed.shape[1]:
         raise ValueError(
-            f"fit window for pz={pz} lies outside the retained folded range [{full_t0}, {full_t1}]"
+            f"tmax={local_tmax} exceeds the retained folded range of length {processed.shape[1]}"
         )
-    selected = processed[:, fit_start - full_t0 : fit_end - full_t0 + 1]
-    time_offset = fit_start
+    processed = processed[:, : local_tmax + 1]
+    tmin_windows = load_fit_window_table(spec.tmin_window)
+    tmin_window = tmin_windows.get((None, pz))
+    if tmin_window is None:
+        raise ValueError(f"missing tmin_window entry for pz={pz}")
+    fit_start, fit_end = tmin_window
+    if fit_start < 0:
+        raise ValueError(f"tmin_window for pz={pz} must start at or above 0")
+    if fit_end > local_tmax:
+        raise ValueError(f"tmin_window for pz={pz} ends at {fit_end}, which exceeds tmax={local_tmax}")
+    selected = processed
+    time_offset = 0
     binned = bin_correlators(selected, binsize=spec.binsize)
     bootstrap_means = bootstrap_correlator_means(
         binned,
@@ -1120,8 +1142,7 @@ def _load_and_preprocess_correlators(spec: NStateFitInput, pz: int) -> _Prepared
     covariance = compute_bootstrap_covariance(bootstrap_means) if spec.fit_mode == "correlated" else None
 
     meff_mean, meff_err = effective_mass_with_bootstrap(bootstrap_means, spec.model, nt=spec.nt)
-    fit_tmax_local = selected.shape[1] - 1
-    fit_tmax_output = fit_tmax_local + time_offset
+    fit_tmax_output = local_tmax
 
     dataset_dir = spec.results_dir / title
     tables_dir = dataset_dir / "tables"
@@ -1134,8 +1155,8 @@ def _load_and_preprocess_correlators(spec: NStateFitInput, pz: int) -> _Prepared
     meff_table = tables_dir / f"{title}_{spec.model}_effective_mass_tmax{fit_tmax_output}.txt"
     return _PreparedDataset(
         title=title,
-        fit_window=fit_window,
-        time_offset=time_offset,
+        tmin_window=tmin_window,
+        time_offset=0,
         selected=selected,
         bootstrap_means=bootstrap_means,
         sigma=sigma,
@@ -1149,8 +1170,8 @@ def _load_and_preprocess_correlators(spec: NStateFitInput, pz: int) -> _Prepared
         samples_dir=samples_dir,
         correlator_table=correlator_table,
         meff_table=meff_table,
-        window_global_tmin=fit_start,
-        window_global_tmax=fit_end,
+        scan_tmin_start=fit_start,
+        scan_tmin_stop=fit_end,
     )
 
 
@@ -1158,7 +1179,7 @@ def _initialize_fit_guesses(
     bootstrap_means: np.ndarray,
     fixed_ground_energy: float | None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    one_state_energy_guess = 0.1 if fixed_ground_energy is None else float(fixed_ground_energy)
+    one_state_energy_guess = 0.01 if fixed_ground_energy is None else float(fixed_ground_energy)
     sample_index = 2 if bootstrap_means.shape[1] > 2 else max(0, bootstrap_means.shape[1] - 1)
     one_state_amplitude_guess = max(
         bootstrap_means.mean(axis=0)[sample_index] * np.exp(one_state_energy_guess * sample_index),
@@ -1185,8 +1206,8 @@ def _run_state_fits(
             return
 
         if nstates == 1:
-            tmin_start = 0
-            tmin_stop = 1
+            tmin_start = dataset.scan_tmin_start
+            tmin_stop = dataset.scan_tmin_stop + 1
             state_initial_guess = current_guess
             priors: tuple[EnergyPrior, ...] = ()
         else:
@@ -1196,8 +1217,8 @@ def _run_state_fits(
                 compute_state(previous_state)
                 previous_artifact = state_artifacts[previous_state]
 
-            tmin_start = 0
-            tmin_stop = 1
+            tmin_start = dataset.scan_tmin_start
+            tmin_stop = dataset.scan_tmin_stop + 1
             state_initial_guess = build_initial_guess_from_fit_window(previous_artifact.fit_window_summary, nstates)
             priors = build_energy_priors_from_fit_window_summary(
                 previous_artifact.fit_window_parameter_summary,
@@ -1221,21 +1242,21 @@ def _run_state_fits(
             spec.model,
             nstates,
             range(tmin_start, tmin_stop),
-            dataset.selected.shape[1] - 1,
+            dataset.fit_tmax_output,
             state_initial_guess[0],
             state_initial_guess[1],
             covariance=dataset.covariance,
             priors=priors,
             lambda_prior=spec.lambda_prior,
             fixed_ground_energy=fixed_ground_energy,
-            time_offset=dataset.time_offset,
+            time_offset=0,
         )
-        representative_row = rows[0] if rows else None
+        representative_row = next((row for row in reversed(rows) if row.success_meanfit), rows[0] if rows else None)
         if representative_row is None:
             raise ValueError(f"fit window for pz={pz} produced no fit row")
         fit_window_summary = FitWindowSummary(
-            start_tmin=representative_row.tmin,
-            end_tmin=representative_row.tmin,
+            start_tmin=dataset.scan_tmin_start,
+            end_tmin=dataset.scan_tmin_stop,
             representative_tmin=representative_row.tmin,
             energy_mean=representative_row.params_mean[nstates],
             amplitude_mean=representative_row.params_mean[0],
@@ -1295,7 +1316,7 @@ def _write_dataset_outputs(
         handle.write(f"model {spec.model}\n")
         handle.write(f"fit_mode {spec.fit_mode}\n")
         handle.write(f"tmax {dataset.fit_tmax_output}\n")
-        handle.write(f"fit_window {dataset.window_global_tmin} {dataset.window_global_tmax}\n")
+        handle.write(f"tmin_window {dataset.scan_tmin_start} {dataset.scan_tmin_stop}\n")
         if spec.pz0_ground_energy is not None:
             handle.write(f"pz0_ground_energy {spec.pz0_ground_energy:.10e}\n")
             handle.write(
@@ -1336,7 +1357,6 @@ def _write_dataset_outputs(
                     correlator_table=dataset.correlator_table,
                     meff_table=dataset.meff_table,
                     fit_table=artifact.fit_table_path,
-                    plateau_table=artifact.fit_window_table_path,
                     nstates=nstates,
                     model=spec.model,
                     title=dataset.title,
@@ -1355,9 +1375,6 @@ def _write_dataset_outputs(
             correlator_table=dataset.correlator_table,
             meff_table=dataset.meff_table,
             fit_tables={nstates: state_artifacts[nstates].fit_table_path for nstates in sorted(state_artifacts)},
-            plateau_tables={
-                nstates: state_artifacts[nstates].fit_window_table_path for nstates in sorted(state_artifacts)
-            },
             model=spec.model,
             title=dataset.title,
             nt=spec.nt,

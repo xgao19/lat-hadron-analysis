@@ -16,7 +16,8 @@ seed 2026
 fit_window /path/to/tmdwf_fit_windows.txt
 qtmdwf_h5 /path/to/qtmdwf_pz*.h5
 dataset_path_template {gm}/{eta}/pz{pz}/{Tdir}/bT{bT}/bz{bz}
-two_point_plateau_table examples/outputs/nstate_fit_realdata/l64c64a076_m140_fit_k0_pz*/tables/l64c64a076_m140_fit_k0_pz*_normal_1state_tmax#_plateau.txt
+two_point_fit_root examples/outputs/tmdwf_two_point_fit_ref
+two_point_fit_window_by_pz templates/input_files/tmdwf/tmdwf_two_point_fit_window_by_pz_example.txt
 c2pt examples/data/l64c64a076_m140/comb_c2pt_csv/c2pt_5_5_k0_pz*_real.csv
 fold_t periodic
 tsrange 0 20

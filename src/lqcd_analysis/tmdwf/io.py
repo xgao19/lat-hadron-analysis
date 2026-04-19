@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import glob
+from dataclasses import dataclass
 from pathlib import Path
-import re
 
 import numpy as np
-
 from .models import normalize_tmdwf_operator
 
 try:
@@ -30,48 +28,85 @@ def resolve_qtmdwf_h5_path(path_pattern: str | Path, *, pz: int, gm: str) -> Pat
     return resolved
 
 
-def load_two_point_plateau_values(path: str | Path, nstates: int) -> tuple[np.ndarray, np.ndarray]:
-    table = np.loadtxt(path, ndmin=2)
-    row = np.atleast_2d(np.asarray(table, dtype=float))[0]
-    total_states = row.size // 4
-    if total_states < nstates:
-        raise ValueError(f"plateau table {path} has only {total_states} states, requested {nstates}")
-    amplitudes = np.asarray(row[:nstates], dtype=float)
-    energies = np.asarray(row[total_states : total_states + nstates], dtype=float)
+@dataclass(frozen=True)
+class TwoPointFitReference:
+    path: Path
+    tmin: int
+    tmax: int
+    amplitudes: np.ndarray
+    energies: np.ndarray
+
+
+def _extract_fit_row_parameters(row: np.ndarray, nstates: int) -> tuple[int, int, np.ndarray, np.ndarray]:
+    values = np.asarray(row, dtype=float)
+    if values.ndim != 1:
+        raise ValueError("fit table row must be one-dimensional")
+    has_fallback_column = values.size >= 10 + 4 * nstates
+    selection_flag_column = 9 if has_fallback_column else 8
+    amp_mean_start = selection_flag_column + 1
+    amp_err_start = amp_mean_start + nstates
+    energy_mean_start = amp_err_start + nstates
+    energy_err_start = energy_mean_start + nstates
+    required_size = energy_err_start + nstates
+    if values.size < required_size:
+        raise ValueError(
+            f"fit table row has {values.size} columns, expected at least {required_size} for {nstates} states"
+        )
+    amplitudes = np.asarray(values[amp_mean_start : amp_mean_start + nstates], dtype=float)
+    energies = np.asarray(values[energy_mean_start : energy_mean_start + nstates], dtype=float)
     if not np.all(np.isfinite(amplitudes)) or not np.all(np.isfinite(energies)):
-        raise ValueError(f"non-finite two-point plateau values found in {path}")
-    return amplitudes, energies
+        raise ValueError("non-finite two-point fit parameters found in fit table row")
+    return int(values[0]), int(values[1]), amplitudes, energies
 
 
-def _infer_tmax_from_plateau_filename(path: str | Path) -> int | None:
-    match = re.search(r"_tmax(\d+)_plateau\.txt$", Path(path).name)
-    if match is None:
-        return None
-    return int(match.group(1))
+def resolve_two_point_fit_reference(
+    fit_root: str | Path,
+    *,
+    title: str,
+    nstates: int,
+    tmin: int,
+    tmax: int,
+) -> TwoPointFitReference:
+    tables_dir = Path(fit_root) / title / "tables"
+    if not tables_dir.exists():
+        raise FileNotFoundError(f"two-point nstate fit tables directory does not exist: {tables_dir}")
 
+    pattern = f"{title}_*_{nstates}state_tmax{int(tmax)}_fits.txt"
+    candidates = sorted(tables_dir.glob(pattern))
+    if not candidates:
+        candidates = sorted(tables_dir.glob(f"*_{nstates}state_tmax{int(tmax)}_fits.txt"))
+    if not candidates:
+        raise FileNotFoundError(
+            f"two-point nstate fit table does not exist for title={title}, nstates={nstates}, tmax={tmax}: {tables_dir / pattern}"
+        )
 
-def resolve_two_point_plateau_table(path_pattern: str | Path, *, pz: int) -> tuple[Path, int | None]:
-    expanded = Path(expand_template(str(path_pattern), pz=pz))
-    if "#" not in str(expanded):
-        if not expanded.exists():
-            raise FileNotFoundError(expanded)
-        return expanded, _infer_tmax_from_plateau_filename(expanded)
+    for candidate in candidates:
+        table = np.loadtxt(candidate, ndmin=2)
+        rows = np.atleast_2d(np.asarray(table, dtype=float))
+        matching_rows = rows[rows[:, 0].astype(int) == int(tmin)]
+        if matching_rows.size == 0:
+            continue
+        selected_row = matching_rows[0]
+        row_tmin, row_tmax, amplitudes, energies = _extract_fit_row_parameters(selected_row, nstates)
+        if row_tmin != int(tmin):
+            raise ValueError(
+                f"two-point fit table row tmin mismatch in {candidate}: expected {tmin}, found {row_tmin}"
+            )
+        if row_tmax != int(tmax):
+            raise ValueError(
+                f"two-point fit table row tmax mismatch in {candidate}: expected {tmax}, found {row_tmax}"
+            )
+        return TwoPointFitReference(
+            path=candidate,
+            tmin=int(tmin),
+            tmax=int(tmax),
+            amplitudes=amplitudes,
+            energies=energies,
+        )
 
-    glob_pattern = str(expanded).replace("#", "*")
-    matches = [Path(match) for match in sorted(glob.glob(glob_pattern))]
-    if not matches:
-        raise FileNotFoundError(path_pattern)
-
-    ranked_matches: list[tuple[int, Path]] = []
-    for candidate in matches:
-        inferred_tmax = _infer_tmax_from_plateau_filename(candidate)
-        if inferred_tmax is not None:
-            ranked_matches.append((inferred_tmax, candidate))
-    if not ranked_matches:
-        raise ValueError(f"could not infer tmax from any plateau filename matching pattern: {path_pattern}")
-    ranked_matches.sort(key=lambda item: item[0])
-    selected_tmax, selected_path = ranked_matches[-1]
-    return selected_path, selected_tmax
+    raise ValueError(
+        f"could not find tmin={tmin}, tmax={tmax} in any two-point fit table matching title={title}, nstates={nstates}"
+    )
 
 
 def _normalize_time_axis(data: np.ndarray, nt: int) -> np.ndarray:

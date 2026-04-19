@@ -145,13 +145,10 @@ def momentum_unit_gev(ns: int, lattice_spacing_fm: float) -> float:
 
 
 def _legacy_quantile_triplet(values: np.ndarray) -> tuple[float, float, float]:
-    array = np.sort(np.asarray(values, dtype=float))
-    if array.size == 0:
+    if values.size == 0:
         return np.nan, np.nan, np.nan
-    low = min(max(int(0.16 * array.size), 0), array.size - 1)
-    mid = min(max(int(0.50 * array.size), 0), array.size - 1)
-    high = min(max(int(0.84 * array.size), 0), array.size - 1)
-    return float(array[low]), float(array[mid]), float(array[high])
+    q16, q50, q84 = np.percentile(values, [16.0, 50.0, 84.0])
+    return float(q16), float(q50), float(q84)
 
 
 def load_cs_kernel_observable(sample_path: str | Path) -> CSKernelObservable:
