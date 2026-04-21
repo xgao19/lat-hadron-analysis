@@ -41,6 +41,61 @@ class CSKernelBreakdownSeries:
     total_p84: np.ndarray
 
 
+def plot_tmdwf_cs_kernel_average_bT(
+    output_path: str | Path,
+    rows: tuple[object, ...] | list[object],
+    *,
+    title: str | None = None,
+    figsize: tuple[float, float] = (6.8, 4.5),
+) -> Path:
+    output_path = Path(output_path)
+    plt = prepare_matplotlib()
+    if plt is None:
+        return save_plot_status(output_path.with_suffix(".txt"), "matplotlib not installed; plot was skipped")
+
+    if not rows:
+        return save_plot_status(output_path.with_suffix(".txt"), "no averaged CS-kernel rows available for plotting")
+
+    bT = np.array([float(row.bT_fm) if hasattr(row, "bT_fm") else float(row.bT) for row in rows], dtype=float)
+    value = np.array([float(row.value) for row in rows], dtype=float)
+    stat_err = np.array([float(row.stat_err) for row in rows], dtype=float)
+    sys_err = np.array([float(row.sys_err) for row in rows], dtype=float)
+    total_err = np.array([float(row.total_err) for row in rows], dtype=float)
+
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.errorbar(
+        bT,
+        value,
+        yerr=total_err,
+        fmt="o",
+        color="C0",
+        ecolor="0.35",
+        elinewidth=1.3,
+        capsize=3,
+        label="total error",
+    )
+    ax.errorbar(
+        bT,
+        value,
+        yerr=stat_err,
+        fmt="none",
+        ecolor="C0",
+        elinewidth=2.0,
+        capsize=5,
+        label="statistical error",
+    )
+    ax.set_xlabel(r"$b_T$ [fm]")
+    ax.set_ylabel(r"CS-kernel average")
+    if title:
+        ax.set_title(title)
+    ax.legend(title="error bars")
+    ax.grid(True, alpha=0.2)
+    fig.tight_layout()
+    fig.savefig(output_path)
+    plt.close(fig)
+    return output_path
+
+
 def _parse_grouped_table(path: str | Path) -> tuple[dict[str, str], list[str], list[list[str]]]:
     metadata: dict[str, str] = {}
     header: list[str] | None = None

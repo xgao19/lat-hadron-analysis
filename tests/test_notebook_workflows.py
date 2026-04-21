@@ -11,6 +11,7 @@ from lqcd_analysis.notebook_workflows import (
     render_effective_mass_input_text,
     render_nstate_fit_input_text,
     render_tmdwf_cs_kernel_input_text,
+    render_tmdwf_cs_kernel_average_input_text,
     render_tmdwf_fourier_input_text,
     render_tmdwf_fit_input_text,
     render_tmdwf_normalize_input_text,
@@ -18,6 +19,7 @@ from lqcd_analysis.notebook_workflows import (
     run_effective_mass_from_notebook,
     run_nstate_fit_from_notebook,
     run_tmdwf_cs_kernel_from_notebook,
+    run_tmdwf_cs_kernel_average_from_notebook,
     run_tmdwf_fourier_from_notebook,
     run_tmdwf_fit_from_notebook,
     run_tmdwf_normalize_from_notebook,
@@ -26,6 +28,7 @@ from lqcd_analysis.notebook_workflows import (
     validate_nstate_notebook_config,
     validate_plot_2pt_notebook_config,
     validate_tmdwf_cs_kernel_notebook_config,
+    validate_tmdwf_cs_kernel_average_notebook_config,
     validate_tmdwf_fourier_notebook_config,
     validate_tmdwf_notebook_config,
     validate_tmdwf_normalize_notebook_config,
@@ -121,6 +124,22 @@ class NotebookWorkflowTests(unittest.TestCase):
             "bTlist": [0, 2],
             "pzlist": [2, 3, 4],
             "x_window": [0.2, 0.8],
+        }
+        self.tmdwf_cs_kernel_average_config = {
+            "title_pattern": "demo_pz*",
+            "input_root": "/tmp/tmdwf_cs_kernel",
+            "lattice_spacing_fm": 0.076,
+            "gm": "T5",
+            "eta": "eta0",
+            "component": "real",
+            "nstates": 1,
+            "normalization_mode": "raw",
+            "scheme": "CG",
+            "extraction_type": "type2",
+            "kernel_label": "LO",
+            "bTrange": [0, 2],
+            "x_range": [0.25, 0.75],
+            "reference_pz_labels": ["5-6", "6-7"],
         }
 
     def test_render_tgevp_text(self) -> None:
@@ -463,6 +482,155 @@ class NotebookWorkflowTests(unittest.TestCase):
         self.assertEqual(validated["bTlist"], (0, 2))
         self.assertEqual(validated["pzlist"], (2, 3, 4))
 
+    def test_render_tmdwf_cs_kernel_average_text(self) -> None:
+        text = render_tmdwf_cs_kernel_average_input_text(
+            {
+                **self.tmdwf_cs_kernel_average_config,
+                "results_dir": "/tmp/tmdwf_cs_kernel_average",
+            }
+        )
+        self.assertIn("title_pattern demo_pz*", text)
+        self.assertIn("input_root /tmp/tmdwf_cs_kernel", text)
+        self.assertIn("lattice_spacing_fm 0.076", text)
+        self.assertIn("kernel_label LO", text)
+        self.assertIn("reference_pz_labels 5-6 6-7", text)
+        self.assertIn("x_range 0.25 0.75", text)
+        self.assertIn("results_dir /tmp/tmdwf_cs_kernel_average", text)
+
+    def test_validate_tmdwf_cs_kernel_average_notebook_config(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            input_root = tmp / "inputs"
+            title = "demo_src5"
+            tables_dir = input_root / title / "tables"
+            samples_dir = input_root / title / "samples"
+            tables_dir.mkdir(parents=True)
+            samples_dir.mkdir(parents=True)
+            band_lines = [
+                "title_pattern demo_src*",
+                "output_title demo_pzmultiPz",
+                "gm T5",
+                "eta eta0",
+                "lattice_spacing_fm 0.076",
+                "component real",
+                "nstates 1",
+                "normalization_mode raw",
+                "scheme CG",
+                "extraction_type type2",
+                "kernel_label LO",
+                "reference_bT 2",
+                "reference_pz 5",
+                "reference_pz_label 5-6",
+                "dP_GeV 2.5000000000e-01",
+                "x\tgamma_p16\tgamma_p50\tgamma_p84",
+                "2.5000000000e-01\t1.0\t1.1\t1.2",
+            ]
+            sample_lines = [
+                "title_pattern demo_src*",
+                "output_title demo_pzmultiPz",
+                "gm T5",
+                "eta eta0",
+                "lattice_spacing_fm 0.076",
+                "component real",
+                "nstates 1",
+                "normalization_mode raw",
+                "scheme CG",
+                "extraction_type type2",
+                "kernel_label LO",
+                "reference_bT 2",
+                "reference_pz 5",
+                "reference_pz_label 5-6",
+                "dP_GeV 2.5000000000e-01",
+                "x sample_id success gamma_zeta chi2_dof",
+                "2.5000000000e-01\t0\t1\t1.0\t0.0",
+            ]
+            (tables_dir / f"{title}_T5_eta0_bT2_real_1state_CG_LO_band.txt").write_text("\n".join(band_lines) + "\n", encoding="utf-8")
+            (samples_dir / f"{title}_T5_eta0_bT2_real_1state_CG_LO_samples.txt").write_text("\n".join(sample_lines) + "\n", encoding="utf-8")
+            validated = validate_tmdwf_cs_kernel_average_notebook_config(
+                {
+                    **self.tmdwf_cs_kernel_average_config,
+                    "input_root": str(input_root),
+                }
+            )
+        self.assertEqual(validated["kernel_label"], "LO")
+        self.assertEqual(validated["bTlist"], (0, 1, 2))
+        self.assertAlmostEqual(float(validated["lattice_spacing_fm"]), 0.076)
+        self.assertEqual(validated["x_range"], (0.25, 0.75))
+        self.assertEqual(validated["reference_pz_labels"], ("5-6", "6-7"))
+
+    def test_explicit_results_dir_override_wins_for_tmdwf_cs_kernel_average_notebook_runner(self) -> None:
+        with patch("lqcd_analysis.notebook_workflows.run_tmdwf_cs_kernel_average_workflow", return_value=[]) as mock_avg:
+            import tempfile
+
+            with tempfile.TemporaryDirectory() as tmpdir:
+                tmp = Path(tmpdir)
+                tables_dir = tmp / "demo_src5" / "tables"
+                samples_dir = tmp / "demo_src5" / "samples"
+                tables_dir.mkdir(parents=True, exist_ok=True)
+                samples_dir.mkdir(parents=True, exist_ok=True)
+                (tables_dir / "demo_src5_T5_eta0_bT2_real_1state_CG_LO_band.txt").write_text(
+                    "\n".join(
+                        [
+                            "title_pattern demo_src*",
+                            "output_title demo_pzmultiPz",
+                            "gm T5",
+                            "eta eta0",
+                            "lattice_spacing_fm 0.076",
+                            "component real",
+                            "nstates 1",
+                            "normalization_mode raw",
+                            "scheme CG",
+                            "extraction_type type2",
+                            "pair_mode all",
+                            "kernel_label LO",
+                            "reference_bT 2",
+                            "reference_pz 5",
+                            "reference_pz_label 5-6",
+                            "dP_GeV 2.5000000000e-01",
+                            "x\tgamma_p16\tgamma_p50\tgamma_p84",
+                            "2.5000000000e-01\t1.0\t1.1\t1.2",
+                        ]
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+                (samples_dir / "demo_src5_T5_eta0_bT2_real_1state_CG_LO_samples.txt").write_text(
+                    "\n".join(
+                        [
+                            "title_pattern demo_src*",
+                            "output_title demo_pzmultiPz",
+                            "gm T5",
+                            "eta eta0",
+                            "lattice_spacing_fm 0.076",
+                            "component real",
+                            "nstates 1",
+                            "normalization_mode raw",
+                            "scheme CG",
+                            "extraction_type type2",
+                            "pair_mode all",
+                            "kernel_label LO",
+                            "reference_bT 2",
+                            "reference_pz 5",
+                            "reference_pz_label 5-6",
+                            "dP_GeV 2.5000000000e-01",
+                            "x sample_id success gamma_zeta chi2_dof",
+                            "2.5000000000e-01\t0\t1\t1.0\t0.0",
+                        ]
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+                run_tmdwf_cs_kernel_average_from_notebook(
+                    {
+                        **self.tmdwf_cs_kernel_average_config,
+                        "input_root": str(tmp),
+                    },
+                    results_dir="/tmp/explicit_tmdwf_cs_average",
+                )
+        self.assertEqual(Path(mock_avg.call_args.kwargs["results_dir"]), Path("/tmp/explicit_tmdwf_cs_average"))
+
     def test_tmdwf_fourier_notebook_config_rejects_old_single_job_shape(self) -> None:
         with self.assertRaises(ValueError) as ctx:
             render_tmdwf_fourier_input_text(
@@ -735,6 +903,7 @@ class NotebookWorkflowTests(unittest.TestCase):
             "templates/tmdwf/tmdwf_fourier_template.ipynb",
             "templates/tmdwf/tmdwf_normalize_template.ipynb",
             "templates/tmdwf/tmdwf_cs_kernel_template.ipynb",
+            "templates/tmdwf/tmdwf_cs_kernel_average_template.ipynb",
             "templates/two_point/plot_2pt_template.ipynb",
         ):
             path = Path(relative)
@@ -785,6 +954,18 @@ class NotebookWorkflowTests(unittest.TestCase):
         self.assertIn("Expected input data shape", joined)
         self.assertIn("# Data / metadata settings", joined)
         self.assertIn("# CS-kernel extraction settings", joined)
+
+    def test_tmdwf_cs_kernel_average_template_contains_expected_workflow_hooks(self) -> None:
+        path = Path("templates/tmdwf/tmdwf_cs_kernel_average_template.ipynb")
+        notebook = json.loads(path.read_text(encoding="utf-8"))
+        joined = "\n".join("".join(cell.get("source", [])) for cell in notebook["cells"])
+        self.assertIn("render_tmdwf_cs_kernel_average_input_text", joined)
+        self.assertIn("validate_tmdwf_cs_kernel_average_notebook_config", joined)
+        self.assertIn("run_tmdwf_cs_kernel_average_from_notebook", joined)
+        self.assertIn("\"kernel_label\": \"LO\"", joined)
+        self.assertIn("\"reference_pz_labels\": [\"5-6\", \"6-7\", \"7-8\"]", joined)
+        self.assertIn("# Data / metadata settings", joined)
+        self.assertIn("# User Inputs", joined)
 
     def test_example_input_files_parse(self) -> None:
         tgevp_input = Path("templates/input_files/two_point/tgevp_example_realdata.txt")

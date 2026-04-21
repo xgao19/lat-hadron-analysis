@@ -19,6 +19,11 @@ When performing cleanup or refactor work, always report:
 4. removed legacy logic
 5. manual verification checklist
 
+## Code comments language
+- All code comments must be written in English only.
+- Never write comments in Chinese or any other non-English language.
+- This applies to both new code and modifications to existing code.
+
 ## Handoff prompt preference
 
 When asked to generate a prompt for another agent such as Claude, prioritize:

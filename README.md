@@ -453,6 +453,101 @@ A matching notebook template is also provided in:
 
 - `templates/tmdwf/tmdwf_cs_kernel_template.ipynb`
 
+## TMDWF CS-Kernel Averaging
+
+The repository also provides a downstream averaging step that consumes existing
+CS-kernel outputs and averages the x-dependent results over the selected x
+region for each `bT`.
+
+Two interfaces are supported:
+
+- Notebook template: self-contained `workflow_config`, no separate input file
+- Plain-text batch input: `input_tmdwf_cs_kernel_average.txt`
+
+Notebook template:
+
+- `templates/tmdwf/tmdwf_cs_kernel_average_template.ipynb`
+
+Plain-text batch example:
+
+```bash
+lqcd-analysis tmdwf-cs-kernel-average input_tmdwf_cs_kernel_average.txt
+```
+
+This averaging workflow:
+
+- reads the repository-native CS-kernel band/sample tables produced by the
+  downstream CS-kernel extraction workflow
+- selects x values using either the explicit `x_range` or the physical cuts
+  `2*x*pz>1 GeV`, `2*(1-x)*pz>1 GeV`, `bT*pz*x>0.5`, and `bT*pz*(1-x)>0.5`
+- averages the selected x-dependent results for each bootstrap sample
+- reports the sample-mean statistical error and the within-sample systematic error
+- writes one averaged value per `bT` together with the selection summary and full bootstrap summary table
+- automatically writes a `bT` summary plot with statistical and total error bars
+
+Expected key input fields include:
+
+```text
+title_pattern demo_tmdwf_cs_kernel_average
+input_root /path/to/tmdwf_cs_kernel_outputs
+lattice_spacing_fm 0.076
+gm T5
+eta eta0
+component real
+nstates 1
+normalization_mode raw
+scheme CG
+extraction_type type2
+kernel_label LO
+bTrange 0 4
+x_range 0.25 0.75
+reference_pz_labels 5-6 6-7 7-8
+results_dir /path/to/tmdwf_cs_kernel_average
+```
+
+Option guide:
+
+- `title_pattern`:
+  same per-`pz` title pattern used upstream by the TMDWF fit/Fourier/CS-kernel workflows.
+- `input_root`:
+  root directory containing existing TMDWF CS-kernel outputs. The averaging workflow resolves the usual CS-kernel band/sample filenames automatically from the repository naming convention.
+- `lattice_spacing_fm`:
+  lattice spacing in fm. The averaging workflow uses it to add `bT_fm` to the values table and to plot the summary on a fm horizontal axis.
+- `gm`, `eta`:
+  operator and insertion-channel selectors used to identify the correct CS-kernel outputs.
+- `component`, `nstates`:
+  select which Fourier/CS-kernel family to consume.
+- `normalization_mode`:
+  one of `raw`, `mode1`, `mode2`, or `mode3`. This must match the upstream Fourier/CS-kernel output mode.
+- `scheme`:
+  matching-scheme selector. The current implementation supports only `CG` for the type-2 TMDWF workflow.
+- `extraction_type`:
+  keep this as `type2` for the legacy qTMDWF CS-kernel method.
+- `kernel_label`:
+  which perturbative CS-kernel label to average. The workflow currently expects one label at a time.
+- `bTlist` / `bTrange`:
+  which transverse separations to process.
+- `x_range`:
+  optional explicit `x_min x_max` interval. When provided, the workflow uses that x window directly and skips the automatic physical x-selection cuts.
+- `reference_pz_labels`:
+  which CS-kernel pair-group labels to include in the averaging. These are matched against the CS-kernel output metadata, so `5-6` selects the source group whose reference momentum label is `5-6` and whose numeric reference momentum is `5`. If omitted, all matching labels are used.
+- `results_dir`:
+  output root for the averaged summary file, grouped tables, bootstrap samples, and selection metadata.
+
+Expected input data shape:
+
+- The workflow reads the repository-native CS-kernel summary bands and bootstrap sample tables.
+- It groups the CS-kernel x-dependent results by `bT`. If `x_range` is provided, it uses that interval directly; otherwise it applies the physical x-selection cuts. It then averages across the selected x values for each bootstrap sample.
+- The output summary uses the mean of the sample means as the central value, a percentile-based statistical error from the sample means, and the mean within-sample standard deviation as the systematic error.
+
+For each requested `bT`, the workflow writes:
+
+- `*_summary.txt`
+- `tables/*_values.txt`
+- `tables/*_selection.txt`
+- `samples/*_samples.txt`
+- `plots/*_bT_average.pdf`
+
 ## Recommended TMDWF Downstream Chain
 
 The intended downstream chain is now:
@@ -461,6 +556,7 @@ The intended downstream chain is now:
 2. optional `tmdwf-normalize`
 3. `tmdwf-fourier`
 4. `tmdwf-cs-kernel`
+5. optional `tmdwf-cs-kernel-average`
 
 The data products passed between these steps are:
 
@@ -472,6 +568,8 @@ The data products passed between these steps are:
   reads either raw grouped `m0` outputs or normalized grouped `m0` outputs, then writes Fourier-space `q(x; pz, bT)` tables and bootstrap samples.
 - `tmdwf-cs-kernel`:
   reads those Fourier-space bootstrap outputs and performs the legacy type-2 multi-`Pz` CS-kernel extraction.
+- `tmdwf-cs-kernel-average`:
+  reads those CS-kernel outputs and averages the x-dependent results over the selected x window for each `bT`.
 
 Practical choices:
 
@@ -494,6 +592,8 @@ This means the repository now supports these two common chains cleanly:
   `fit -> fourier(raw) -> cs-kernel(raw)`
 - normalized chain:
   `fit -> normalize(modeX) -> fourier(modeX) -> cs-kernel(modeX)`
+- averaged CS-kernel chain:
+  `fit -> normalize(optional) -> fourier -> cs-kernel -> cs-kernel-average`
 
 ## Workflows
 
@@ -518,7 +618,7 @@ Notebook templates are thin wrappers around the existing analysis code. They are
 Each template now uses the same notebook-facing pattern: edit a single `workflow_config` object, validate it, and then call one `run_*_from_notebook(...)` function.
 Each notebook template also includes an `Option Guide` markdown cell right after the user-input cell, describing the main options, their expected choices, and their practical effect.
 
-The helper bridge for notebooks lives in `src/lqcd_analysis/notebook_workflows.py`. It renders notebook configs into the same or nearly the same text fields used by the existing input-file parsers, and then calls the same backend runners in the `two_point` and `tmdwf` packages.
+The helper bridge for notebooks lives in `src/lqcd_analysis/notebook_workflows.py`. Notebook workflows take their configuration directly from the notebook `workflow_config` object and call the same backend runners in the `two_point` and `tmdwf` packages; they do not require a separate input file.
 The two workflows use different default output locations by design: notebook workflows default to the current working directory, while plain-text input-file workflows default to a results directory next to the input file.
 For `nstatefit`, the user-facing `fit_mode` option supports both `uncorrelated` and `correlated` fits. In correlated mode the code builds one shared covariance matrix from the full bootstrap ensemble and reuses it across the mean fit and bootstrap fits; if a correlated sample/window fit fails, it falls back to a diagonal fit using only the covariance diagonal.
 The N-state fit outputs also track this fallback usage: fit tables include a `fallback_uncorrelated_successes` column for each `tmin` window, and summaries report the representative window's fallback count.

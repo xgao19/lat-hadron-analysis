@@ -9,6 +9,10 @@ from .tmdwf.cs_kernel_extract import (
     parse_tmdwf_cs_kernel_input,
     run_tmdwf_cs_kernel_workflow,
 )
+from .tmdwf.cs_kernel_average import (
+    parse_tmdwf_cs_kernel_average_input,
+    run_tmdwf_cs_kernel_average_workflow,
+)
 from .tmdwf.fourier import (
     parse_tmdwf_fourier_input,
     run_tmdwf_fourier_workflow,
@@ -162,6 +166,25 @@ TMDWF_CS_KERNEL_KEYS = {
     "results_dir",
 }
 TMDWF_CS_KERNEL_RUN_KEYS = {"results_dir"}
+TMDWF_CS_KERNEL_AVERAGE_KEYS = {
+    "title_pattern",
+    "input_root",
+    "lattice_spacing_fm",
+    "gm",
+    "eta",
+    "component",
+    "nstates",
+    "normalization_mode",
+    "scheme",
+    "extraction_type",
+    "kernel_label",
+    "bTlist",
+    "bTrange",
+    "x_range",
+    "reference_pz_labels",
+    "results_dir",
+}
+TMDWF_CS_KERNEL_AVERAGE_RUN_KEYS = {"results_dir"}
 TMDWF_NORMALIZE_KEYS = {
     "title_pattern",
     "input_root",
@@ -534,6 +557,54 @@ def render_tmdwf_cs_kernel_input_text(config: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def render_tmdwf_cs_kernel_average_input_text(config: dict[str, Any]) -> str:
+    config = _subset_config(config, TMDWF_CS_KERNEL_AVERAGE_KEYS)
+    required = [
+        "title_pattern",
+        "input_root",
+        "lattice_spacing_fm",
+        "gm",
+        "eta",
+        "component",
+        "nstates",
+        "normalization_mode",
+        "scheme",
+        "extraction_type",
+        "kernel_label",
+    ]
+    missing = [key for key in required if key not in config]
+    if missing:
+        raise ValueError(f"missing TMDWF CS-kernel average notebook config keys: {missing}")
+    if "bTlist" not in config and "bTrange" not in config:
+        raise ValueError("missing TMDWF CS-kernel average notebook config key: bTlist or bTrange")
+
+    lines = [
+        f"title_pattern {_as_scalar_string(config['title_pattern'])}",
+        f"input_root {_as_scalar_string(config['input_root'])}",
+        f"lattice_spacing_fm {_as_scalar_string(config['lattice_spacing_fm'])}",
+        f"gm {_as_scalar_string(config['gm'])}",
+        f"eta {_as_scalar_string(config['eta'])}",
+        f"component {_as_scalar_string(config['component'])}",
+        f"nstates {_as_scalar_string(config['nstates'])}",
+        f"normalization_mode {_as_scalar_string(config['normalization_mode'])}",
+        f"scheme {_as_scalar_string(config['scheme'])}",
+        f"extraction_type {_as_scalar_string(config['extraction_type'])}",
+        f"kernel_label {_as_scalar_string(config['kernel_label'])}",
+    ]
+    if "bTlist" in config and config["bTlist"] is not None:
+        lines.append(f"bTlist {_as_scalar_string(config['bTlist'])}")
+    elif "bTrange" in config and config["bTrange"] is not None:
+        lines.append(f"bTrange {_as_scalar_string(config['bTrange'])}")
+    if "reference_pz_labels" in config and config["reference_pz_labels"] is not None:
+        lines.append(f"reference_pz_labels {_as_scalar_string(config['reference_pz_labels'])}")
+    if "x_range" in config and config["x_range"] is not None:
+        lines.append(f"x_range {_as_scalar_string(config['x_range'])}")
+    for optional_key in ("results_dir",):
+        if optional_key in config and config[optional_key] is not None:
+            lines.append(f"{optional_key} {_as_scalar_string(config[optional_key])}")
+    return "\n".join(lines) + "\n"
+
+
 def render_tmdwf_normalize_input_text(config: dict[str, Any]) -> str:
     config = _subset_config(config, TMDWF_NORMALIZE_KEYS)
     required = [
@@ -752,6 +823,30 @@ def validate_tmdwf_cs_kernel_notebook_config(config: dict[str, Any]) -> dict[str
     return validated
 
 
+def validate_tmdwf_cs_kernel_average_notebook_config(config: dict[str, Any]) -> dict[str, Any]:
+    input_path = _materialize_input_text(render_tmdwf_cs_kernel_average_input_text(config), "input_tmdwf_cs_kernel_average.txt")
+    parsed = parse_tmdwf_cs_kernel_average_input(input_path)
+    validated = {
+        "title_pattern": parsed.title_pattern,
+        "input_root": parsed.input_root,
+        "lattice_spacing_fm": parsed.lattice_spacing_fm,
+        "gm": parsed.gm,
+        "eta": parsed.eta,
+        "component": parsed.component,
+        "nstates": parsed.nstates,
+        "normalization_mode": parsed.normalization_mode,
+        "scheme": parsed.scheme,
+        "extraction_type": parsed.extraction_type,
+        "kernel_label": parsed.kernel_label,
+        "bTlist": parsed.bTlist,
+        "x_range": parsed.x_range,
+        "reference_pz_labels": parsed.reference_pz_labels,
+    }
+    if "results_dir" in config and config["results_dir"] is not None:
+        validated["results_dir"] = Path(config["results_dir"])
+    return validated
+
+
 def validate_tmdwf_normalize_notebook_config(config: dict[str, Any]) -> dict[str, Any]:
     input_path = _materialize_input_text(render_tmdwf_normalize_input_text(config), "input_tmdwf_normalize.txt")
     parsed = parse_tmdwf_normalize_input(input_path)
@@ -864,6 +959,19 @@ def run_tmdwf_cs_kernel_from_notebook(
         run_config["results_dir"] = _guess_notebook_dir()
     input_path = _materialize_input_text(render_tmdwf_cs_kernel_input_text(config), "input_tmdwf_cs_kernel.txt")
     return run_tmdwf_cs_kernel_workflow(input_path, results_dir=run_config["results_dir"])
+
+
+def run_tmdwf_cs_kernel_average_from_notebook(
+    config: dict[str, Any],
+    **overrides: Any,
+) -> list[Path]:
+    run_config = {"results_dir": None}
+    run_config.update(_subset_config(config, TMDWF_CS_KERNEL_AVERAGE_RUN_KEYS))
+    run_config.update({key: value for key, value in overrides.items() if value is not None})
+    if run_config["results_dir"] is None:
+        run_config["results_dir"] = _guess_notebook_dir()
+    input_path = _materialize_input_text(render_tmdwf_cs_kernel_average_input_text(config), "input_tmdwf_cs_kernel_average.txt")
+    return run_tmdwf_cs_kernel_average_workflow(input_path, results_dir=run_config["results_dir"])
 
 
 def run_tmdwf_normalize_from_notebook(

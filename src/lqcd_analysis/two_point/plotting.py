@@ -24,6 +24,8 @@ def prepare_matplotlib():
         if not os.access(default_dir, os.W_OK):
             os.environ["MPLCONFIGDIR"] = str(Path(tempfile.gettempdir()) / "matplotlib")
     try:
+        import matplotlib
+        matplotlib.use("Agg", force=True)
         import matplotlib.pyplot as plt
     except ModuleNotFoundError:
         return None

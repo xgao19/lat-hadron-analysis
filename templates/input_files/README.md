@@ -80,6 +80,29 @@ Current grouped-output behavior:
 - grouped summaries contain one parseable block per `bz`
 - grouped fit / sample / curve files include an explicit leading `bz` column
 
+### TMDWF CS-Kernel Averaging Example
+
+```bash
+lqcd-analysis tmdwf-cs-kernel-average \
+  templates/input_files/tmdwf/tmdwf_cs_kernel_average_example.txt
+```
+
+Annotated version:
+
+```text
+templates/input_files/tmdwf/tmdwf_cs_kernel_average_example_annotated.txt
+```
+
+This averaging template is the plain-text batch interface for the downstream
+CS-kernel averaging workflow. It consumes existing CS-kernel band/sample
+outputs and reduces the x-dependent results to one value and error budget per
+`bT` using either the repository's built-in momentum and `bT` selection cuts
+or an explicit `x_range` when provided in the input file. It also writes an
+automatic `bT` summary plot alongside the tabular outputs.
+
+The notebook template for the same workflow is self-contained and does not
+require this input file.
+
 ## Plot Example
 
 Run the N-state fit example first, then:

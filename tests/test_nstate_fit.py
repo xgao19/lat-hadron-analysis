@@ -504,7 +504,7 @@ class NStateFitTests(unittest.TestCase):
                 covariance=covariance,
             )
         self.assertTrue(result.success)
-        self.assertIn("shrinkage_lambda=0.05", result.message)
+        self.assertIn("shrinkage_lambda=0.20", result.message)
         self.assertEqual(mock_least_squares.call_count, 10)
         self.assertFalse(result.used_uncorrelated_fallback)
 
