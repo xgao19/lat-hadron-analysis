@@ -1,6 +1,6 @@
-# Example 2pt N-state fit input file
+# Example 2pt 2-state fit input file
 # Edit the values below, then run:
-#   python scripts/two_point/fit_2pt_nstate.py 2pt-nstate-fit templates/input_files/two_point/nstate_fit_example_realdata_annotated.txt
+#   python scripts/two_point/fit_2pt_nstate.py 2pt-nstate-fit templates/input_files/two_point/nstate_fit_2state_example_realdata_annotated.txt
 #
 # First line format:
 #   title_pattern Ns Nt lattice_spacing_fm
@@ -43,11 +43,8 @@ fit_mode uncorrelated
 # This is the closest repository-native path to the legacy fixed-E0 workflow.
 
 # Allowed fit-state choices are subsets of: 1 2 3
-# Examples:
-#   nstates 1
-#   nstates 1 2
-#   nstates 1 2 3
-nstates 1 2
+# This example is configured for 2-state only.
+nstates 2
 
 # Optional: pz=0 ground-state energy in lattice units.
 # If provided, the 1-state fit-window selection uses the target
@@ -79,14 +76,14 @@ binsize 1
 bootstrap_samples 16
 bootstrap_size 16
 seed 2026
+low_state_prior_tmin 3
 
 # Soft-prior strength for higher-state fits.
 # The prior enters the least-squares residual as
 #   sqrt(lambda_prior) * (E - E_prior) / sigma_prior
 # Default is 1.0.
 # 1-state has no lower-state prior.
-# 2-state gets a prior on E0 from the 1-state fit-window result.
-# 3-state gets priors on E0 and E1 from the 2-state result.
+# 2-state uses the row selected by low_state_prior_tmin when it is set.
 lambda_prior 1.0
 
 # Whether to generate plots automatically.
@@ -97,14 +94,15 @@ plot true
 #   Fit tables include `fallback_uncorrelated_successes`, the number of bootstrap
 #   samples in that tmin scan window that succeeded only after falling back from
 #   the correlated fit to a diagonal fit.
-#   The summary also reports this count for the representative scan window.
 
 # Output directory.
 # If omitted, outputs go to a `results_nstate_fit/` directory next to this input file.
-results_dir examples/outputs/nstate_fit_realdata
+results_dir examples/outputs/nstate_fit_realdata_2state
 
 # Note:
 # - By default, the backend folds the correlator, scans the requested
 #   `tmin_window`, and keeps `tmax` fixed for that momentum.
 # - The `tmin_window` + `tmax` pair is the canonical control surface for the
 #   2pt workflow.
+# - `low_state_prior_tmin` selects the exact row from the previous lower-state fit table
+#   that is used as the prior source for higher-state fits.

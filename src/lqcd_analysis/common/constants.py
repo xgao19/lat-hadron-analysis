@@ -7,4 +7,6 @@ MIN_POSITIVE = 1e-12
 MIN_AMPLITUDE = 1e-16
 MIN_COVARIANCE_DIAGONAL = 1e-24
 
-SHRINKAGE_LAMBDAS: tuple[float, ...] = (0.2, 0.3, 0.5, 1.0)
+# Correlated fits try these shrinkage strengths in order until the covariance
+# matrix becomes numerically usable.
+SHRINKAGE_LAMBDAS: tuple[float, ...] = (0.1, 0.2, 0.3, 0.5, 1.0)

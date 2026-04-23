@@ -1,36 +1,51 @@
-# Repository expectations
+# Repository Expectations
 
-## Refactor philosophy
-This repository prefers a slim implementation over compatibility preservation.
-
-- Remove dead code aggressively.
-- Keep only the current intended workflow.
-- Do not preserve old entry points, aliases, or fallback branches unless explicitly requested.
-- Do not add abstraction layers just to make a diff look cleaner.
-- When two code paths do nearly the same thing, keep one and delete the other.
-- Keep one canonical naming scheme for each concept.
-- Minimize interface surface area.
-
-## Change output expectations
-When performing cleanup or refactor work, always report:
-1. audit summary
-2. proposed deletions / merges
-3. canonical path kept
-4. removed legacy logic
-5. manual verification checklist
-
-## Code comments language
+## Code Comments
 - All code comments must be written in English only.
 - Never write comments in Chinese or any other non-English language.
 - This applies to both new code and modifications to existing code.
 
-## Handoff prompt preference
+## Behavioral Guidelines
+These guidelines reduce common LLM coding mistakes. Use judgment for trivial tasks.
 
-When asked to generate a prompt for another agent such as Claude, prioritize:
-- patterns learned from actual work already completed
-- repository-specific mappings and transformation rules
-- pitfalls, hidden dependencies, and target-specific checks
+### 1. Think Before Coding
+- State assumptions explicitly.
+- If something is uncertain, ask rather than guessing.
+- If multiple interpretations exist, surface them instead of choosing silently.
+- If a simpler approach exists, say so.
+- Push back when a request looks overcomplicated or internally inconsistent.
+- If something is unclear, stop and name what is confusing.
 
-Do not produce a generic task restatement unless explicitly asked.
-Keep process constraints brief unless the user asks for stricter control.
-Always put the final handoff prompt in one large code block for easy copying.
+### 2. Simplicity First
+- Implement the minimum code that solves the problem.
+- Do not add features beyond what was asked.
+- Do not introduce abstractions for single-use code.
+- Do not add flexibility or configurability that was not requested.
+- Do not add error handling for impossible scenarios.
+- If a change feels too large, simplify it.
+
+### 3. Surgical Changes
+- Touch only what is necessary for the request.
+- Do not "improve" adjacent code, comments, or formatting.
+- Do not refactor unrelated code.
+- Match existing style, even if you would do it differently.
+- If you notice unrelated dead code, mention it instead of deleting it.
+- Remove imports, variables, or functions only if your own change made them unused.
+- Do not remove pre-existing dead code unless asked.
+
+### 4. Goal-Driven Execution
+- Turn tasks into verifiable goals.
+- For multi-step work, state a brief plan with explicit checks.
+- Loop until the result is verified.
+
+Example:
+```text
+1. [Step] -> verify: [check]
+2. [Step] -> verify: [check]
+3. [Step] -> verify: [check]
+```
+
+### What Good Looks Like
+- Fewer unnecessary changes in diffs
+- Fewer rewrites due to overcomplication
+- Clarifying questions before implementation, not after mistakes

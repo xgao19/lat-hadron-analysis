@@ -6,9 +6,9 @@
 #   first run the TMDWF N-state fit workflow, or the normalization workflow
 #   then point this file at the directory containing those grouped outputs
 
-# Data / metadata block
+# Data settings
 # These fields identify which grouped matrix-element outputs should be transformed.
-title_pattern l64c64a076_m140_tmdwf_pz*
+title_pattern l64c64a076_m140_fit_pz*
 input_root examples/outputs/tmdwf_fit_notebook
 ns 64
 lattice_spacing_fm 0.076
@@ -22,6 +22,7 @@ etalist eta0
 #   bTrange bTmin bTmax
 bTlist 0
 
+# Fourier-transform parameter settings
 # Select which grouped matrix-element outputs to transform.
 component real
 nstates 1
@@ -39,6 +40,7 @@ x_count 201
 zstep_fm 0.01
 interpolation_kind cubic
 
+# Output settings
 # Output controls.
 plot true
 results_dir examples/outputs/tmdwf_fourier_example

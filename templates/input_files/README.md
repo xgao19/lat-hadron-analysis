@@ -24,14 +24,18 @@ templates/input_files/two_point/tgevp_example_realdata_annotated.txt
 
 ```bash
 python scripts/two_point/fit_2pt_nstate.py 2pt-nstate-fit \
-  templates/input_files/two_point/nstate_fit_example_realdata.txt
+  templates/input_files/two_point/nstate_fit_2state_example_realdata.txt
 ```
 
 Annotated version:
 
 ```text
-templates/input_files/two_point/nstate_fit_example_realdata_annotated.txt
+templates/input_files/two_point/nstate_fit_2state_example_realdata_annotated.txt
 ```
+
+The higher-state input file expects the lower-state fit table to already exist
+in the matching state-specific output directory. It reads that table directly
+instead of rerunning the lower-state fit.
 
 ### Effective Mass Example
 
@@ -110,9 +114,9 @@ Run the N-state fit example first, then:
 ```bash
 python scripts/two_point/plot_2pt_results.py \
   examples/outputs/plot_2pt_realdata \
-  examples/outputs/nstate_fit_realdata/l64c64a076_m140_fit_k0_pz0/tables/l64c64a076_m140_fit_k0_pz0_normal_correlator_mean.txt \
-  examples/outputs/nstate_fit_realdata/l64c64a076_m140_fit_k0_pz0/tables/l64c64a076_m140_fit_k0_pz0_normal_effective_mass_tmax12.txt \
-  examples/outputs/nstate_fit_realdata/l64c64a076_m140_fit_k0_pz0/tables/l64c64a076_m140_fit_k0_pz0_normal_2state_tmax12_fits.txt \
+  examples/outputs/nstate_fit_realdata_2state/l64c64a076_m140_fit_k0_pz0/tables/l64c64a076_m140_fit_k0_pz0_normal_correlator_mean.txt \
+  examples/outputs/nstate_fit_realdata_2state/l64c64a076_m140_fit_k0_pz0/tables/l64c64a076_m140_fit_k0_pz0_normal_effective_mass_tmax12.txt \
+  examples/outputs/nstate_fit_realdata_2state/l64c64a076_m140_fit_k0_pz0/tables/l64c64a076_m140_fit_k0_pz0_normal_2state_tmax12_fits.txt \
   --nstates 2 \
   --model normal \
   --title l64c64a076_m140_fit_k0_pz0 \

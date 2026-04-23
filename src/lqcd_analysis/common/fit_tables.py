@@ -20,25 +20,26 @@ class FitTableScanData:
 
 def parse_fit_table_scan(table: np.ndarray, nstates: int) -> FitTableScanData:
     rows = np.atleast_2d(np.asarray(table, dtype=float))
-    has_fallback_column = rows.shape[1] >= 10 + 4 * nstates
-    selection_flag_column = 9 if has_fallback_column else 8
     chi2_column = 7
-    amp_mean_start = selection_flag_column + 1
+    new_format_columns = 9 + 4 * nstates
+    old_format_columns = 10 + 4 * nstates
+    if rows.shape[1] >= old_format_columns:
+        amp_mean_start = 10
+    elif rows.shape[1] >= new_format_columns:
+        amp_mean_start = 9
+    else:
+        raise ValueError(f"unexpected fit table shape {rows.shape}; expected at least {new_format_columns} columns")
     amp_err_start = amp_mean_start + nstates
     energy_mean_start = amp_err_start + nstates
     energy_err_start = energy_mean_start + nstates
-    selected_mask = rows[:, selection_flag_column] > 0.5
-    selected_rows = rows[selected_mask]
-    if len(selected_rows) == 0:
-        raise ValueError("fit table does not contain any selected tmin rows")
-    selected_row = selected_rows[np.nanargmin(selected_rows[:, chi2_column])]
+    selected_row = rows[np.nanargmin(rows[:, chi2_column])]
     amp_means = tuple(selected_row[amp_mean_start : amp_mean_start + nstates])
     amp_errs = tuple(selected_row[amp_err_start : amp_err_start + nstates])
     energy_means = tuple(selected_row[energy_mean_start : energy_mean_start + nstates])
     energy_errs = tuple(selected_row[energy_err_start : energy_err_start + nstates])
     selected_params_mean = amp_means + energy_means
     selected_params_err = amp_errs + energy_errs
-    selected_tmin_range = (int(selected_rows[0, 0]), int(selected_rows[-1, 0]))
+    selected_tmin_range = (int(rows[0, 0]), int(rows[-1, 0]))
     return FitTableScanData(
         tmins=rows[:, 0],
         tmax=int(rows[0, 1]),

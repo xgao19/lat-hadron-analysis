@@ -4,22 +4,9 @@
 #
 # First line format:
 #   title_pattern Ns Nt lattice_spacing_fm
-l64c64a076_m140_tmdwf_pz* 64 64 0.076
 
-# Only the ratio workflow is supported.
-fit_target ratio
-
-# Which component(s) to fit:
-#   real
-#   imag
-#   both
-fit_component both
-
-# Allowed state choices in this first version:
-#   nstates 1
-#   nstates 2
-#   nstates 1 2
-nstates 1 2
+# Data settings
+l64c64a076_m140_fit_pz* 64 64 0.076
 
 # Integer momentum labels to analyze.
 pzlist 0
@@ -45,29 +32,20 @@ bTlist 0
 # If bz != 0, the workflow automatically combines +bz and -bz.
 bzlist 0
 
-# Bootstrap controls.
-binsize 1
-bootstrap_samples 32
-bootstrap_size 32
-seed 2026
-
-# Recommended default usage: set one trusted fit window per momentum.
-# Each row in the fit-window table should contain:
-#   pz tmin tmax
-# or, for gm-specific control:
-#   gm pz tmin tmax
-# In the notebook workflow_config, the preferred equivalent is:
-#   "fit_window": {5: [6, 12], 6: [6, 12], 7: [5, 12]}
-fit_window /path/to/tmdwf_fit_windows.txt
-
-# HDF5 file path or wildcard pattern.
-# The pz wildcard can be written using * if helpful.
-qtmdwf_h5 /path/to/qtmdwf_pz*.h5
+# HDF5 file path template for the TMDWF inputs.
+# Use {gm} to keep the operator label variable.
+qtmdwf_h5 /path/to/qTMDWF_..._O{gm}.h5
 
 # Dataset template inside the HDF5 file.
 # Supported placeholders:
 #   {gm} {eta} {pz} {Tdir} {bT} {bz}
-dataset_path_template {gm}/{eta}/pz{pz}/{Tdir}/bT{bT}/bz{bz}
+dataset_path_template SP/{gm}/PX0PY0PZ{pz}/{Tdir}/{eta}/bT{bT}/bz{bz}
+
+# Raw time window to keep before the TMDWF fit.
+# Optional. If omitted, the backend defaults to [0, Nt//2 - 1].
+tsrange 0 20
+
+# Two-point correlator input
 
 # Root directory containing the two-point n-state fit outputs reused by this workflow.
 # Point this at the root directory that contains the existing two-point n-state
@@ -91,9 +69,37 @@ c2pt examples/data/l64c64a076_m140/comb_c2pt_csv/c2pt_5_5_k0_pz*_real.csv
 #   antiperiodic
 fold_t periodic
 
-# Raw time window to keep before the TMDWF fit.
-# Optional. If omitted, the backend defaults to [0, Nt//2 - 1].
-tsrange 0 20
+# TMDWF fit settings
+
+# Only the ratio workflow is supported.
+fit_target ratio
+
+# Which component(s) to fit:
+#   real
+#   imag
+#   both
+fit_component both
+
+# Allowed state choices in this first version:
+#   nstates 1
+#   nstates 2
+#   nstates 1 2
+nstates 1 2
+
+# Bootstrap controls.
+binsize 1
+bootstrap_samples 32
+bootstrap_size 32
+seed 2026
+
+# Recommended default usage: set one trusted fit window per momentum.
+# Each row in the fit-window table should contain:
+#   pz tmin tmax
+# or, for gm-specific control:
+#   gm pz tmin tmax
+# In the notebook workflow_config, the preferred equivalent is:
+#   "fit_window": {5: [6, 12], 6: [6, 12], 7: [5, 12]}
+fit_window /path/to/tmdwf_fit_windows.txt
 
 # Plot generation is reserved for later extension.
 # Keep false in this first version.

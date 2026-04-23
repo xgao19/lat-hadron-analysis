@@ -3,6 +3,27 @@ from __future__ import annotations
 from pathlib import Path
 
 
+def load_control_file_entries(path: str | Path) -> tuple[list[str], dict[str, list[str]]]:
+    """Load a plain-text control file as first-line tokens plus key-value entries."""
+    file_path = Path(path)
+    entries: dict[str, list[str]] = {}
+    first_tokens: list[str] | None = None
+
+    with file_path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            tokens = stripped.split()
+            if first_tokens is None:
+                first_tokens = tokens
+            entries[tokens[0]] = tokens[1:]
+
+    if first_tokens is None:
+        raise ValueError(f"no non-empty content found in {file_path}")
+    return first_tokens, entries
+
+
 def parse_optional_int(value: str) -> int | None:
     """Parse an integer value, allowing "auto" to become None.
 

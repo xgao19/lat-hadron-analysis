@@ -44,3 +44,7 @@ templates/input_files/*.log
 /*/*_summary.txt
 # Local run symlinks and transient local-run folders
 local_runs/
+notes/
+
+# Generated docs notes
+docs/**/*_note/

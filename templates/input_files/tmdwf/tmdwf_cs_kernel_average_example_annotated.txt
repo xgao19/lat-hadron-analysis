@@ -4,7 +4,8 @@
 # It reads already-generated CS-kernel outputs and averages the x-dependent
 # results over the selected x region for each bT.
 
-title_pattern l64c64a076_m140_tmdwf_pz*
+# Data settings
+title_pattern l64c64a076_m140_fit_pz*
 input_root /path/to/5-CSkernel
 lattice_spacing_fm 0.076
 gm T5
@@ -12,12 +13,16 @@ eta eta0
 component real
 nstates 1
 normalization_mode raw
+
+# CS-kernel averaging settings
 scheme CG
 extraction_type type2
 kernel_label LO
 bTrange 0 20
 x_range 0.25 0.75
 reference_pz_labels 5-6 6-7 7-8
+
+# Output settings
 results_dir /path/to/6-CSkernel-average
 
 # Selection conditions used automatically by the workflow:

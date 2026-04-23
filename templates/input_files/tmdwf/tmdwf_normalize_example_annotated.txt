@@ -7,9 +7,9 @@
 #   then normalize the extracted matrix elements
 #   then optionally feed the normalized outputs into the Fourier workflow
 
-# Data / metadata block
+# Data settings
 # These fields identify which grouped TMDWF fit/sample outputs should be read.
-title_pattern l64c64a076_m140_tmdwf_pz*
+title_pattern l64c64a076_m140_fit_pz*
 input_root examples/outputs/tmdwf_fit_notebook
 ns 64
 lattice_spacing_fm 0.076
@@ -29,6 +29,7 @@ bTlist 0
 #   bzrange bzmin bzmax
 bzlist 0
 
+# Normalization settings
 # Select which grouped matrix-element outputs to normalize.
 component real
 nstates 1
@@ -39,6 +40,7 @@ nstates 1
 #   mode3 -> [m0(pz, bT, bz) / m0(pz, bT=0, bz=0)] / [m0(pz=0, bT, bz=0) / m0(pz=0, bT=0, bz=0)]
 normalization_mode mode1
 
+# Output settings
 # Output controls.
 # If plot is true, the workflow also writes a simple normalized m0-vs-bz plot.
 plot false

@@ -10,11 +10,9 @@ from lqcd_analysis.two_point.fit_nstate import (
     SHRINKAGE_LAMBDAS,
     build_residual_model,
     build_fallback_fit_attempts,
-    compute_fit_window_parameter_summary,
-    build_energy_priors_from_fit_window_summary,
+    build_energy_priors_from_fit_row,
     compute_bootstrap_covariance,
     evaluate_model,
-    extract_shrinkage_lambda_from_message,
     find_first_usable_correlated_residual_model,
     FitResult,
     fit_residuals,
@@ -22,9 +20,10 @@ from lqcd_analysis.two_point.fit_nstate import (
     FitSummaryRow,
     EnergyPrior,
     pack_fit_parameters,
+    load_low_state_prior_tmin,
+    load_fit_row_from_table,
     parse_nstate_fit_input,
-    FitWindowParameterSummary,
-    FitWindowSummary,
+    _select_meanfit_warm_start_tmin,
     run_single_dataset,
     run_sliding_fits,
     run_nstate_fit,
@@ -40,6 +39,7 @@ from lqcd_analysis.two_point.effective_mass import (
 )
 from lqcd_analysis.two_point.plotting import (
     build_reconstruction_band,
+    compute_scan_ylim,
     plot_nstate_outputs,
     select_scan_state_indices,
     write_nstate_plot_notebook,
@@ -210,6 +210,32 @@ class NStateFitTests(unittest.TestCase):
         self.assertIsNone(parsed.pz0_ground_energy)
         self.assertFalse(parsed.fix_ground_energy_from_dispersion)
 
+    def test_default_results_dir_uses_state_suffix_for_multistate_inputs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "input.txt"
+            path.write_text(
+                "\n".join(
+                    [
+                        "demo_pz* 64 64 0.076",
+                        "c2pt /tmp/c2pt_pz*.csv",
+                        "pzlist 0",
+                        "fold_t none",
+                        "tmax 24",
+                        "model normal",
+                        "nstates 2",
+                        "tmin_window /tmp/tmin_windows.txt",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            parsed = parse_nstate_fit_input(path)
+        self.assertEqual(parsed.results_dir.name, "results_nstate_fit_2state")
+
+    def test_meanfit_warm_start_uses_first_third_of_scan_window(self) -> None:
+        self.assertEqual(_select_meanfit_warm_start_tmin(range(0, 9)), 3)
+        self.assertEqual(_select_meanfit_warm_start_tmin(range(2, 8)), 4)
+        self.assertEqual(_select_meanfit_warm_start_tmin(range(5, 7)), 5)
+
     def test_parse_optional_pz0_ground_energy(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "input.txt"
@@ -368,13 +394,6 @@ class NStateFitTests(unittest.TestCase):
         covariance = compute_bootstrap_covariance(bootstrap_means)
         self.assertEqual(covariance.shape, (3, 3))
 
-    def test_extract_shrinkage_lambda_from_message(self) -> None:
-        self.assertAlmostEqual(
-            extract_shrinkage_lambda_from_message("correlated fit failed; retried with shrinkage_lambda=0.30; ok"),
-            0.30,
-        )
-        self.assertIsNone(extract_shrinkage_lambda_from_message("plain success message"))
-
     def test_run_sliding_fits_reuses_shared_covariance_and_slices_windows(self) -> None:
         bootstrap_means = np.array(
             [
@@ -502,9 +521,9 @@ class NStateFitTests(unittest.TestCase):
                 nstates=1,
                 residual_model=residual_model,
                 covariance=covariance,
-            )
+        )
         self.assertTrue(result.success)
-        self.assertIn("shrinkage_lambda=0.20", result.message)
+        self.assertIn("shrinkage_lambda=0.10", result.message)
         self.assertEqual(mock_least_squares.call_count, 10)
         self.assertFalse(result.used_uncorrelated_fallback)
 
@@ -516,7 +535,7 @@ class NStateFitTests(unittest.TestCase):
         residual_model = build_residual_model("correlated", sigma, covariance)
         failure_theta = pack_fit_parameters(np.array([1.0]), np.array([0.4]))
         success_theta = pack_fit_parameters(np.array([1.1]), np.array([0.42]))
-        n_failures = 9 * len(SHRINKAGE_LAMBDAS)
+        n_failures = 9 * (len(SHRINKAGE_LAMBDAS) - 1) + 8
         with patch(
             "lqcd_analysis.two_point.fit_nstate.least_squares",
             side_effect=[
@@ -541,20 +560,43 @@ class NStateFitTests(unittest.TestCase):
         self.assertTrue(result.used_uncorrelated_fallback)
         self.assertEqual(mock_least_squares.call_count, n_failures + 1)
 
-    def test_two_state_priors_use_one_state_fit_window_summary_e0_only(self) -> None:
-        previous = FitWindowParameterSummary(params_mean=(2.5, 0.41), params_err=(0.15, 0.02))
-        priors = build_energy_priors_from_fit_window_summary(previous, nstates=2)
+    def test_two_state_priors_use_selected_fit_row_e0_only(self) -> None:
+        previous = FitSummaryRow(
+            nstates=1,
+            tmin=4,
+            tmax=10,
+            success_meanfit=1,
+            bootstrap_successes=2,
+            bootstrap_total=2,
+            bootstrap_success_fraction=1.0,
+            fallback_uncorrelated_successes=0,
+            chi2_dof=1.0,
+            pvalue=0.5,
+            params_mean=(2.5, 0.41),
+            params_err=(0.15, 0.02),
+        )
+        priors = build_energy_priors_from_fit_row(previous, nstates=2)
         self.assertEqual(len(priors), 1)
         self.assertEqual(priors[0].energy_index, 0)
         self.assertAlmostEqual(priors[0].center, 0.41)
         self.assertAlmostEqual(priors[0].sigma, 0.02)
 
-    def test_three_state_priors_use_two_state_fit_window_summary_e0_and_e1_only(self) -> None:
-        previous = FitWindowParameterSummary(
+    def test_three_state_priors_use_selected_fit_row_e0_and_e1_only(self) -> None:
+        previous = FitSummaryRow(
+            nstates=2,
+            tmin=4,
+            tmax=10,
+            success_meanfit=1,
+            bootstrap_successes=2,
+            bootstrap_total=2,
+            bootstrap_success_fraction=1.0,
+            fallback_uncorrelated_successes=0,
+            chi2_dof=1.0,
+            pvalue=0.5,
             params_mean=(2.0, 1.0, 0.40, 0.82),
             params_err=(0.2, 0.2, 0.02, 0.05),
         )
-        priors = build_energy_priors_from_fit_window_summary(previous, nstates=3)
+        priors = build_energy_priors_from_fit_row(previous, nstates=3)
         self.assertEqual(len(priors), 2)
         self.assertEqual([prior.energy_index for prior in priors], [0, 1])
         self.assertTrue(np.allclose([prior.center for prior in priors], [0.40, 0.82]))
@@ -659,8 +701,8 @@ class NStateFitTests(unittest.TestCase):
 
         self.assertTrue(np.allclose(recorded_initial_guesses[0][0], [9.9]))
         self.assertTrue(np.allclose(recorded_initial_guesses[0][1], [0.9]))
-        self.assertTrue(np.allclose(recorded_initial_guesses[3][0], successful_previous.params[:1]))
-        self.assertTrue(np.allclose(recorded_initial_guesses[3][1], successful_previous.params[1:]))
+        self.assertTrue(np.allclose(recorded_initial_guesses[3][0], [9.9]))
+        self.assertTrue(np.allclose(recorded_initial_guesses[3][1], [0.9]))
 
     def test_failed_previous_window_falls_back_to_original_initial_guess(self) -> None:
         bootstrap_means = np.array(
@@ -865,44 +907,42 @@ class NStateFitTests(unittest.TestCase):
         self.assertTrue(np.array_equal(select_scan_state_indices(2), np.array([1])))
         self.assertTrue(np.array_equal(select_scan_state_indices(3), np.array([2])))
 
-    def test_fit_window_parameter_summary_uses_bootstrap_window_averages_for_means(self) -> None:
-        rows = [
-            FitSummaryRow(1, 2, 10, 1, 2, 2, 1.0, 0, 1.0, 0.5, 1, (2.0, 0.40), (0.2, 0.10)),
-            FitSummaryRow(1, 3, 10, 1, 2, 2, 1.0, 0, 1.0, 0.5, 1, (4.0, 0.80), (0.1, 0.20)),
-        ]
-        sample_tables = {
-            2: np.array([[2, 0, 1, 1.0, 0.5, 1.8, 0.36], [2, 1, 1, 1.0, 0.5, 2.2, 0.44]], dtype=float),
-            3: np.array([[3, 0, 1, 1.0, 0.5, 3.8, 0.76], [3, 1, 1, 1.0, 0.5, 4.2, 0.84]], dtype=float),
-        }
-        fit_window = FitWindowSummary(start_tmin=2, end_tmin=3, representative_tmin=2, energy_mean=0.0, amplitude_mean=0.0)
-        summary = compute_fit_window_parameter_summary(rows, sample_tables, fit_window)
-        amp_boot = np.array([3.4, 3.8])
-        energy_boot = np.array([0.44, 0.52])
-        amp_expected = 0.5 * np.sum(np.percentile(amp_boot, [16.0, 84.0]))
-        energy_expected = 0.5 * np.sum(np.percentile(energy_boot, [16.0, 84.0]))
-        self.assertAlmostEqual(summary.params_mean[0], amp_expected)
-        self.assertAlmostEqual(summary.params_mean[1], energy_expected)
+    def test_compute_scan_ylim_uses_requested_median_rule(self) -> None:
+        values = np.array([[1.0, 2.0], [3.0, 4.0]])
+        errors = np.array([[0.1, 0.2], [0.3, 0.4]])
+        lower, upper = compute_scan_ylim(values, errors)
+        center_median = np.median(values)
+        expected_lower = np.median(values - errors) - abs(center_median)
+        expected_upper = np.median(values + errors) + abs(center_median)
+        self.assertAlmostEqual(lower, expected_lower)
+        self.assertAlmostEqual(upper, expected_upper)
 
-    def test_fit_window_parameter_summary_errors_use_bootstrap_window_averages(self) -> None:
-        rows = [
-            FitSummaryRow(1, 2, 10, 1, 2, 2, 1.0, 0, 1.0, 0.5, 1, (2.0, 0.40), (0.2, 0.10)),
-            FitSummaryRow(1, 3, 10, 1, 2, 2, 1.0, 0, 1.0, 0.5, 1, (4.0, 0.80), (0.1, 0.20)),
-        ]
-        sample_tables = {
-            2: np.array([[2, 0, 1, 1.0, 0.5, 1.8, 0.36], [2, 1, 1, 1.0, 0.5, 2.2, 0.44]], dtype=float),
-            3: np.array([[3, 0, 1, 1.0, 0.5, 3.8, 0.76], [3, 1, 1, 1.0, 0.5, 4.2, 0.84]], dtype=float),
-        }
-        fit_window = FitWindowSummary(start_tmin=2, end_tmin=3, representative_tmin=2, energy_mean=0.0, amplitude_mean=0.0)
-        summary = compute_fit_window_parameter_summary(rows, sample_tables, fit_window)
-        w_amp = np.array([1.0 / 0.2**2, 1.0 / 0.1**2])
-        amp_boot = np.array(
-            [
-                np.sum(w_amp * np.array([1.8, 3.8])) / np.sum(w_amp),
-                np.sum(w_amp * np.array([2.2, 4.2])) / np.sum(w_amp),
-            ]
-        )
-        p16, p84 = np.percentile(amp_boot, [16.0, 84.0])
-        self.assertAlmostEqual(summary.params_err[0], 0.5 * (p84 - p16))
+    def test_load_fit_row_from_table_selects_exact_tmin(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "fit.txt"
+            np.savetxt(
+                path,
+                np.array(
+                    [
+                        [2, 10, 1, 2, 2, 1.0, 0, 1.5, 0.5, 2.0, 0.5, 0.2, 0.04],
+                        [3, 10, 1, 2, 2, 1.0, 0, 1.2, 0.5, 2.1, 0.6, 0.21, 0.05],
+                    ],
+                    dtype=float,
+                ),
+            )
+            row = load_fit_row_from_table(path, tmin=3, nstates=1)
+        self.assertEqual(row.tmin, 3)
+        self.assertEqual(row.nstates, 1)
+        self.assertAlmostEqual(row.params_mean[0], 2.1)
+        self.assertAlmostEqual(row.params_mean[1], 0.21)
+        self.assertAlmostEqual(row.params_err[0], 0.6)
+        self.assertAlmostEqual(row.params_err[1], 0.05)
+
+    def test_load_low_state_prior_tmin_uses_per_pz_table(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "prior.txt"
+            path.write_text("0 3\n1 5\n", encoding="utf-8")
+            self.assertEqual(load_low_state_prior_tmin(path, pz=1), 5)
 
     def test_plotting_uses_best_chi2_selected_row_for_band(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -945,11 +985,13 @@ class NStateFitTests(unittest.TestCase):
                                 lattice_spacing_fm=0.1,
             )
             energy_call = mock_scan.call_args_list[0]
-            amplitude_call = mock_scan.call_args_list[1]
             self.assertIsNone(energy_call.kwargs["selected_values"])
             self.assertIsNone(energy_call.kwargs["selected_errors"])
-            self.assertAlmostEqual(amplitude_call.kwargs["selected_values"][0], 20.5)
-            self.assertAlmostEqual(amplitude_call.kwargs["selected_errors"][0], 0.2)
+            self.assertTrue(energy_call.kwargs["selected_draw_line"])
+            amplitude_call = mock_scan.call_args_list[1]
+            self.assertNotIn("selected_tmin_range", amplitude_call.kwargs)
+            self.assertNotIn("selected_values", amplitude_call.kwargs)
+            self.assertNotIn("selected_errors", amplitude_call.kwargs)
             self.assertIsNone(mock_meff.call_args.kwargs["reference_value"])
 
     def test_plotting_uses_dispersion_reference_for_energy_and_meff_band(self) -> None:
@@ -999,11 +1041,58 @@ class NStateFitTests(unittest.TestCase):
                                 title="demo_pz1",
                                 nt=16,
                                 lattice_spacing_fm=0.1,
-                            )
+            )
             energy_call = mock_scan.call_args_list[0]
-            dispersion_mev = 0.3 * 197.3269804 / 0.1
-            self.assertAlmostEqual(energy_call.kwargs["selected_values"][0], dispersion_mev)
-            self.assertAlmostEqual(mock_meff.call_args.kwargs["reference_value"], dispersion_mev)
+            dispersion_gev = 0.3 * 197.3269804 / 0.1 / 1000.0
+            self.assertAlmostEqual(energy_call.kwargs["selected_values"][0], dispersion_gev)
+            self.assertAlmostEqual(mock_meff.call_args.kwargs["reference_value"], dispersion_gev)
+
+    def test_high_state_plotting_keeps_scatter_without_selection_band(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            correlator = np.column_stack([np.arange(6), np.linspace(1.0, 0.2, 6), np.full(6, 0.01)])
+            meff = np.column_stack([np.arange(6), np.full(6, 0.4), np.full(6, 0.02)])
+            fit = np.array(
+                [
+                    [2, 5, 1, 2, 2, 1.0, 0, 0.5, 0.5, 10.0, 11.0, 0.2, 0.3, 1.0, 1.2, 0.1, 0.1],
+                    [3, 5, 1, 2, 2, 1.0, 0, 0.4, 0.5, 10.5, 11.5, 0.2, 0.3, 1.1, 1.3, 0.1, 0.1],
+                ],
+                dtype=float,
+            )
+            corr_path = tmp / "corr.txt"
+            meff_path = tmp / "meff.txt"
+            fit_path = tmp / "fit.txt"
+            np.savetxt(corr_path, correlator)
+            np.savetxt(meff_path, meff)
+            np.savetxt(fit_path, fit)
+
+            with patch("lqcd_analysis.two_point.plotting.prepare_matplotlib", return_value=None):
+                with patch("lqcd_analysis.two_point.plotting.plot_parameter_scan") as mock_scan:
+                    with patch(
+                        "lqcd_analysis.two_point.plotting.plot_effective_mass",
+                        return_value=tmp / "meff.pdf",
+                    ) as mock_meff:
+                        with patch(
+                            "lqcd_analysis.two_point.plotting.plot_best_fit_reconstruction",
+                            return_value=tmp / "recon.pdf",
+                        ):
+                            plot_nstate_outputs(
+                                output_dir=tmp,
+                                correlator_table=corr_path,
+                                meff_table=meff_path,
+                                fit_table=fit_path,
+                                nstates=2,
+                                model="normal",
+                                title="demo",
+                                nt=16,
+                                lattice_spacing_fm=0.1,
+            )
+            self.assertEqual(mock_scan.call_count, 2)
+            self.assertNotIn("selected_values", mock_scan.call_args_list[0].kwargs)
+            self.assertNotIn("selected_errors", mock_scan.call_args_list[0].kwargs)
+            self.assertNotIn("selected_values", mock_scan.call_args_list[1].kwargs)
+            self.assertNotIn("selected_errors", mock_scan.call_args_list[1].kwargs)
+            self.assertIsNone(mock_meff.call_args.kwargs["reference_value"])
 
     def test_plotting_reconstruction_starts_at_fit_window_start(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1047,9 +1136,9 @@ class NStateFitTests(unittest.TestCase):
                                 lattice_spacing_fm=0.1,
             )
             reconstruction_args = mock_reconstruction.call_args.args
-            self.assertTrue(np.array_equal(reconstruction_args[1], np.arange(3, 6)))
-            self.assertEqual(len(reconstruction_args[2]), 3)
-            self.assertEqual(len(reconstruction_args[3]), 3)
+            self.assertTrue(np.array_equal(reconstruction_args[1], np.arange(2, 6)))
+            self.assertEqual(len(reconstruction_args[2]), 4)
+            self.assertEqual(len(reconstruction_args[3]), 4)
 
     def test_summary_reports_fit_window_start_shrinkage_lambda(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1090,17 +1179,33 @@ class NStateFitTests(unittest.TestCase):
             def fake_run_sliding_fits(*args, **kwargs):
                 del args, kwargs
                 rows = [
-                    FitSummaryRow(1, 0, 5, 1, 8, 8, 1.0, 0, 1.0, 0.5, 0, (2.0, 0.4), (0.2, 0.05)),
-                    FitSummaryRow(1, 1, 5, 1, 8, 8, 1.0, 0, 1.1, 0.5, 0, (2.1, 0.41), (0.2, 0.05)),
-                    FitSummaryRow(1, 2, 5, 1, 8, 8, 1.0, 0, 1.2, 0.5, 0, (2.2, 0.42), (0.2, 0.05)),
+                    FitSummaryRow(1, 0, 5, 1, 8, 8, 1.0, 0, 1.0, 0.5, (2.0, 0.4), (0.2, 0.05), shrinkage_lambda=0.30),
+                    FitSummaryRow(1, 1, 5, 1, 8, 8, 1.0, 0, 1.1, 0.5, (2.1, 0.41), (0.2, 0.05), shrinkage_lambda=0.10),
+                    FitSummaryRow(1, 2, 5, 1, 8, 8, 1.0, 0, 1.2, 0.5, (2.2, 0.42), (0.2, 0.05)),
                 ]
                 sample_tables = {
                     row.tmin: np.array([[row.tmin, 0, 1, 1.0, 0.5, *row.params_mean]], dtype=float)
                     for row in rows
                 }
                 meanfits = {
-                    0: FitResult(np.array([2.0, 0.4]), 1.0, 1.0, 0.5, True, "shrinkage_lambda=0.30; ok"),
-                    1: FitResult(np.array([2.1, 0.41]), 1.0, 1.0, 0.5, True, "shrinkage_lambda=0.10; ok"),
+                    0: FitResult(
+                        np.array([2.0, 0.4]),
+                        1.0,
+                        1.0,
+                        0.5,
+                        True,
+                        "ok",
+                        shrinkage_lambda=0.30,
+                    ),
+                    1: FitResult(
+                        np.array([2.1, 0.41]),
+                        1.0,
+                        1.0,
+                        0.5,
+                        True,
+                        "ok",
+                        shrinkage_lambda=0.10,
+                    ),
                     2: FitResult(np.array([2.2, 0.42]), 1.0, 1.0, 0.5, True, "ok"),
                 }
                 return rows, sample_tables, meanfits
@@ -1120,6 +1225,8 @@ class NStateFitTests(unittest.TestCase):
             input_path = tmp / "input_nstate.txt"
             fit_window_path = tmp / "fit_window.txt"
             override_path = tmp / "fit_windows.txt"
+            lower_results_root = tmp / "results_nstate_fit_1state"
+            current_results_root = tmp / "results_nstate_fit_2state"
 
             times = np.arange(14)
             base = 2.5 * np.exp(-0.35 * times) + 0.5 * np.exp(-0.9 * times)
@@ -1132,6 +1239,18 @@ class NStateFitTests(unittest.TestCase):
 
             override_path.write_text("0 0 4\n", encoding="utf-8")
             fit_window_path.write_text("0 0 2\n", encoding="utf-8")
+            lower_fit_table = (
+                lower_results_root
+                / "demo_pz0"
+                / "tables"
+                / "demo_pz0_normal_1state_tmax6_fits.txt"
+            )
+            lower_fit_table.parent.mkdir(parents=True, exist_ok=True)
+            np.savetxt(
+                lower_fit_table,
+                np.array([[0, 2, 1, 8, 8, 1.0, 0, 1.0, 0.5, 2.0, 0.1, 0.4, 0.02]], dtype=float),
+                fmt="%.10e",
+            )
             input_path.write_text(
                 "\n".join(
                     [
@@ -1141,11 +1260,12 @@ class NStateFitTests(unittest.TestCase):
                         "fold_t none",
                         "tmax 6",
                         "model normal",
-                        "nstates 1 2",
+                        "nstates 2",
                         "bootstrap_samples 8",
                         "bootstrap_size 8",
                         f"tmin_window {override_path}",
                         "plot false",
+                        f"results_dir {current_results_root}",
                     ]
                 ),
                 encoding="utf-8",
@@ -1153,23 +1273,27 @@ class NStateFitTests(unittest.TestCase):
 
             run_nstate_fit(input_path)
 
-            summary = tmp / "results_nstate_fit" / "demo_pz0" / "demo_pz0_normal_summary.txt"
-            fit_table = tmp / "results_nstate_fit" / "demo_pz0" / "tables" / "demo_pz0_normal_1state_tmax6_fits.txt"
+            summary = current_results_root / "demo_pz0" / "demo_pz0_normal_summary.txt"
+            fit_table = (
+                current_results_root / "demo_pz0" / "tables" / "demo_pz0_normal_2state_tmax6_fits.txt"
+            )
             summary_text = summary.read_text(encoding="utf-8")
             fit_rows = np.loadtxt(fit_table, ndmin=2)
 
         self.assertIn("tmin_window 0 4", summary_text)
-        self.assertIn("1state fit_window_tmin 0 4", summary_text)
+        self.assertIn("2state fit_window_tmin 0 4", summary_text)
         self.assertEqual(fit_rows.shape[0], 5)
         self.assertTrue(np.array_equal(fit_rows[:, 0].astype(int), np.array([0, 1, 2, 3, 4])))
         self.assertTrue(np.all(fit_rows[:, 1].astype(int) == 6))
 
-    def test_auto_computed_lower_states_are_included_in_plots_and_notebook(self) -> None:
+    def test_higher_state_reads_lower_state_from_existing_output_directory(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
             csv_path = tmp / "c2pt_5_5_k0_pz0_real.csv"
             input_path = tmp / "input_nstate.txt"
             fit_window_path = tmp / "fit_window.txt"
+            lower_results_root = tmp / "results_nstate_fit_1state"
+            current_results_root = tmp / "results_nstate_fit_2state"
 
             times = np.arange(14)
             base = 2.5 * np.exp(-0.35 * times) + 0.5 * np.exp(-0.9 * times)
@@ -1181,6 +1305,18 @@ class NStateFitTests(unittest.TestCase):
                     handle.write(str(t) + "," + ",".join(f"{value:.12e}" for value in data[t]) + "\n")
 
             fit_window_path.write_text("0 0 2\n", encoding="utf-8")
+            lower_fit_table = (
+                lower_results_root
+                / "demo_pz0"
+                / "tables"
+                / "demo_pz0_normal_1state_tmax6_fits.txt"
+            )
+            lower_fit_table.parent.mkdir(parents=True, exist_ok=True)
+            np.savetxt(
+                lower_fit_table,
+                np.array([[0, 2, 1, 8, 8, 1.0, 0, 1.0, 0.5, 2.0, 0.1, 0.4, 0.02]], dtype=float),
+                fmt="%.10e",
+            )
             input_path.write_text(
                 "\n".join(
                     [
@@ -1195,6 +1331,7 @@ class NStateFitTests(unittest.TestCase):
                         "bootstrap_samples 8",
                         "bootstrap_size 8",
                         "plot true",
+                        f"results_dir {current_results_root}",
                     ]
                 ),
                 encoding="utf-8",
@@ -1223,8 +1360,8 @@ class NStateFitTests(unittest.TestCase):
                 ):
                     run_nstate_fit(input_path)
 
-            self.assertEqual(sorted(plotted_states), [1, 2])
-            self.assertEqual(notebook_fit_table_keys, [1, 2])
+            self.assertEqual(sorted(plotted_states), [2])
+            self.assertEqual(notebook_fit_table_keys, [2])
 
 
 if __name__ == "__main__":

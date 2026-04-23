@@ -18,7 +18,6 @@ def main() -> None:
     parser.add_argument("correlator_table")
     parser.add_argument("meff_table")
     parser.add_argument("fit_table")
-    parser.add_argument("--fit-window-table")
     parser.add_argument("--nstates", type=int, required=True)
     parser.add_argument("--model", required=True)
     parser.add_argument("--title", required=True)
@@ -30,7 +29,6 @@ def main() -> None:
         correlator_table=args.correlator_table,
         meff_table=args.meff_table,
         fit_table=args.fit_table,
-        fit_window_table=args.fit_window_table,
         nstates=args.nstates,
         model=args.model,
         title=args.title,

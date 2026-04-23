@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-import re
 
 import numpy as np
 from scipy.optimize import least_squares
@@ -10,7 +9,6 @@ from scipy.stats import chi2
 
 from ..common.constants import (
     MIN_AMPLITUDE,
-    MIN_COVARIANCE_DIAGONAL,
     MIN_POSITIVE,
     SHRINKAGE_LAMBDAS,
 )
@@ -20,7 +18,14 @@ from ..common.bootstrap import (
     compute_bootstrap_covariance,
     shrink_covariance_to_diagonal,
 )
-from ..common.parsing import load_fit_window_table, load_int_mapping_table, parse_bool, parse_fold_t, parse_optional_int
+from ..common.parsing import (
+    load_control_file_entries,
+    load_fit_window_table,
+    load_int_mapping_table,
+    parse_bool,
+    parse_fold_t,
+    parse_optional_int,
+)
 from ..common.utils import (
     apply_fold_t,
     bin_correlators,
@@ -50,6 +55,7 @@ class NStateFitInput:
     bootstrap_samples: int | None
     bootstrap_size: int | None
     seed: int
+    low_state_prior_tmin: str | int | None
     lambda_prior: float
     make_plots: bool
     results_dir: Path
@@ -67,35 +73,28 @@ class FitSummaryRow:
     fallback_uncorrelated_successes: int
     chi2_dof: float
     pvalue: float
-    selected_window_flag: int
     params_mean: tuple[float, ...]
     params_err: tuple[float, ...]
+    initial_amplitudes: tuple[float, ...] = ()
+    initial_energies: tuple[float, ...] = ()
+    shrinkage_lambda: float | None = None
 
 
 @dataclass(frozen=True)
 class FitWindowSummary:
     start_tmin: int
     end_tmin: int
-    representative_tmin: int
     energy_mean: float
     amplitude_mean: float
 
 
 @dataclass(frozen=True)
-class FitWindowParameterSummary:
-    params_mean: tuple[float, ...]
-    params_err: tuple[float, ...]
-
-
-@dataclass(frozen=True)
 class StateArtifacts:
-    nstates: int
     fit_window_summary: FitWindowSummary
-    fit_window_parameter_summary: FitWindowParameterSummary
     fit_window_start_fallback_uncorrelated_successes: int
     fit_window_start_shrinkage_lambda: float | None
     fit_table_path: Path
-    fit_window_table_path: Path
+    fit_rows: tuple[FitSummaryRow, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -107,6 +106,7 @@ class FitResult:
     success: bool
     message: str
     used_uncorrelated_fallback: bool = False
+    shrinkage_lambda: float | None = None
 
 
 @dataclass(frozen=True)
@@ -121,26 +121,13 @@ class ResidualModel:
     fit_mode: str
     sigma: np.ndarray | None = None
     cholesky_factor: np.ndarray | None = None
-    fallback_sigma: np.ndarray | None = None
     shrinkage_lambda: float | None = None
 
 
 def parse_nstate_fit_input(path: str | Path, results_dir: str | Path | None = None) -> NStateFitInput:
     file_path = Path(path)
-    entries: dict[str, list[str]] = {}
-    first_tokens: list[str] | None = None
-
-    with file_path.open("r", encoding="utf-8") as handle:
-        for line in handle:
-            stripped = line.strip()
-            if not stripped or stripped.startswith("#"):
-                continue
-            tokens = stripped.split()
-            if first_tokens is None:
-                first_tokens = tokens
-            entries[tokens[0]] = tokens[1:]
-
-    if first_tokens is None or len(first_tokens) < 4:
+    first_tokens, entries = load_control_file_entries(file_path)
+    if len(first_tokens) < 4:
         raise ValueError("the first non-empty line must be: title Ns Nt a_fm")
 
     required = {"c2pt", "pzlist", "model", "nstates", "tmin_window", "tmax"}
@@ -172,6 +159,9 @@ def parse_nstate_fit_input(path: str | Path, results_dir: str | Path | None = No
         parsed_tmax: int | str = int(tmax_value)
     except ValueError:
         parsed_tmax = tmax_value
+    default_results_dir = input_path.parent / (
+        "results_nstate_fit" if max(nstates) <= 1 else f"results_nstate_fit_{max(nstates)}state"
+    )
 
     return NStateFitInput(
         title_pattern=first_tokens[0],
@@ -194,12 +184,21 @@ def parse_nstate_fit_input(path: str | Path, results_dir: str | Path | None = No
         bootstrap_samples=parse_optional_int(entries.get("bootstrap_samples", ["auto"])[0]),
         bootstrap_size=parse_optional_int(entries.get("bootstrap_size", ["auto"])[0]),
         seed=int(entries.get("seed", ["2026"])[0]),
+        low_state_prior_tmin=(
+            None
+            if "low_state_prior_tmin" not in entries
+            else (
+                int(entries["low_state_prior_tmin"][0])
+                if entries["low_state_prior_tmin"][0].strip().lstrip("-").isdigit()
+                else entries["low_state_prior_tmin"][0]
+            )
+        ),
         lambda_prior=float(entries.get("lambda_prior", ["1.0"])[0]),
         make_plots=parse_bool(entries.get("plot", ["true"])[0]),
         results_dir=(
             Path(entries["results_dir"][0])
             if "results_dir" in entries and results_dir is None
-            else ((input_path.parent / "results_nstate_fit") if results_dir is None else Path(results_dir))
+            else (default_results_dir if results_dir is None else Path(results_dir))
         ),
     )
 
@@ -227,11 +226,9 @@ def build_residual_model(
     if shrinkage_lambda != 0.0:
         covariance = shrink_covariance_to_diagonal(covariance, shrinkage_lambda)
     cholesky_factor = np.linalg.cholesky(covariance)
-    fallback_sigma = np.sqrt(np.clip(np.diag(covariance), MIN_COVARIANCE_DIAGONAL, None))
     return ResidualModel(
         fit_mode="correlated",
         cholesky_factor=cholesky_factor,
-        fallback_sigma=np.clip(fallback_sigma, MIN_POSITIVE, None),
         shrinkage_lambda=shrinkage_lambda,
     )
 
@@ -416,7 +413,7 @@ def fit_nstate_sample(
             fit_residuals,
             theta0,
             method="trf",
-            max_nfev=8000,
+            max_nfev=2000,
             args=(
                 times,
                 data,
@@ -467,6 +464,11 @@ def fit_nstate_sample(
                 else result.message
             ),
             used_uncorrelated_fallback=False,
+            shrinkage_lambda=(
+                active_model.shrinkage_lambda
+                if active_model is not None and active_model.fit_mode == "correlated"
+                else None
+            ),
         )
 
     def run_attempt_grid(active_sigma: np.ndarray, active_model: ResidualModel | None) -> FitResult:
@@ -486,6 +488,7 @@ def fit_nstate_sample(
             success=False,
             message="all nonlinear fit attempts failed",
             used_uncorrelated_fallback=False,
+            shrinkage_lambda=None,
         )
 
     result = run_attempt_grid(sigma, residual_model)
@@ -519,6 +522,7 @@ def fit_nstate_sample(
                         f"{fallback_result.message}"
                     ),
                     used_uncorrelated_fallback=abs(shrinkage_lambda - 1.0) < MIN_POSITIVE,
+                    shrinkage_lambda=shrinkage_lambda,
                 )
 
     return result
@@ -558,18 +562,147 @@ def summarize_bootstrap_parameters(samples: np.ndarray) -> tuple[tuple[float, ..
     return tuple(means), tuple(errors)
 
 
-def build_energy_priors_from_fit_window_summary(
-    previous_summary: FitWindowParameterSummary | None,
+def select_window_reference_row(rows: list[FitSummaryRow]) -> FitSummaryRow:
+    successful_rows = [row for row in rows if row.success_meanfit]
+    if successful_rows:
+        return min(successful_rows, key=lambda row: row.chi2_dof)
+    if rows:
+        return rows[0]
+    raise ValueError("fit window for pz produced no fit row")
+
+
+def load_fit_row_from_table(
+    table_path: str | Path,
+    *,
+    tmin: int,
+    nstates: int,
+) -> FitSummaryRow:
+    rows = np.atleast_2d(np.loadtxt(table_path, dtype=float))
+    matching_rows = rows[rows[:, 0] == float(tmin)]
+    if matching_rows.shape[0] != 1:
+        raise ValueError(f"expected exactly one fit row at tmin={tmin} in {table_path}")
+
+    row = matching_rows[0]
+    if row.shape[0] < 9 + 4 * nstates:
+        raise ValueError(
+            f"fit table row at tmin={tmin} in {table_path} has too few columns for nstates={nstates}"
+        )
+    amp_mean_start = 9
+    amp_err_start = amp_mean_start + nstates
+    energy_mean_start = amp_err_start + nstates
+    energy_err_start = energy_mean_start + nstates
+    return FitSummaryRow(
+        nstates=nstates,
+        tmin=int(row[0]),
+        tmax=int(row[1]),
+        success_meanfit=int(row[2]),
+        bootstrap_successes=int(row[3]),
+        bootstrap_total=int(row[4]),
+        bootstrap_success_fraction=float(row[5]),
+        fallback_uncorrelated_successes=int(row[6]),
+        chi2_dof=float(row[7]),
+        pvalue=float(row[8]),
+        params_mean=tuple(row[amp_mean_start : amp_mean_start + nstates]) + tuple(
+            row[energy_mean_start : energy_mean_start + nstates]
+        ),
+        params_err=tuple(row[amp_err_start : amp_err_start + nstates]) + tuple(
+            row[energy_err_start : energy_err_start + nstates]
+        ),
+        initial_amplitudes=(),
+        initial_energies=(),
+        shrinkage_lambda=None,
+    )
+
+
+def load_fit_rows_from_table(table_path: str | Path, nstates: int) -> list[FitSummaryRow]:
+    rows = np.atleast_2d(np.loadtxt(table_path, dtype=float))
+    if rows.size == 0:
+        raise ValueError(f"fit table is empty: {table_path}")
+    parsed_rows: list[FitSummaryRow] = []
+    for row in rows:
+        if row.shape[0] < 9 + 4 * nstates:
+            raise ValueError(
+                f"fit table row at tmin={int(row[0])} in {table_path} has too few columns for nstates={nstates}"
+            )
+        amp_mean_start = 9
+        amp_err_start = amp_mean_start + nstates
+        energy_mean_start = amp_err_start + nstates
+        energy_err_start = energy_mean_start + nstates
+        parsed_rows.append(
+            FitSummaryRow(
+                nstates=nstates,
+                tmin=int(row[0]),
+                tmax=int(row[1]),
+                success_meanfit=int(row[2]),
+                bootstrap_successes=int(row[3]),
+                bootstrap_total=int(row[4]),
+                bootstrap_success_fraction=float(row[5]),
+                fallback_uncorrelated_successes=int(row[6]),
+                chi2_dof=float(row[7]),
+                pvalue=float(row[8]),
+                params_mean=tuple(row[amp_mean_start : amp_mean_start + nstates]) + tuple(
+                    row[energy_mean_start : energy_mean_start + nstates]
+                ),
+                params_err=tuple(row[amp_err_start : amp_err_start + nstates]) + tuple(
+                    row[energy_err_start : energy_err_start + nstates]
+                ),
+                initial_amplitudes=(),
+                initial_energies=(),
+                shrinkage_lambda=None,
+            )
+        )
+    return parsed_rows
+
+
+def load_low_state_prior_tmin(
+    prior_source: str | int | Path,
+    *,
+    pz: int,
+) -> int:
+    if isinstance(prior_source, int):
+        return prior_source
+    path = Path(prior_source)
+    if path.is_file():
+        mapping = load_int_mapping_table(path)
+        key = (None, pz)
+        if key in mapping:
+            return int(mapping[key])
+        raise ValueError(f"missing low_state_prior_tmin entry for pz={pz} in {path}")
+    return int(prior_source)
+
+
+def format_low_state_prior_tmin_for_summary(prior_source: str | int | Path) -> str:
+    if isinstance(prior_source, int):
+        return str(prior_source)
+    path = Path(prior_source)
+    if path.is_file():
+        mapping = load_int_mapping_table(path)
+        pairs = sorted((int(pz), int(value)) for (row_index, pz), value in mapping.items() if row_index is None)
+        return "{" + ", ".join(f"{pz}: {value}" for pz, value in pairs) + "}"
+    return str(prior_source)
+
+
+def format_initial_guess_for_summary(row: FitSummaryRow) -> str:
+    if not row.initial_amplitudes and not row.initial_energies:
+        return ""
+    amplitude_text = " ".join(f"A{idx}={value:.10e}" for idx, value in enumerate(row.initial_amplitudes))
+    energy_text = " ".join(f"E{idx}={value:.10e}" for idx, value in enumerate(row.initial_energies))
+    pieces = [piece for piece in (amplitude_text, energy_text) if piece]
+    return " ".join(pieces)
+
+
+def build_energy_priors_from_fit_row(
+    fit_row: FitSummaryRow | None,
     nstates: int,
 ) -> tuple[EnergyPrior, ...]:
-    if previous_summary is None or nstates <= 1:
+    if fit_row is None or nstates <= 1:
         return ()
-    previous_nstates = len(previous_summary.params_mean) // 2
+    previous_nstates = fit_row.nstates
     max_index = min(previous_nstates, nstates - 1)
     priors: list[EnergyPrior] = []
     for energy_index in range(max_index):
-        center = previous_summary.params_mean[previous_nstates + energy_index]
-        sigma = previous_summary.params_err[previous_nstates + energy_index]
+        center = fit_row.params_mean[previous_nstates + energy_index]
+        sigma = fit_row.params_err[previous_nstates + energy_index]
         if np.isfinite(center) and np.isfinite(sigma) and sigma > 0.0:
             priors.append(EnergyPrior(energy_index=energy_index, center=center, sigma=sigma))
     return tuple(priors)
@@ -594,50 +727,44 @@ def build_initial_guess_from_fit_window(
     return amplitudes, energies
 
 
-def compute_fit_window_parameter_summary(
-    rows: list[FitSummaryRow],
-    sample_tables: dict[int, np.ndarray],
-    fit_window: FitWindowSummary,
-) -> FitWindowParameterSummary:
-    fit_window_rows = [row for row in rows if fit_window.start_tmin <= row.tmin <= fit_window.end_tmin]
-    if not fit_window_rows:
-        raise ValueError("fit window does not overlap any fit rows")
+def _previous_state_results_dir(results_dir: Path, nstates: int) -> Path:
+    current_state_label = f"{nstates}state"
+    previous_state_label = f"{nstates - 1}state"
+    if current_state_label not in results_dir.name:
+        raise ValueError(
+            f"cannot infer previous-state results_dir from {results_dir}; expected name containing {current_state_label}"
+        )
+    return results_dir.with_name(results_dir.name.replace(current_state_label, previous_state_label, 1))
 
-    nparams = len(fit_window_rows[0].params_mean)
-    row_errs = np.array([[max(value, MIN_POSITIVE) for value in row.params_err] for row in fit_window_rows], dtype=float)
-    weights = 1.0 / row_errs**2
 
-    sample_count = max(sample_table.shape[0] for sample_table in sample_tables.values())
-    sample_averages = np.full((sample_count, nparams), np.nan, dtype=float)
-    for sample_id in range(sample_count):
-        for param_index in range(nparams):
-            values = []
-            param_weights = []
-            for row_index, row in enumerate(fit_window_rows):
-                sample_table = sample_tables.get(row.tmin)
-                if sample_table is None or sample_id >= sample_table.shape[0]:
-                    continue
-                sample_row = sample_table[sample_id]
-                if sample_row[2] < 0.5:
-                    continue
-                value = sample_row[5 + param_index]
-                if not np.isfinite(value):
-                    continue
-                values.append(value)
-                param_weights.append(weights[row_index, param_index])
-            if values:
-                value_array = np.asarray(values, dtype=float)
-                weight_array = np.asarray(param_weights, dtype=float)
-                sample_averages[sample_id, param_index] = np.sum(weight_array * value_array) / np.sum(weight_array)
-
-    params_mean = []
-    params_err = []
-    for param_index in range(nparams):
-        finite_values = sample_averages[np.isfinite(sample_averages[:, param_index]), param_index]
-        mean, error = robust_mean_and_error(finite_values)
-        params_mean.append(mean)
-        params_err.append(error)
-    return FitWindowParameterSummary(params_mean=tuple(params_mean), params_err=tuple(params_err))
+def _load_previous_state_artifact(
+    spec: NStateFitInput,
+    title: str,
+    *,
+    current_nstates: int,
+    tmax: int,
+) -> StateArtifacts:
+    previous_nstates = current_nstates - 1
+    previous_results_dir = _previous_state_results_dir(spec.results_dir, current_nstates)
+    fit_table_path = (
+        previous_results_dir / title / "tables" / f"{title}_{spec.model}_{previous_nstates}state_tmax{tmax}_fits.txt"
+    )
+    rows = load_fit_rows_from_table(fit_table_path, previous_nstates)
+    window_reference_row = select_window_reference_row(rows)
+    fit_window_summary = FitWindowSummary(
+        start_tmin=min(row.tmin for row in rows),
+        end_tmin=max(row.tmin for row in rows),
+        energy_mean=window_reference_row.params_mean[previous_nstates],
+        amplitude_mean=window_reference_row.params_mean[0],
+    )
+    fit_window_start_row = next(row for row in rows if row.tmin == fit_window_summary.start_tmin)
+    return StateArtifacts(
+        fit_window_summary=fit_window_summary,
+        fit_window_start_fallback_uncorrelated_successes=fit_window_start_row.fallback_uncorrelated_successes,
+        fit_window_start_shrinkage_lambda=fit_window_start_row.shrinkage_lambda,
+        fit_table_path=fit_table_path,
+        fit_rows=tuple(rows),
+    )
 
 
 def _prepare_fit_window_data(
@@ -646,10 +773,9 @@ def _prepare_fit_window_data(
     covariance: np.ndarray | None,
     tmin: int,
     tmax: int,
-    time_offset: int,
 ) -> tuple[int, int, np.ndarray, np.ndarray, np.ndarray, np.ndarray | None]:
-    label_tmin = int(tmin + time_offset)
-    label_tmax = int(tmax + time_offset)
+    label_tmin = int(tmin)
+    label_tmax = int(tmax)
     times = np.arange(label_tmin, label_tmax + 1)
     data_mean = mean_correlator[tmin : tmax + 1]
     sigma_slice = np.clip(sigma[tmin : tmax + 1], MIN_POSITIVE, None)
@@ -690,9 +816,8 @@ def _run_mean_window_fit(
     data_mean: np.ndarray,
     sigma_slice: np.ndarray,
     residual_model: ResidualModel,
-    previous_meanfit: FitResult | None,
-    initial_amplitudes: np.ndarray,
-    initial_energies: np.ndarray,
+    meanfit_amplitudes: np.ndarray,
+    meanfit_energies: np.ndarray,
     *,
     nt: int,
     model: str,
@@ -702,11 +827,6 @@ def _run_mean_window_fit(
     covariance_slice: np.ndarray | None,
     fixed_ground_energy: float | None,
 ) -> FitResult:
-    meanfit_amplitudes = initial_amplitudes
-    meanfit_energies = initial_energies
-    if previous_meanfit is not None and previous_meanfit.success and np.all(np.isfinite(previous_meanfit.params)):
-        meanfit_amplitudes = previous_meanfit.params[:nstates]
-        meanfit_energies = previous_meanfit.params[nstates:]
     meanfit = fit_nstate_sample(
         times,
         data_mean,
@@ -787,6 +907,13 @@ def _run_sample_window_fits(
     return sample_rows, next_previous_sample_fits, success_params, fallback_uncorrelated_successes
 
 
+def _select_meanfit_warm_start_tmin(tmin_values: range) -> int:
+    tmin_list = list(tmin_values)
+    if not tmin_list:
+        raise ValueError("tmin_values must not be empty")
+    return tmin_list[min(len(tmin_list) - 1, len(tmin_list) // 3)]
+
+
 def run_sliding_fits(
     bootstrap_means: np.ndarray,
     sigma: np.ndarray,
@@ -802,14 +929,13 @@ def run_sliding_fits(
     priors: tuple[EnergyPrior, ...] = (),
     lambda_prior: float = 1.0,
     fixed_ground_energy: float | None = None,
-    time_offset: int = 0,
 ) -> tuple[list[FitSummaryRow], dict[int, np.ndarray], dict[int, FitResult]]:
     rows: list[FitSummaryRow] = []
     sample_tables: dict[int, np.ndarray] = {}
-    meanfit_results: dict[int, FitResult] = {}
+    meanfit_warm_start_tmin = _select_meanfit_warm_start_tmin(tmin_values)
 
     mean_correlator = np.mean(bootstrap_means, axis=0)
-    previous_meanfit: FitResult | None = None
+    meanfit_reference: FitResult | None = None
     previous_sample_fits: list[FitResult | None] = [None] * len(bootstrap_means)
     for tmin in tmin_values:
         label_tmin, label_tmax, times, data_mean, sigma_slice, covariance_slice = _prepare_fit_window_data(
@@ -818,7 +944,6 @@ def run_sliding_fits(
             covariance,
             tmin,
             tmax,
-            time_offset,
         )
         residual_model, residual_model_note = _build_window_residual_model(
             fit_mode,
@@ -827,14 +952,21 @@ def run_sliding_fits(
             label_tmin=label_tmin,
             label_tmax=label_tmax,
         )
+        if tmin >= meanfit_warm_start_tmin and meanfit_reference is not None and meanfit_reference.success and np.all(
+            np.isfinite(meanfit_reference.params)
+        ):
+            meanfit_initial_amplitudes = meanfit_reference.params[:nstates]
+            meanfit_initial_energies = meanfit_reference.params[nstates:]
+        else:
+            meanfit_initial_amplitudes = initial_amplitudes
+            meanfit_initial_energies = initial_energies
         meanfit = _run_mean_window_fit(
             times,
             data_mean,
             sigma_slice,
             residual_model,
-            previous_meanfit,
-            initial_amplitudes,
-            initial_energies,
+            meanfit_initial_amplitudes,
+            meanfit_initial_energies,
             nt=nt,
             model=model,
             nstates=nstates,
@@ -851,9 +983,11 @@ def run_sliding_fits(
                 pvalue=meanfit.pvalue,
                 success=meanfit.success,
                 message=f"{residual_model_note}; {meanfit.message}",
+                used_uncorrelated_fallback=meanfit.used_uncorrelated_fallback,
+                shrinkage_lambda=meanfit.shrinkage_lambda,
             )
-        meanfit_results[label_tmin] = meanfit
-        previous_meanfit = meanfit if meanfit.success and np.all(np.isfinite(meanfit.params)) else None
+        if tmin == meanfit_warm_start_tmin and meanfit.success and np.all(np.isfinite(meanfit.params)):
+            meanfit_reference = meanfit
 
         sample_rows, previous_sample_fits, success_params, fallback_uncorrelated_successes = _run_sample_window_fits(
             bootstrap_means,
@@ -894,13 +1028,15 @@ def run_sliding_fits(
                 fallback_uncorrelated_successes=fallback_uncorrelated_successes,
                 chi2_dof=meanfit.chi2_dof,
                 pvalue=meanfit.pvalue,
-                selected_window_flag=0,
                 params_mean=params_mean,
                 params_err=params_err,
+                initial_amplitudes=tuple(np.asarray(meanfit_initial_amplitudes, dtype=float)),
+                initial_energies=tuple(np.asarray(meanfit_initial_energies, dtype=float)),
+                shrinkage_lambda=meanfit.shrinkage_lambda,
             )
         )
 
-    return rows, sample_tables, meanfit_results
+    return rows, sample_tables, {}
 
 
 def serialize_fit_rows(rows: list[FitSummaryRow]) -> np.ndarray:
@@ -917,7 +1053,6 @@ def serialize_fit_rows(rows: list[FitSummaryRow]) -> np.ndarray:
             row.fallback_uncorrelated_successes,
             row.chi2_dof,
             row.pvalue,
-            row.selected_window_flag,
         ]
         amps = list(row.params_mean[: row.nstates])
         amp_errs = list(row.params_err[: row.nstates])
@@ -932,30 +1067,6 @@ def serialize_fit_rows(rows: list[FitSummaryRow]) -> np.ndarray:
     return np.array(columns, dtype=float)
 
 
-def mark_fit_window(rows: list[FitSummaryRow], fit_window: FitWindowSummary) -> list[FitSummaryRow]:
-    marked = []
-    for row in rows:
-        flagged = 1 if fit_window.start_tmin <= row.tmin <= fit_window.end_tmin else 0
-        marked.append(
-            FitSummaryRow(
-                nstates=row.nstates,
-                tmin=row.tmin,
-                tmax=row.tmax,
-                success_meanfit=row.success_meanfit,
-                bootstrap_successes=row.bootstrap_successes,
-                bootstrap_total=row.bootstrap_total,
-                bootstrap_success_fraction=row.bootstrap_success_fraction,
-                fallback_uncorrelated_successes=row.fallback_uncorrelated_successes,
-                chi2_dof=row.chi2_dof,
-                pvalue=row.pvalue,
-                selected_window_flag=flagged,
-                params_mean=row.params_mean,
-                params_err=row.params_err,
-            )
-        )
-    return marked
-
-
 def header_for_fit_rows(max_states: int) -> str:
     columns = [
         "tmin",
@@ -967,20 +1078,12 @@ def header_for_fit_rows(max_states: int) -> str:
         "fallback_uncorrelated_successes",
         "chi2_dof",
         "pvalue",
-        "selected_window_flag",
     ]
     columns += [f"A{idx}_mean" for idx in range(max_states)]
     columns += [f"A{idx}_err" for idx in range(max_states)]
     columns += [f"E{idx}_mean" for idx in range(max_states)]
     columns += [f"E{idx}_err" for idx in range(max_states)]
     return " ".join(columns)
-
-
-def extract_shrinkage_lambda_from_message(message: str) -> float | None:
-    match = re.search(r"shrinkage_lambda=([0-9]+(?:\.[0-9]+)?)", message)
-    if match is None:
-        return None
-    return float(match.group(1))
 
 
 def _state_output_paths(
@@ -995,16 +1098,6 @@ def _state_output_paths(
     return fit_path, sample_path
 
 
-def _fit_window_output_path(
-    spec: NStateFitInput,
-    title: str,
-    nstates: int,
-    tmax: int,
-) -> Path:
-    dataset_dir = spec.results_dir / title
-    return dataset_dir / "tables" / f"{title}_{spec.model}_{nstates}state_tmax{tmax}_fit_window.txt"
-
-
 def _write_state_outputs(
     spec: NStateFitInput,
     title: str,
@@ -1013,36 +1106,15 @@ def _write_state_outputs(
     rows: list[FitSummaryRow],
     sample_tables: dict[int, np.ndarray],
     fit_window_summary: FitWindowSummary,
-    fit_window_parameter_summary: FitWindowParameterSummary,
-    meanfit_results: dict[int, FitResult],
 ) -> StateArtifacts:
     fit_window_start_row = next(row for row in rows if row.tmin == fit_window_summary.start_tmin)
-    fit_window_start_shrinkage_lambda = extract_shrinkage_lambda_from_message(
-        meanfit_results[fit_window_summary.start_tmin].message
-    )
+    fit_window_start_shrinkage_lambda = fit_window_start_row.shrinkage_lambda
     table_path, sample_path = _state_output_paths(spec, title, nstates, tmax)
-    fit_window_table_path = _fit_window_output_path(spec, title, nstates, tmax)
 
     np.savetxt(
         table_path,
         serialize_fit_rows(rows),
         header=header_for_fit_rows(nstates),
-        fmt="%.10e",
-    )
-
-    fit_window_table = np.array(
-        [[*fit_window_parameter_summary.params_mean, *fit_window_parameter_summary.params_err]],
-        dtype=float,
-    )
-    np.savetxt(
-        fit_window_table_path,
-        fit_window_table,
-        header=" ".join(
-            [f"A{idx}_mean" for idx in range(nstates)]
-            + [f"E{idx}_mean" for idx in range(nstates)]
-            + [f"A{idx}_err" for idx in range(nstates)]
-            + [f"E{idx}_err" for idx in range(nstates)]
-        ),
         fmt="%.10e",
     )
 
@@ -1056,32 +1128,25 @@ def _write_state_outputs(
     )
 
     return StateArtifacts(
-        nstates=nstates,
         fit_window_summary=fit_window_summary,
-        fit_window_parameter_summary=fit_window_parameter_summary,
         fit_window_start_fallback_uncorrelated_successes=fit_window_start_row.fallback_uncorrelated_successes,
         fit_window_start_shrinkage_lambda=fit_window_start_shrinkage_lambda,
         fit_table_path=table_path,
-        fit_window_table_path=fit_window_table_path,
+        fit_rows=tuple(rows),
     )
 
 
 @dataclass(frozen=True)
 class _PreparedDataset:
     title: str
-    tmin_window: tuple[int, int]
-    time_offset: int
-    selected: np.ndarray
+    dataset_dir: Path
+    plots_dir: Path
     bootstrap_means: np.ndarray
     sigma: np.ndarray
     covariance: np.ndarray | None
     meff_mean: np.ndarray
     meff_err: np.ndarray
     fit_tmax_output: int
-    dataset_dir: Path
-    tables_dir: Path
-    plots_dir: Path
-    samples_dir: Path
     correlator_table: Path
     meff_table: Path
     scan_tmin_start: int
@@ -1123,9 +1188,7 @@ def _load_and_preprocess_correlators(spec: NStateFitInput, pz: int) -> _Prepared
         raise ValueError(f"tmin_window for pz={pz} must start at or above 0")
     if fit_end > local_tmax:
         raise ValueError(f"tmin_window for pz={pz} ends at {fit_end}, which exceeds tmax={local_tmax}")
-    selected = processed
-    time_offset = 0
-    binned = bin_correlators(selected, binsize=spec.binsize)
+    binned = bin_correlators(processed, binsize=spec.binsize)
     bootstrap_means = bootstrap_correlator_means(
         binned,
         n_samples=spec.bootstrap_samples,
@@ -1140,8 +1203,8 @@ def _load_and_preprocess_correlators(spec: NStateFitInput, pz: int) -> _Prepared
     fit_tmax_output = local_tmax
 
     dataset_dir = spec.results_dir / title
-    tables_dir = dataset_dir / "tables"
     plots_dir = dataset_dir / "plots"
+    tables_dir = dataset_dir / "tables"
     samples_dir = dataset_dir / "samples"
     for directory in (tables_dir, plots_dir, samples_dir):
         directory.mkdir(parents=True, exist_ok=True)
@@ -1150,19 +1213,14 @@ def _load_and_preprocess_correlators(spec: NStateFitInput, pz: int) -> _Prepared
     meff_table = tables_dir / f"{title}_{spec.model}_effective_mass_tmax{fit_tmax_output}.txt"
     return _PreparedDataset(
         title=title,
-        tmin_window=tmin_window,
-        time_offset=0,
-        selected=selected,
+        dataset_dir=dataset_dir,
+        plots_dir=plots_dir,
         bootstrap_means=bootstrap_means,
         sigma=sigma,
         covariance=covariance,
         meff_mean=meff_mean,
         meff_err=meff_err,
         fit_tmax_output=fit_tmax_output,
-        dataset_dir=dataset_dir,
-        tables_dir=tables_dir,
-        plots_dir=plots_dir,
-        samples_dir=samples_dir,
         correlator_table=correlator_table,
         meff_table=meff_table,
         scan_tmin_start=fit_start,
@@ -1172,9 +1230,9 @@ def _load_and_preprocess_correlators(spec: NStateFitInput, pz: int) -> _Prepared
 
 def _initialize_fit_guesses(
     bootstrap_means: np.ndarray,
-    fixed_ground_energy: float | None,
+    initial_ground_energy: float | None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    one_state_energy_guess = 0.1 if fixed_ground_energy is None else float(fixed_ground_energy)
+    one_state_energy_guess = 0.1 if initial_ground_energy is None else float(initial_ground_energy)
     sample_index = 2 if bootstrap_means.shape[1] > 2 else max(0, bootstrap_means.shape[1] - 1)
     one_state_amplitude_guess = max(
         bootstrap_means.mean(axis=0)[sample_index] * np.exp(one_state_energy_guess * sample_index),
@@ -1186,117 +1244,59 @@ def _initialize_fit_guesses(
     )
 
 
-def _uncorrelated_pretty_fit(
-    bootstrap_means: np.ndarray,
-    sigma: np.ndarray,
-    nt: int,
-    model: str,
-    fixed_ground_energy: float | None = None,
-) -> tuple[np.ndarray, np.ndarray] | None:
-    """
-    Perform an uncorrelated pretraining fit for 1-state fit using fixed time window tmin=2, tmax=8.
-    Returns fitted amplitudes and energies, or None if the fit fails.
-    """
-    # Fixed time window
-    tmin = 2
-    tmax = 8
-    
-    # Check if data length is sufficient
-    if bootstrap_means.shape[1] <= tmax:
-        return None
-    
-    # Use data mean for fitting
-    data_mean = np.mean(bootstrap_means, axis=0)
-    times = np.arange(tmin, tmax + 1)
-    data_slice = data_mean[tmin:tmax + 1]
-    sigma_slice = np.clip(sigma[tmin:tmax + 1], MIN_POSITIVE, None)
-    
-    # Use default initial guess
-    initial_amplitudes = np.array([data_slice[0] * np.exp(0.1 * tmin)])
-    initial_energies = np.array([0.1])
-    
-    # Build uncorrelated residual model
-    residual_model = build_residual_model("uncorrelated", sigma_slice)
-    
-    # Perform uncorrelated fit
-    fit_result = fit_nstate_sample(
-        times=times,
-        data=data_slice,
-        sigma=sigma_slice,
-        nt=nt,
-        model=model,
-        initial_amplitudes=initial_amplitudes,
-        initial_energies=initial_energies,
-        nstates=1,
-        residual_model=residual_model,
-        fixed_ground_energy=fixed_ground_energy,
-    )
-    
-    if fit_result.success and np.all(np.isfinite(fit_result.params)):
-        return fit_result.params[:1], fit_result.params[1:]
-    return None
-
-
 def _run_state_fits(
     spec: NStateFitInput,
     pz: int,
     dataset: _PreparedDataset,
     initial_guess: tuple[np.ndarray, np.ndarray],
+    initial_ground_energy: float | None,
+    fixed_ground_energy: float | None,
 ) -> dict[int, StateArtifacts]:
-    current_guess = initial_guess
     state_artifacts: dict[int, StateArtifacts] = {}
 
     def compute_state(nstates: int) -> None:
-        nonlocal current_guess
         if nstates in state_artifacts:
             return
-
-        # Compute fixed_ground_energy early for use in pretraining fit
-        fixed_ground_energy = None
-        if spec.fix_ground_energy_from_dispersion and spec.pz0_ground_energy is not None:
-            fixed_ground_energy = target_ground_energy_from_pz0(spec.pz0_ground_energy, pz, spec.ns)
 
         if nstates == 1:
             tmin_start = dataset.scan_tmin_start
             tmin_stop = dataset.scan_tmin_stop + 1
-            state_initial_guess = current_guess
+            state_initial_guess = initial_guess
             priors: tuple[EnergyPrior, ...] = ()
-            
-            # For pz=0 1-state fit, try to improve initial guess with uncorrelated pretraining fit
-            if pz == 0:
-                pretrained_result = _uncorrelated_pretty_fit(
-                    bootstrap_means=dataset.bootstrap_means,
-                    sigma=dataset.sigma,
-                    nt=spec.nt,
-                    model=spec.model,
-                    fixed_ground_energy=fixed_ground_energy,
-                )
-                if pretrained_result is not None:
-                    state_initial_guess = pretrained_result
-                    print(f"[nstate-fit] pz=0 1state fit: using pretrained uncorrelated fit result as initial guess")
-                    print(f"[nstate-fit]   amplitude: {state_initial_guess[0][0]:.6f}, energy: {state_initial_guess[1][0]:.6f}")
         else:
-            previous_state = nstates - 1
-            previous_artifact = state_artifacts.get(previous_state)
-            if previous_artifact is None:
-                compute_state(previous_state)
-                previous_artifact = state_artifacts[previous_state]
-
             tmin_start = dataset.scan_tmin_start
             tmin_stop = dataset.scan_tmin_stop + 1
-            state_initial_guess = build_initial_guess_from_fit_window(previous_artifact.fit_window_summary, nstates)
-            priors = build_energy_priors_from_fit_window_summary(
-                previous_artifact.fit_window_parameter_summary,
-                nstates,
+            previous_artifact = _load_previous_state_artifact(
+                spec,
+                dataset.title,
+                current_nstates=nstates,
+                tmax=dataset.fit_tmax_output,
             )
-            current_guess = state_initial_guess
+            state_initial_guess = build_initial_guess_from_fit_window(previous_artifact.fit_window_summary, nstates)
+            prior_row = None
+            if spec.low_state_prior_tmin is not None:
+                prior_tmin = load_low_state_prior_tmin(
+                    spec.low_state_prior_tmin,
+                    pz=pz,
+                )
+                prior_row = load_fit_row_from_table(
+                    previous_artifact.fit_table_path,
+                    tmin=prior_tmin,
+                    nstates=nstates - 1,
+                )
+            priors = build_energy_priors_from_fit_row(prior_row, nstates)
+
+        if initial_ground_energy is not None and state_initial_guess[1].size > 0:
+            initial_energies = np.asarray(state_initial_guess[1], dtype=float).copy()
+            initial_energies[0] = initial_ground_energy
+            state_initial_guess = (np.asarray(state_initial_guess[0], dtype=float), initial_energies)
 
         if fixed_ground_energy is not None and state_initial_guess[1].size > 0:
             fixed_energies = np.asarray(state_initial_guess[1], dtype=float).copy()
             fixed_energies[0] = fixed_ground_energy
             state_initial_guess = (np.asarray(state_initial_guess[0], dtype=float), fixed_energies)
 
-        rows, sample_tables, meanfit_results = run_sliding_fits(
+        rows, sample_tables, _ = run_sliding_fits(
             dataset.bootstrap_means,
             dataset.sigma,
             spec.fit_mode,
@@ -1311,21 +1311,13 @@ def _run_state_fits(
             priors=priors,
             lambda_prior=spec.lambda_prior,
             fixed_ground_energy=fixed_ground_energy,
-            time_offset=0,
         )
-        representative_row = next((row for row in reversed(rows) if row.success_meanfit), rows[0] if rows else None)
-        if representative_row is None:
-            raise ValueError(f"fit window for pz={pz} produced no fit row")
+        window_reference_row = select_window_reference_row(rows)
         fit_window_summary = FitWindowSummary(
             start_tmin=dataset.scan_tmin_start,
             end_tmin=dataset.scan_tmin_stop,
-            representative_tmin=representative_row.tmin,
-            energy_mean=representative_row.params_mean[nstates],
-            amplitude_mean=representative_row.params_mean[0],
-        )
-        rows = mark_fit_window(rows, fit_window_summary)
-        fit_window_parameter_summary = compute_fit_window_parameter_summary(
-            rows, sample_tables, fit_window_summary
+            energy_mean=window_reference_row.params_mean[nstates],
+            amplitude_mean=window_reference_row.params_mean[0],
         )
         state_artifacts[nstates] = _write_state_outputs(
             spec=spec,
@@ -1335,8 +1327,6 @@ def _run_state_fits(
             rows=rows,
             sample_tables=sample_tables,
             fit_window_summary=fit_window_summary,
-            fit_window_parameter_summary=fit_window_parameter_summary,
-            meanfit_results=meanfit_results,
         )
 
     for nstates in spec.nstates:
@@ -1355,7 +1345,7 @@ def _write_dataset_outputs(
         dataset.correlator_table,
         np.column_stack(
             [
-                np.arange(dataset.time_offset, dataset.time_offset + dataset.selected.shape[1]),
+                np.arange(dataset.bootstrap_means.shape[1]),
                 np.mean(dataset.bootstrap_means, axis=0),
                 dataset.sigma,
             ]
@@ -1366,7 +1356,7 @@ def _write_dataset_outputs(
     outputs.append(dataset.correlator_table)
     np.savetxt(
         dataset.meff_table,
-        np.column_stack([np.arange(dataset.time_offset, dataset.time_offset + len(dataset.meff_mean)), dataset.meff_mean, dataset.meff_err]),
+        np.column_stack([np.arange(len(dataset.meff_mean)), dataset.meff_mean, dataset.meff_err]),
         header="t meff_mean meff_err",
         fmt="%.10e",
     )
@@ -1390,7 +1380,6 @@ def _write_dataset_outputs(
         for nstates in sorted(state_artifacts):
             artifact = state_artifacts[nstates]
             fit_window_summary = artifact.fit_window_summary
-            fit_window_parameter_summary = artifact.fit_window_parameter_summary
             handle.write(
                 f"{nstates}state fit_window_tmin {fit_window_summary.start_tmin} {fit_window_summary.end_tmin}\n"
             )
@@ -1401,13 +1390,19 @@ def _write_dataset_outputs(
             fit_window_start_lambda = artifact.fit_window_start_shrinkage_lambda
             if fit_window_start_lambda is not None:
                 handle.write(f"{nstates}state fit_window_start_shrinkage_lambda {fit_window_start_lambda:.2f}\n")
-            for idx in range(nstates):
+            if spec.low_state_prior_tmin is not None and nstates > 1:
+                prior_tmin_text = format_low_state_prior_tmin_for_summary(spec.low_state_prior_tmin)
                 handle.write(
-                    f"{nstates}state A{idx} {fit_window_parameter_summary.params_mean[idx]:.10e} "
-                    f"{fit_window_parameter_summary.params_err[idx]:.10e} "
-                    f"E{idx} {fit_window_parameter_summary.params_mean[nstates + idx]:.10e} "
-                    f"{fit_window_parameter_summary.params_err[nstates + idx]:.10e}\n"
+                    f"{nstates}state low_state_prior_tmin {prior_tmin_text}\n"
                 )
+            if artifact.fit_rows:
+                handle.write(f"{nstates}state initial_guess_tmin_rows\n")
+            for row in artifact.fit_rows:
+                initial_guess_text = format_initial_guess_for_summary(row)
+                if initial_guess_text:
+                    handle.write(
+                        f"  tmin {row.tmin}: {initial_guess_text}\n"
+                    )
     outputs.append(summary_path)
 
     if spec.make_plots:
@@ -1448,11 +1443,21 @@ def _write_dataset_outputs(
 
 def run_single_dataset(spec: NStateFitInput, pz: int) -> list[Path]:
     dataset = _load_and_preprocess_correlators(spec, pz)
+    initial_ground_energy = None
+    if spec.pz0_ground_energy is not None:
+        initial_ground_energy = target_ground_energy_from_pz0(spec.pz0_ground_energy, pz, spec.ns)
     fixed_ground_energy = None
     if spec.fix_ground_energy_from_dispersion and spec.pz0_ground_energy is not None:
-        fixed_ground_energy = target_ground_energy_from_pz0(spec.pz0_ground_energy, pz, spec.ns)
-    initial_guess = _initialize_fit_guesses(dataset.bootstrap_means, fixed_ground_energy)
-    state_artifacts = _run_state_fits(spec, pz, dataset, initial_guess)
+        fixed_ground_energy = initial_ground_energy
+    initial_guess = _initialize_fit_guesses(dataset.bootstrap_means, initial_ground_energy)
+    state_artifacts = _run_state_fits(
+        spec,
+        pz,
+        dataset,
+        initial_guess,
+        initial_ground_energy,
+        fixed_ground_energy,
+    )
     return _write_dataset_outputs(spec, pz, dataset, state_artifacts)
 
 

@@ -7,11 +7,13 @@ model normal
 fit_mode uncorrelated
 pz0_ground_energy 0.42
 fix_ground_energy_from_dispersion true
-nstates 1 2
+nstates 2
 tmin_window /path/to/2pt_tmin_windows.txt
 binsize 1
 bootstrap_samples 16
 bootstrap_size 16
 seed 2026
+low_state_prior_tmin 3
+lambda_prior 1.0
 plot true
-results_dir examples/outputs/nstate_fit_realdata
+results_dir examples/outputs/nstate_fit_realdata_2state

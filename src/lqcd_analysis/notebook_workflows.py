@@ -65,6 +65,7 @@ NSTATE_INPUT_KEYS = {
     "bootstrap_samples",
     "bootstrap_size",
     "seed",
+    "low_state_prior_tmin",
     "lambda_prior",
     "plot",
     "results_dir",
@@ -284,6 +285,11 @@ def render_nstate_fit_input_text(config: dict[str, Any]) -> str:
         config["tmin_window"] = str(
             _materialize_nstate_tmin_window_file(config["tmin_window"])
         )
+    if isinstance(config.get("low_state_prior_tmin"), dict):
+        config = dict(config)
+        config["low_state_prior_tmin"] = str(
+            _materialize_nstate_low_state_prior_tmin_file(config["low_state_prior_tmin"])
+        )
     config = _subset_config(config, NSTATE_INPUT_KEYS)
     required = [
         "title_pattern",
@@ -322,6 +328,7 @@ def render_nstate_fit_input_text(config: dict[str, Any]) -> str:
         "bootstrap_samples",
         "bootstrap_size",
         "seed",
+        "low_state_prior_tmin",
         "lambda_prior",
         "plot",
         "results_dir",
@@ -712,6 +719,16 @@ def _materialize_nstate_tmin_window_file(tmin_window: dict[Any, Any]) -> Path:
                 f"invalid tmin_window entry for {key}; tmax must be >= tmin"
             )
         lines.append(f"{int(key)} {tmin} {tmax}")
+    path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+    return path
+
+
+def _materialize_nstate_low_state_prior_tmin_file(prior_tmin_by_pz: dict[Any, Any]) -> Path:
+    tmpdir = Path(tempfile.mkdtemp(prefix="lqcd_nstate_low_state_prior_tmin_"))
+    path = tmpdir / "nstate_low_state_prior_tmin.txt"
+    lines: list[str] = []
+    for key, value in prior_tmin_by_pz.items():
+        lines.append(f"{int(key)} {int(value)}")
     path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
     return path
 

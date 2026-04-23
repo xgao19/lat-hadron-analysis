@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
+from scipy.optimize import brentq
 
-from ..common.parsing import parse_fold_t, parse_optional_int, parse_tsrange
+from ..common.parsing import load_control_file_entries, parse_fold_t, parse_optional_int, parse_tsrange
 from ..common.utils import apply_fold_t, bin_correlators, bootstrap_correlator_means
 from .io import load_correlator_csv
 
@@ -47,35 +49,10 @@ def solve_cosh_effective_mass(
     def f(mass: float) -> float:
         return ratio * np.cosh(mass * (t + 1 - center)) - np.cosh(mass * (t - center))
 
-    f_lower = f(lower)
-    f_upper = f(upper)
-    if not np.isfinite(f_lower) or not np.isfinite(f_upper):
+    try:
+        return float(brentq(f, lower, upper, xtol=tol, maxiter=max_iter))
+    except ValueError:
         return np.nan
-    if f_lower == 0.0:
-        return float(lower)
-    if f_upper == 0.0:
-        return float(upper)
-    if f_lower * f_upper > 0.0:
-        return np.nan
-
-    lo = float(lower)
-    hi = float(upper)
-    flo = float(f_lower)
-    fhi = float(f_upper)
-    for _ in range(max_iter):
-        mid = 0.5 * (lo + hi)
-        fmid = f(mid)
-        if not np.isfinite(fmid):
-            return np.nan
-        if abs(fmid) < tol or 0.5 * (hi - lo) < tol:
-            return float(mid)
-        if flo * fmid <= 0.0:
-            hi = mid
-            fhi = fmid
-        else:
-            lo = mid
-            flo = fmid
-    return float(0.5 * (lo + hi)) if np.isfinite(flo) and np.isfinite(fhi) else np.nan
 
 
 def solve_antisymmetric_effective_mass(
@@ -97,35 +74,33 @@ def solve_antisymmetric_effective_mass(
     def f(mass: float) -> float:
         return ratio * np.sinh(mass * (t + 1 - center)) - np.sinh(mass * (t - center))
 
-    f_lower = f(lower)
-    f_upper = f(upper)
-    if not np.isfinite(f_lower) or not np.isfinite(f_upper):
-        return np.nan
-    if f_lower == 0.0:
-        return float(lower)
-    if f_upper == 0.0:
-        return float(upper)
-    if f_lower * f_upper > 0.0:
+    try:
+        return float(brentq(f, lower, upper, xtol=tol, maxiter=max_iter))
+    except ValueError:
         return np.nan
 
-    lo = float(lower)
-    hi = float(upper)
-    flo = float(f_lower)
-    fhi = float(f_upper)
-    for _ in range(max_iter):
-        mid = 0.5 * (lo + hi)
-        fmid = f(mid)
-        if not np.isfinite(fmid):
-            return np.nan
-        if abs(fmid) < tol or 0.5 * (hi - lo) < tol:
-            return float(mid)
-        if flo * fmid <= 0.0:
-            hi = mid
-            fhi = fmid
-        else:
-            lo = mid
-            flo = fmid
-    return float(0.5 * (lo + hi)) if np.isfinite(flo) and np.isfinite(fhi) else np.nan
+
+def _compute_effective_mass_root(
+    values: np.ndarray,
+    nt: int,
+    solver: Callable[..., float],
+    *,
+    lower: float,
+    upper: float,
+    tol: float,
+) -> np.ndarray:
+    correlator = np.asarray(values, dtype=float)
+    output = np.full(len(correlator), np.nan, dtype=float)
+    if len(correlator) < 2:
+        return output
+
+    valid = np.isfinite(correlator[:-1]) & np.isfinite(correlator[1:]) & (correlator[:-1] != 0.0) & (correlator[1:] != 0.0)
+    ratios = np.full(len(correlator) - 1, np.nan, dtype=float)
+    np.divide(correlator[:-1], correlator[1:], out=ratios, where=valid)
+    for t, ratio in enumerate(ratios):
+        if np.isfinite(ratio):
+            output[t] = solver(t, float(ratio), nt, lower=lower, upper=upper, tol=tol)
+    return output
 
 
 def compute_effective_mass_cosh_root(
@@ -135,23 +110,14 @@ def compute_effective_mass_cosh_root(
     upper: float = 20.0,
     tol: float = 1e-8,
 ) -> np.ndarray:
-    correlator = np.asarray(values, dtype=float)
-    output = np.full(len(correlator), np.nan, dtype=float)
-    if len(correlator) < 2:
-        return output
-
-    valid = (
-        np.isfinite(correlator[:-1])
-        & np.isfinite(correlator[1:])
-        & (correlator[:-1] != 0.0)
-        & (correlator[1:] != 0.0)
+    return _compute_effective_mass_root(
+        values,
+        nt,
+        solve_cosh_effective_mass,
+        lower=lower,
+        upper=upper,
+        tol=tol,
     )
-    ratios = np.full(len(correlator) - 1, np.nan, dtype=float)
-    ratios[valid] = correlator[:-1][valid] / correlator[1:][valid]
-    for t, ratio in enumerate(ratios):
-        if np.isfinite(ratio):
-            output[t] = solve_cosh_effective_mass(t, float(ratio), nt, lower=lower, upper=upper, tol=tol)
-    return output
 
 
 def compute_effective_mass_antisymmetric_root(
@@ -161,30 +127,14 @@ def compute_effective_mass_antisymmetric_root(
     upper: float = 20.0,
     tol: float = 1e-8,
 ) -> np.ndarray:
-    correlator = np.asarray(values, dtype=float)
-    output = np.full(len(correlator), np.nan, dtype=float)
-    if len(correlator) < 2:
-        return output
-
-    valid = (
-        np.isfinite(correlator[:-1])
-        & np.isfinite(correlator[1:])
-        & (correlator[:-1] != 0.0)
-        & (correlator[1:] != 0.0)
+    return _compute_effective_mass_root(
+        values,
+        nt,
+        solve_antisymmetric_effective_mass,
+        lower=lower,
+        upper=upper,
+        tol=tol,
     )
-    ratios = np.full(len(correlator) - 1, np.nan, dtype=float)
-    ratios[valid] = correlator[:-1][valid] / correlator[1:][valid]
-    for t, ratio in enumerate(ratios):
-        if np.isfinite(ratio):
-            output[t] = solve_antisymmetric_effective_mass(
-                t,
-                float(ratio),
-                nt,
-                lower=lower,
-                upper=upper,
-                tol=tol,
-            )
-    return output
 
 
 def effective_mass_single(correlator: np.ndarray, model: str, nt: int | None = None) -> np.ndarray:
@@ -192,7 +142,8 @@ def effective_mass_single(correlator: np.ndarray, model: str, nt: int | None = N
     if model == "normal":
         output = np.full(len(values) - 1, np.nan, dtype=float)
         valid = (values[:-1] > 0.0) & (values[1:] > 0.0)
-        output[valid] = np.log(values[:-1][valid] / values[1:][valid])
+        np.divide(values[:-1], values[1:], out=output, where=valid)
+        np.log(output, out=output, where=valid)
         return output
     if model == "symmetric":
         if nt is None:
@@ -210,7 +161,7 @@ def effective_mass_with_bootstrap(
     model: str,
     nt: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    samples = np.array([effective_mass_single(sample, model, nt=nt) for sample in bootstrap_means])
+    samples = np.stack([effective_mass_single(sample, model, nt=nt) for sample in bootstrap_means], axis=0)
     mean = np.nanmean(samples, axis=0)
     err = np.nanstd(samples, axis=0, ddof=1)
     return mean, err
@@ -218,18 +169,8 @@ def effective_mass_with_bootstrap(
 
 def parse_effective_mass_input(path: str | Path, results_dir: str | Path | None = None) -> EffectiveMassInput:
     file_path = Path(path)
-    entries: dict[str, list[str]] = {}
-    first_tokens: list[str] | None = None
-    with file_path.open("r", encoding="utf-8") as handle:
-        for line in handle:
-            stripped = line.strip()
-            if not stripped or stripped.startswith("#"):
-                continue
-            tokens = stripped.split()
-            if first_tokens is None:
-                first_tokens = tokens
-            entries[tokens[0]] = tokens[1:]
-    if first_tokens is None or len(first_tokens) < 4:
+    first_tokens, entries = load_control_file_entries(file_path)
+    if len(first_tokens) < 4:
         raise ValueError("the first non-empty line must be: title Ns Nt a_fm")
     required = {"c2pt", "pzlist", "model"}
     missing = required - entries.keys()

@@ -1,4 +1,5 @@
-title_pattern demo_tmdwf_cs_kernel
+# Data settings
+title_pattern l64c64a076_m140_fit_pz*
 input_root /path/to/tmdwf_fourier_outputs
 ns 64
 lattice_spacing_fm 0.076
@@ -8,6 +9,8 @@ component real
 nstates 1
 normalization_mode raw
 mu 2.0
+
+# CS-kernel extraction settings
 scheme CG
 extraction_type type2
 pair_mode all
@@ -15,5 +18,7 @@ kernel_labels LO NLO NLL
 bTrange 0 4
 pzrange 2 6
 x_window 0.2 0.8
+
+# Output settings
 plot true
 results_dir results_tmdwf_cs_kernel

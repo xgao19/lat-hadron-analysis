@@ -2,8 +2,10 @@
 # This workflow reads already-generated TMDWF Fourier outputs and
 # extracts the type-2 CS kernel without rerunning the TMDWF fit or Fourier step.
 
+# Data settings
+
 # Output title / analysis tag.
-title_pattern demo_tmdwf_cs_kernel
+title_pattern l64c64a076_m140_fit_pz*
 
 # Root directory that holds the existing Fourier outputs.
 # The workflow automatically resolves the usual Fourier table/sample filenames
@@ -19,6 +21,8 @@ component real
 nstates 1
 normalization_mode raw
 mu 2.0
+
+# CS-kernel extraction settings
 
 # Legacy-compatible extraction controls.
 scheme CG
@@ -45,6 +49,8 @@ pzrange 2 6
 # Only x values inside this window are used when fitting the estimator
 # built from the pair_mode-selected P1/P2 combinations.
 x_window 0.2 0.8
+
+# Output settings
 
 # Optional plot output.
 # When true, also write one quick-look PDF band plot for each

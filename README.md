@@ -140,9 +140,9 @@ plot true
 Optional input:
 
 - `pz0_ground_energy <value>`:
-  provide the pz=0 ground-state energy in lattice units. This serves as the dispersion-reference input when you want to fix the ground-state energy.
+  provide the pz=0 ground-state energy in lattice units. The code uses it to build the dispersion target for the initial `E0` guess, and also as the fixed `E0` value when you enable dispersion anchoring.
 - `fix_ground_energy_from_dispersion true|false`:
-  when `true`, the nonlinear 2pt fit fixes the ground-state energy to the lattice-dispersion target derived from `pz0_ground_energy`. This is the repository-native analogue to the legacy fixed-`E0` setup.
+  when `true`, the nonlinear 2pt fit fixes the ground-state energy to the lattice-dispersion target derived from `pz0_ground_energy`. When `false`, the fit still uses that target as the initial `E0` guess if `pz0_ground_energy` is provided.
 - `tmin_window <path>`:
   preferred plain-text scan-window table with rows of the form `pz tmin_start tmin_end`.
   The fit scans `tmin` from the start up to the end while keeping `tmax` fixed.
@@ -176,12 +176,20 @@ Meaning:
 
 Notes on the workflow:
 
-- The 2-state fit is initialized from the selected 1-state fit window summary.
-- The 3-state fit is initialized from the selected 2-state fit window summary.
+- The 2-state fit reads the previous 1-state fit table from the matching state-specific output directory and uses that row to build its initial guess and priors.
+- The 3-state fit reads the previous 2-state fit table from the matching state-specific output directory and uses that row to build its initial guess and priors.
+- Prior quick reference:
+  - `1-state`: no low-state prior.
+  - `2-state`: `low_state_prior_tmin[pz]` selects one row from the previous `1-state` table, and that row provides the `E0` prior.
+  - `3-state`: the same selector reads one row from the previous `2-state` table, and that row provides the `E0` and `E1` priors.
+  - `pz0_ground_energy` supplies the dispersion target for the initial `E0` guess, and becomes the fixed `E0` only when `fix_ground_energy_from_dispersion` is enabled.
+- For multistate runs, keep the lower-state output directory available before launching the higher-state fit.
+- `lambda_prior` only scales the prior residuals after the row has been selected.
 - If `matplotlib` is unavailable, the code writes a small text note instead of a plot file.
 - Plotting is now handled by a reusable module in `src/lqcd_analysis/two_point/plotting.py`.
+- A more detailed working guide lives in `docs/two_point_nstate_fit_guide.md`.
 
-- Plot outputs convert fitted energies and effective masses from lattice units `E*a` into physical units in MeV using the provided lattice spacing.
+- Plot outputs convert fitted energies and effective masses from lattice units `E*a` into physical units in GeV using the provided lattice spacing.
 - Effective-mass plots no longer draw a `tmax` guide line; both effective-mass and energy plots start their displayed data from `tmin = 2` by default.
 - After each 2pt fit run, an editable notebook is written under `results_dir/notebook_plots/`. The notebook calls the reusable plotting module so you can tweak paths, styles, and which state to draw.
 
@@ -607,7 +615,8 @@ Both workflows are supported:
 Current notebook templates:
 
 - `templates/two_point/tgevp_template.ipynb`
-- `templates/two_point/nstate_fit_template.ipynb`
+- `templates/two_point/nstate_fit_1state_template.ipynb`
+- `templates/two_point/nstate_fit_2state_template.ipynb`
 - `templates/tmdwf/tmdwf_nstate_template.ipynb`
 - `templates/tmdwf/tmdwf_normalize_template.ipynb`
 - `templates/tmdwf/tmdwf_fourier_template.ipynb`
@@ -632,14 +641,16 @@ The repository now includes tracked example correlator data under:
 and plain-text example inputs under:
 
 - `templates/input_files/two_point/tgevp_example_realdata.txt`
-- `templates/input_files/two_point/nstate_fit_example_realdata.txt`
+- `templates/input_files/two_point/nstate_fit_1state_example_realdata.txt`
+- `templates/input_files/two_point/nstate_fit_2state_example_realdata.txt`
 - `templates/input_files/tmdwf/tmdwf_nstate_example.txt`
 - `templates/input_files/tmdwf/tmdwf_normalize_example.txt`
 - `templates/input_files/tmdwf/tmdwf_fourier_example.txt`
 - `templates/input_files/tmdwf/tmdwf_cs_kernel_example.txt`
 - `templates/input_files/two_point/plot_2pt_example_command.txt`
 - `templates/input_files/two_point/tgevp_example_realdata_annotated.txt`
-- `templates/input_files/two_point/nstate_fit_example_realdata_annotated.txt`
+- `templates/input_files/two_point/nstate_fit_1state_example_realdata_annotated.txt`
+- `templates/input_files/two_point/nstate_fit_2state_example_realdata_annotated.txt`
 - `templates/input_files/tmdwf/tmdwf_nstate_example_annotated.txt`
 - `templates/input_files/tmdwf/tmdwf_cs_kernel_example_annotated.txt`
 - `templates/tmdwf/tmdwf_nstate_template.ipynb`

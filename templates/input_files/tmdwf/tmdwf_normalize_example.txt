@@ -1,5 +1,7 @@
 # Example TMDWF normalization input
-title_pattern l64c64a076_m140_tmdwf_pz*
+
+# Data settings
+title_pattern l64c64a076_m140_fit_pz*
 input_root examples/outputs/tmdwf_fit_notebook
 ns 64
 lattice_spacing_fm 0.076
@@ -8,8 +10,12 @@ gmlist T5
 etalist eta0
 bTlist 0
 bzlist 0
+
+# Normalization settings
 component real
 nstates 1
 normalization_mode mode1
+
+# Output settings
 plot false
 results_dir examples/outputs/tmdwf_normalize_example

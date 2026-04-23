@@ -61,7 +61,7 @@ class NotebookWorkflowTests(unittest.TestCase):
             "model": "normal",
             "fit_mode": "uncorrelated",
             "fix_ground_energy_from_dispersion": False,
-            "nstates": [1, 2],
+            "nstates": 1,
             "tmin_window": {0: [0, 4]},
             "tmax": {0: 12},
         }
@@ -238,9 +238,10 @@ class NotebookWorkflowTests(unittest.TestCase):
                 "fit_mode": "correlated",
                 "pz0_ground_energy": 0.42,
                 "fix_ground_energy_from_dispersion": False,
-                "nstates": [1, 2],
+                "nstates": 2,
                 "tmin_window": {0: [0, 4]},
                 "tmax": {0: 12},
+                "low_state_prior_tmin": {0: 3, 1: 4},
                 "lambda_prior": 0.5,
                 "plot": True,
                 "results_dir": "examples/outputs/demo",
@@ -250,6 +251,8 @@ class NotebookWorkflowTests(unittest.TestCase):
         self.assertIn("fit_mode correlated", text)
         self.assertIn("pz0_ground_energy 0.42", text)
         self.assertIn("fix_ground_energy_from_dispersion false", text)
+        self.assertIn("nstates 2", text)
+        self.assertIn("low_state_prior_tmin ", text)
         match = re.search(r"tmin_window (.+)", text)
         self.assertIsNotNone(match)
         override_path = Path(match.group(1).strip())
@@ -258,7 +261,10 @@ class NotebookWorkflowTests(unittest.TestCase):
         self.assertIsNotNone(match)
         tmax_path = Path(match.group(1).strip())
         self.assertEqual(tmax_path.read_text(encoding="utf-8"), "0 12\n")
-        self.assertIn("nstates 1 2", text)
+        match = re.search(r"low_state_prior_tmin (.+)", text)
+        self.assertIsNotNone(match)
+        prior_path = Path(match.group(1).strip())
+        self.assertEqual(prior_path.read_text(encoding="utf-8"), "0 3\n1 4\n")
         self.assertIn("lambda_prior 0.5", text)
         self.assertIn("results_dir examples/outputs/demo", text)
 
@@ -276,7 +282,7 @@ class NotebookWorkflowTests(unittest.TestCase):
         self.assertTrue(tmax_path.exists())
         self.assertEqual(tmax_path.read_text(encoding="utf-8"), "0 12\n")
         parsed = parse_nstate_fit_input(
-            Path("templates/input_files/two_point/nstate_fit_example_realdata.txt")
+            Path("templates/input_files/two_point/nstate_fit_2state_example_realdata.txt")
         )
         self.assertEqual(parsed.nt, 64)
 
@@ -898,7 +904,8 @@ class NotebookWorkflowTests(unittest.TestCase):
     def test_template_notebooks_exist_and_are_valid_json(self) -> None:
         for relative in (
             "templates/two_point/tgevp_template.ipynb",
-            "templates/two_point/nstate_fit_template.ipynb",
+            "templates/two_point/nstate_fit_1state_template.ipynb",
+            "templates/two_point/nstate_fit_2state_template.ipynb",
             "templates/tmdwf/tmdwf_nstate_template.ipynb",
             "templates/tmdwf/tmdwf_fourier_template.ipynb",
             "templates/tmdwf/tmdwf_normalize_template.ipynb",
@@ -969,7 +976,8 @@ class NotebookWorkflowTests(unittest.TestCase):
 
     def test_example_input_files_parse(self) -> None:
         tgevp_input = Path("templates/input_files/two_point/tgevp_example_realdata.txt")
-        nstate_input = Path("templates/input_files/two_point/nstate_fit_example_realdata.txt")
+        nstate_1_input = Path("templates/input_files/two_point/nstate_fit_1state_example_realdata.txt")
+        nstate_2_input = Path("templates/input_files/two_point/nstate_fit_2state_example_realdata.txt")
         tmdwf_input = Path("templates/input_files/tmdwf/tmdwf_nstate_example.txt")
         tmdwf_fourier_input = Path("templates/input_files/tmdwf/tmdwf_fourier_example.txt")
         tmdwf_fourier_annotated = Path("templates/input_files/tmdwf/tmdwf_fourier_example_annotated.txt")
@@ -978,7 +986,8 @@ class NotebookWorkflowTests(unittest.TestCase):
         tmdwf_normalize_input = Path("templates/input_files/tmdwf/tmdwf_normalize_example.txt")
         tmdwf_normalize_annotated = Path("templates/input_files/tmdwf/tmdwf_normalize_example_annotated.txt")
         self.assertTrue(tgevp_input.exists())
-        self.assertTrue(nstate_input.exists())
+        self.assertTrue(nstate_1_input.exists())
+        self.assertTrue(nstate_2_input.exists())
         self.assertTrue(tmdwf_input.exists())
         self.assertTrue(tmdwf_fourier_input.exists())
         self.assertTrue(tmdwf_fourier_annotated.exists())
@@ -987,7 +996,7 @@ class NotebookWorkflowTests(unittest.TestCase):
         self.assertTrue(tmdwf_normalize_input.exists())
         self.assertTrue(tmdwf_normalize_annotated.exists())
         parsed_tgevp = parse_tgevp_input(tgevp_input)
-        parsed_nstate = parse_nstate_fit_input(nstate_input)
+        parsed_nstate = parse_nstate_fit_input(nstate_2_input)
         parsed_tmdwf = parse_tmdwf_fit_input(tmdwf_input)
         self.assertEqual(parsed_tgevp.pzlist, (0,))
         self.assertEqual(parsed_nstate.pzlist, (0,))

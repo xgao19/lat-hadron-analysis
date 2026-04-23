@@ -8,8 +8,8 @@ from scipy.linalg import LinAlgError, eigh
 from scipy.stats import gaussian_kde
 
 from ..common.constants import HBAR_C_GEV_FM, MIN_POSITIVE
+from ..common.parsing import load_control_file_entries, parse_fold_t, parse_optional_int
 from .io import load_correlator_csv
-from ..common.parsing import parse_fold_t
 from ..common.utils import (
     apply_fold_t,
     bin_correlators,
@@ -60,43 +60,22 @@ class SingleTSResult:
     n_samples: int
 
 
-def parse_optional_int(value: str) -> int | None:
-    if value.lower() == "auto":
-        return None
-    return int(value)
-
-
 def parse_tgevp_input(path: str | Path) -> TGEVPInput:
     file_path = Path(path)
-    entries: dict[str, list[str]] = {}
-    with file_path.open("r", encoding="utf-8") as handle:
-        for line in handle:
-            stripped = line.strip()
-            if not stripped or stripped.startswith("#"):
-                continue
-            parts = stripped.split()
-            entries[parts[0]] = parts[1:]
+    first_tokens, entries = load_control_file_entries(file_path)
 
     required = {"c2pt", "pzlist", "tsrange"}
     missing = required - entries.keys()
     if missing:
         raise ValueError(f"missing required keys in {file_path}: {sorted(missing)}")
 
-    title_parts = next(
-        (
-            line.split()
-            for line in file_path.read_text(encoding="utf-8").splitlines()
-            if line.strip() and not line.strip().startswith("#")
-        ),
-        None,
-    )
-    if title_parts is None or len(title_parts) < 4:
+    if len(first_tokens) < 4:
         raise ValueError("the first non-empty line must be: title Ns Nt a_fm")
 
-    title_pattern = title_parts[0]
-    ns = int(title_parts[1])
-    nt = int(title_parts[2])
-    lattice_spacing_fm = float(title_parts[3])
+    title_pattern = first_tokens[0]
+    ns = int(first_tokens[1])
+    nt = int(first_tokens[2])
+    lattice_spacing_fm = float(first_tokens[3])
     fold_t = parse_fold_t(entries)
     tsrange = (int(entries["tsrange"][0]), int(entries["tsrange"][1]))
     if tsrange[0] != 0:

@@ -37,7 +37,6 @@ def plot_effective_mass(
     times: np.ndarray,
     meff_mean: np.ndarray,
     meff_err: np.ndarray,
-    tmax: int,
     reference_value: float | None = None,
     title: str | None = None,
 ) -> Path:
@@ -45,20 +44,13 @@ def plot_effective_mass(
     if plt is None:
         return save_plot_status(output_path.with_suffix(".txt"), "matplotlib not installed; plot was skipped")
 
-    fig, ax = plt.subplots(figsize=(6, 4))
+    fig, ax = plt.subplots(figsize=(5, 3.2))
     ax.errorbar(times, meff_mean, yerr=meff_err, fmt="o", ms=4)
     if reference_value is not None:
-        ax.fill_between(
-            times,
-            reference_value,
-            reference_value,
-            color="tab:green",
-            alpha=0.18,
-            linewidth=0,
-            label="dispersion",
-        )
+        ax.axhline(reference_value, color="tab:green", linewidth=1.0, alpha=0.9, label="dispersion")
     ax.set_xlabel("t")
-    ax.set_ylabel("m_eff(t) [MeV]")
+    ax.set_ylabel("m_eff(t) [GeV]")
+    ax.tick_params(direction="in", top=True, right=True)
     if title:
         ax.set_title(title)
     ax.legend()
@@ -79,13 +71,14 @@ def plot_parameter_scan(
     selected_tmin_range: tuple[int, int] | None = None,
     selected_values: np.ndarray | None = None,
     selected_errors: np.ndarray | None = None,
+    selected_draw_line: bool = True,
     title: str | None = None,
 ) -> Path:
     plt = prepare_matplotlib()
     if plt is None:
         return save_plot_status(output_path.with_suffix(".txt"), "matplotlib not installed; plot was skipped")
 
-    fig, ax = plt.subplots(figsize=(6, 4))
+    fig, ax = plt.subplots(figsize=(5, 3.2))
     nstates = values.shape[1]
     if state_indices is None:
         state_indices = np.arange(nstates, dtype=int)
@@ -120,9 +113,14 @@ def plot_parameter_scan(
                 alpha=0.18,
                 linewidth=0,
             )
-            ax.plot([start_tmin, end_tmin], [center, center], color=color, linewidth=1.0, alpha=0.9)
+            if selected_draw_line:
+                ax.plot([start_tmin, end_tmin], [center, center], color=color, linewidth=1.0, alpha=0.9)
+    ylim = compute_scan_ylim(values, errors)
+    if ylim is not None:
+        ax.set_ylim(*ylim)
     ax.set_xlabel("tmin")
     ax.set_ylabel(ylabel)
+    ax.tick_params(direction="in", top=True, right=True)
     if title:
         ax.set_title(title)
     ax.legend()
@@ -130,6 +128,20 @@ def plot_parameter_scan(
     fig.savefig(output_path)
     plt.close(fig)
     return output_path
+
+
+def compute_scan_ylim(values: np.ndarray, errors: np.ndarray) -> tuple[float, float] | None:
+    finite_mask = np.isfinite(values) & np.isfinite(errors)
+    if not np.any(finite_mask):
+        return None
+    finite_values = np.asarray(values, dtype=float)[finite_mask]
+    finite_errors = np.asarray(errors, dtype=float)[finite_mask]
+    center_median = float(np.median(finite_values))
+    upper = float(np.median(finite_values + finite_errors) + abs(center_median))
+    lower = float(np.median(finite_values - finite_errors) - abs(center_median))
+    if not np.isfinite(lower) or not np.isfinite(upper) or upper <= lower:
+        return None
+    return lower, upper
 
 
 def select_scan_state_indices(nstates: int) -> np.ndarray:
@@ -166,6 +178,7 @@ def plot_best_fit_reconstruction(
     if log_scale:
         ax_top.set_yscale("log")
     ax_top.set_ylabel("C(t)")
+    ax_top.tick_params(direction="in", top=True, right=True)
     if title:
         ax_top.set_title(title)
     ax_top.legend()
@@ -175,6 +188,7 @@ def plot_best_fit_reconstruction(
     ax_bottom.plot(times, ratio, "o-")
     ax_bottom.set_xlabel("t")
     ax_bottom.set_ylabel("data/fit")
+    ax_bottom.tick_params(direction="in", top=True, right=True)
 
     fig.tight_layout()
     fig.savefig(output_path)
@@ -184,6 +198,10 @@ def plot_best_fit_reconstruction(
 
 def lattice_energy_to_mev(values: np.ndarray, lattice_spacing_fm: float) -> np.ndarray:
     return np.asarray(values, dtype=float) * (HBAR_C_MEV_FM / lattice_spacing_fm)
+
+
+def lattice_energy_to_gev(values: np.ndarray, lattice_spacing_fm: float) -> np.ndarray:
+    return lattice_energy_to_mev(values, lattice_spacing_fm) / 1000.0
 
 
 def build_reconstruction_band(
@@ -266,16 +284,16 @@ def plot_nstate_outputs(
     corr_mean = correlator[:, 1]
     corr_err = correlator[:, 2]
     meff_times = meff[:, 0]
-    meff_mean = lattice_energy_to_mev(meff[:, 1], lattice_spacing_fm)
-    meff_err = lattice_energy_to_mev(meff[:, 2], lattice_spacing_fm)
+    meff_mean = lattice_energy_to_gev(meff[:, 1], lattice_spacing_fm)
+    meff_err = lattice_energy_to_gev(meff[:, 2], lattice_spacing_fm)
     meff_mask = meff_times >= 2
     fit_scan = parse_fit_table_scan(fit, nstates)
     tmax = fit_scan.tmax
     tmins = fit_scan.tmins
     amplitude_values = fit_scan.amplitude_values
     amplitude_errs = fit_scan.amplitude_errs
-    energy_values = lattice_energy_to_mev(fit_scan.energy_values, lattice_spacing_fm)
-    energy_errs = lattice_energy_to_mev(fit_scan.energy_errs, lattice_spacing_fm)
+    energy_values = lattice_energy_to_gev(fit_scan.energy_values, lattice_spacing_fm)
+    energy_errs = lattice_energy_to_gev(fit_scan.energy_errs, lattice_spacing_fm)
     selected_tmin_range = fit_scan.selected_tmin_range
     selected_start_tmin = selected_tmin_range[0]
     amplitudes = np.asarray(fit_scan.selected_params_mean[:nstates], dtype=float)
@@ -290,11 +308,11 @@ def plot_nstate_outputs(
     plotted_amplitudes = amplitudes[scan_state_indices]
     plotted_amplitude_band_errs = amplitude_band_errs[scan_state_indices]
     summary_path = Path(fit_table).parent.parent / f"{title}_{model}_summary.txt"
-    dispersion_reference = None
+    dispersion_reference_gev = None
     if summary_path.exists():
         dispersion_lattice = _parse_dispersion_reference(summary_path, title)
         if dispersion_lattice is not None:
-            dispersion_reference = lattice_energy_to_mev(np.array([dispersion_lattice]), lattice_spacing_fm)[0]
+            dispersion_reference_gev = lattice_energy_to_gev(np.array([dispersion_lattice]), lattice_spacing_fm)[0]
 
     fit_times = np.arange(selected_start_tmin, tmax + 1)
     fit_curve, fit_band_low, fit_band_high = build_reconstruction_band(
@@ -313,38 +331,69 @@ def plot_nstate_outputs(
             meff_times[meff_mask],
             meff_mean[meff_mask],
             meff_err[meff_mask],
-            tmax,
-            reference_value=dispersion_reference,
+            reference_value=dispersion_reference_gev,
             title=f"{title}: effective mass",
-        ),
-        plot_parameter_scan(
-            output_path / f"{title}_{model}_{nstates}state_energies_tmax{tmax}{PLOT_SUFFIX}",
-            tmins,
-            plotted_energy_values,
-            plotted_energy_errs,
-            prefix="E",
-            ylabel="Energy [MeV]",
-            state_indices=scan_state_indices,
-            selected_tmin_range=selected_tmin_range,
-            selected_values=(
-                np.array([dispersion_reference], dtype=float) if dispersion_reference is not None else None
-            ),
-            selected_errors=(np.array([0.0], dtype=float) if dispersion_reference is not None else None),
-            title=f"{title}: {nstates}-state energies",
-        ),
-        plot_parameter_scan(
-            output_path / f"{title}_{model}_{nstates}state_amplitudes_tmax{tmax}{PLOT_SUFFIX}",
-            tmins,
-            plotted_amplitude_values,
-            plotted_amplitude_errs,
-            prefix="A",
-            ylabel="Amplitude",
-            state_indices=scan_state_indices,
-            selected_tmin_range=selected_tmin_range,
-            selected_values=plotted_amplitudes,
-            selected_errors=plotted_amplitude_band_errs,
-            title=f"{title}: {nstates}-state amplitudes",
-        ),
+        )
+    ]
+    if nstates == 1:
+        outputs.extend(
+            [
+                plot_parameter_scan(
+                    output_path / f"{title}_{model}_{nstates}state_energies_tmax{tmax}{PLOT_SUFFIX}",
+                    tmins,
+                    plotted_energy_values,
+                    plotted_energy_errs,
+                    prefix="E",
+                    ylabel=r"$E_0$ [GeV]",
+                    state_indices=scan_state_indices,
+                    selected_tmin_range=selected_tmin_range,
+                    selected_values=(
+                        np.array([dispersion_reference_gev], dtype=float) if dispersion_reference_gev is not None else None
+                    ),
+                    selected_errors=(
+                        np.array([0.0], dtype=float) if dispersion_reference_gev is not None else None
+                    ),
+                    selected_draw_line=True,
+                    title=f"{title}: {nstates}-state energies",
+                ),
+                plot_parameter_scan(
+                    output_path / f"{title}_{model}_{nstates}state_amplitudes_tmax{tmax}{PLOT_SUFFIX}",
+                    tmins,
+                    plotted_amplitude_values,
+                    plotted_amplitude_errs,
+                    prefix="A",
+                    ylabel="Amplitude",
+                    state_indices=scan_state_indices,
+                    title=f"{title}: {nstates}-state amplitudes",
+                ),
+            ]
+        )
+    else:
+        outputs.extend(
+            [
+                plot_parameter_scan(
+                    output_path / f"{title}_{model}_{nstates}state_energies_tmax{tmax}{PLOT_SUFFIX}",
+                    tmins,
+                    plotted_energy_values,
+                    plotted_energy_errs,
+                    prefix="E",
+                    ylabel=r"$E_1$ [GeV]",
+                    state_indices=scan_state_indices,
+                    title=f"{title}: {nstates}-state energies",
+                ),
+                plot_parameter_scan(
+                    output_path / f"{title}_{model}_{nstates}state_amplitudes_tmax{tmax}{PLOT_SUFFIX}",
+                    tmins,
+                    plotted_amplitude_values,
+                    plotted_amplitude_errs,
+                    prefix="A",
+                    ylabel="Amplitude",
+                    state_indices=scan_state_indices,
+                    title=f"{title}: {nstates}-state amplitudes",
+                ),
+            ]
+        )
+    outputs.append(
         plot_best_fit_reconstruction(
             output_path / f"{title}_{model}_{nstates}state_reconstruction_tmax{tmax}{PLOT_SUFFIX}",
             fit_times,
@@ -354,8 +403,8 @@ def plot_nstate_outputs(
             fit_band_low,
             fit_band_high,
             title=f"{title}: {nstates}-state reconstruction",
-        ),
-    ]
+        )
+    )
     return outputs
 
 

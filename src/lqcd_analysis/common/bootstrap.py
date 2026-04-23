@@ -113,6 +113,7 @@ def shrink_covariance_to_diagonal(
     Args:
         covariance: Input covariance matrix.
         shrinkage_lambda: Shrinkage parameter in [0, 1].
+            0.0 leaves the covariance unchanged; 1.0 keeps only the diagonal.
 
     Returns:
         Shrunk covariance matrix.
@@ -155,4 +156,3 @@ def bin_samples(
     # Reshape to (n_bins, binsize, ...) and average over bin axis
     new_shape = (n_bins, binsize) + samples_array.shape[1:]
     return trimmed.reshape(new_shape).mean(axis=1)
-
