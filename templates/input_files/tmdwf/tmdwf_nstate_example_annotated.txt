@@ -8,6 +8,11 @@
 # Data settings
 l64c64a076_m140_fit_pz* 64 64 0.076
 
+# Set this to true to force a bT=bz=0 decay-constant-style check.
+# In this mode the workflow uses only the real part, scans nearby fit windows,
+# and prints the decay constant in GeV.
+decay_constant_check false
+
 # Integer momentum labels to analyze.
 pzlist 0
 
@@ -111,9 +116,16 @@ results_dir examples/outputs/tmdwf_fit_example
 
 # Notes:
 # - The first implementation fits the real and imaginary parts separately.
+# - decay_constant_check forces a real-part-only check at bT = bz = 0 and scans
+#   tmin in [tmin - 2, tmin + 2] and tmax in [tmax - 4, tmax] around the
+#   requested fit window.
 # - A_i and E_i are loaded from the selected row of the two-point fit table as
 #   fixed central values.
 # - The code does not yet couple to two-point bootstrap-sample A_i/E_i.
+# - Bootstrap sample fits start from the same plain zero initial guess for each
+#   sample; there is no separate mean-fit warm start in this template.
+# - The reported chi2, chi2_dof, and pvalue are summarized from the successful
+#   bootstrap fits.
 # - T5 keeps the original sign-pattern preprocessing.
 # - Z5 multiplies the correlator by -i before folding and uses an extra Pz/E_i factor in the numerator model.
 # - Outputs are grouped by bT. For a fixed (title, gm, eta, bT, component, nstates),

@@ -216,6 +216,7 @@ This first implementation:
 - fits real and imaginary parts separately
 - uses fixed two-point amplitudes and energies loaded from a two-point fit-summary table
 - does not yet couple to two-point bootstrap-sample amplitudes and energies
+- can optionally run a `decay_constant_check` mode that forces `bT = bz = 0`, fits only the real part, and scans nearby fit windows around the requested `fit_window`
 
 Expected key input fields include:
 
@@ -224,6 +225,7 @@ fit_target ratio
 fit_component both
 nstates 1 2
 gmlist T5
+decay_constant_check false
 # notebook workflow_config: fit_window = {5: [6, 12], 6: [6, 12]}
 # plain-text input: fit_window /path/to/tmdwf_fit_windows.txt
 qtmdwf_h5 /path/to/file_or_pattern.h5
@@ -256,6 +258,8 @@ The TMDWF workflow:
   - `two_point_tmax_inferred`
 - records downstream-friendly metadata in grouped fit tables:
   - `fit_window_tmax_used`
+- when `decay_constant_check` is true, restricts the fit to `bT = bz = 0`, scans `tmin - 2` to `tmin + 2` and `tmax - 2` to `tmax`, also scans the two-point reference `tmin - 1` to `tmin + 1`, and writes a dedicated `*_decay_constant_check_summary.txt`
+- the decay-constant check summary and console output report the decay constant in GeV together with its error and `chi2_dof`
 
 For a fixed `(title, gm, eta, bT, component, nstates)` combination, the grouped
 TMDWF outputs now look like:
@@ -273,6 +277,10 @@ Template inputs are provided in:
 A matching notebook template is also provided in:
 
 - `templates/tmdwf/tmdwf_nstate_template.ipynb`
+
+A more detailed workflow guide lives in:
+
+- `docs/tmdwf_nstate_fit_guide.md`
 
 Recommended default usage:
 
@@ -293,6 +301,12 @@ Useful extra TMDWF fit controls:
   form like `{"T5": {5: [6, 12]}}` when you want `gm`-specific windows. The
   notebook helper materializes this into the backend fit-window table format
   automatically.
+- `decay_constant_check` in notebook `workflow_config`:
+  set this to `True` for the decay-constant check mode. In that mode the
+  workflow ignores `bTlist` and `bzlist`, uses only the real part at
+  `bT = bz = 0`, and scans nearby fit windows around the requested
+  `fit_window`. It also scans the two-point reference `tmin` around the value
+  selected by `two_point_fit_window_by_pz`.
 These TMDWF templates are intentionally example workflow templates rather than
 fully runnable tracked examples, because they depend on user-local HDF5 data.
 

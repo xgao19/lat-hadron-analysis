@@ -8,7 +8,7 @@ from scipy.optimize import least_squares
 from scipy.stats import chi2
 
 from ..common.bootstrap import bin_samples, bootstrap_indices as common_bootstrap_indices, bootstrap_means
-from ..common.constants import MIN_POSITIVE
+from ..common.constants import HBAR_C_GEV_FM, MIN_POSITIVE
 from ..common.parsing import (
     load_fit_window_table,
     parse_bool,
@@ -38,6 +38,7 @@ class TMDWFNStateInput:
     ns: int
     nt: int
     lattice_spacing_fm: float
+    decay_constant_check: bool
     fit_target: str
     fit_component: str
     nstates: tuple[int, ...]
@@ -95,6 +96,7 @@ class TMDWFOutputRecord:
     pz: int
     ns: int
     gm: str
+    two_point_fit_tmin: int
     two_point_fit_tmax: int
     two_point_fit_table_resolved: str
     two_point_fit_tmax_source: str
@@ -186,6 +188,7 @@ def parse_tmdwf_fit_input(path: str | Path, results_dir: str | Path | None = Non
         ns=int(first_tokens[1]),
         nt=int(first_tokens[2]),
         lattice_spacing_fm=float(first_tokens[3]),
+        decay_constant_check=parse_bool(entries.get("decay_constant_check", ["false"])[0]),
         fit_target=fit_target,
         fit_component=fit_component,
         nstates=nstates,
@@ -244,40 +247,6 @@ def _prepare_fit_data(
     )
 
 
-def fit_tmdwf_mean_component(
-    ratio_samples: np.ndarray,
-    amplitudes: np.ndarray,
-    energies: np.ndarray,
-    nt: int,
-    pz: int,
-    ns: int,
-    gm: str,
-    tmin: int,
-    tmax: int,
-    component: str,
-) -> TMDWFFitResult:
-    prepared = _prepare_fit_data(ratio_samples, tmin=tmin, tmax=tmax, component=component)
-
-    def residuals(params: np.ndarray, data: np.ndarray) -> np.ndarray:
-        model_values = evaluate_tmdwf_ratio(prepared.times, amplitudes, energies, params, nt, gm=gm, pz=pz, ns=ns)
-        return (model_values - data) / prepared.sigma
-
-    theta0 = np.zeros(len(amplitudes), dtype=float)
-    result = least_squares(residuals, theta0, args=(prepared.mean_data,), max_nfev=5000)
-    chi2_value = float(np.dot(result.fun, result.fun))
-    dof = max(len(prepared.times) - len(theta0), 1)
-    chi2_dof = chi2_value / dof
-    pvalue = float(1.0 - chi2.cdf(chi2_value, dof))
-    return TMDWFFitResult(
-        params=np.asarray(result.x, dtype=float),
-        chi2=chi2_value,
-        chi2_dof=chi2_dof,
-        pvalue=pvalue,
-        success=bool(result.success),
-        message=result.message,
-    )
-
-
 def fit_tmdwf_component(
     ratio_samples: np.ndarray,
     amplitudes: np.ndarray,
@@ -291,29 +260,53 @@ def fit_tmdwf_component(
     component: str,
 ) -> tuple[TMDWFFitResult, np.ndarray]:
     prepared = _prepare_fit_data(ratio_samples, tmin=tmin, tmax=tmax, component=component)
-    meanfit = fit_tmdwf_mean_component(
-        ratio_samples,
-        amplitudes,
-        energies,
-        nt,
-        pz,
-        ns,
-        gm,
-        tmin,
-        tmax,
-        component,
-    )
 
     def residuals(params: np.ndarray, data: np.ndarray) -> np.ndarray:
         model_values = evaluate_tmdwf_ratio(prepared.times, amplitudes, energies, params, nt, gm=gm, pz=pz, ns=ns)
         return (model_values - data) / prepared.sigma
 
+    theta0 = np.zeros(len(amplitudes), dtype=float)
     sample_params = np.full((ratio_samples.shape[0], len(amplitudes)), np.nan, dtype=float)
+    chi2_samples = np.full(ratio_samples.shape[0], np.nan, dtype=float)
+    chi2_dof_samples = np.full(ratio_samples.shape[0], np.nan, dtype=float)
+    pvalue_samples = np.full(ratio_samples.shape[0], np.nan, dtype=float)
     for sample_id, sample_data in enumerate(prepared.data_samples):
-        sample_result = least_squares(residuals, meanfit.params, args=(sample_data,), max_nfev=5000)
+        sample_result = least_squares(residuals, theta0, args=(sample_data,), max_nfev=5000)
         if sample_result.success:
-            sample_params[sample_id] = sample_result.x
-    return meanfit, sample_params
+            params = np.asarray(sample_result.x, dtype=float)
+            sample_params[sample_id] = params
+            chi2_value = float(np.dot(sample_result.fun, sample_result.fun))
+            dof = max(len(prepared.times) - len(theta0), 1)
+            chi2_samples[sample_id] = chi2_value
+            chi2_dof_samples[sample_id] = chi2_value / dof
+            pvalue_samples[sample_id] = float(1.0 - chi2.cdf(chi2_value, dof))
+
+    success_mask = np.all(np.isfinite(sample_params), axis=1)
+    if np.any(success_mask):
+        params_mean, _ = summarize_parameter_samples(sample_params[success_mask])
+        chi2_mean, _ = robust_mean_and_error(chi2_samples[success_mask])
+        chi2_dof_mean, _ = robust_mean_and_error(chi2_dof_samples[success_mask])
+        pvalue_mean, _ = robust_mean_and_error(pvalue_samples[success_mask])
+        success = True
+        message = f"bootstrap-centered fit from {int(np.count_nonzero(success_mask))} successful samples"
+    else:
+        params_mean = tuple(np.nan for _ in range(len(amplitudes)))
+        chi2_mean = float("nan")
+        chi2_dof_mean = float("nan")
+        pvalue_mean = float("nan")
+        success = False
+        message = "all bootstrap sample fits failed"
+    return (
+        TMDWFFitResult(
+            params=np.asarray(params_mean, dtype=float),
+            chi2=chi2_mean,
+            chi2_dof=chi2_dof_mean,
+            pvalue=pvalue_mean,
+            success=success,
+            message=message,
+        ),
+        sample_params,
+    )
 
 
 def summarize_parameter_samples(samples: np.ndarray) -> tuple[tuple[float, ...], tuple[float, ...]]:
@@ -325,6 +318,33 @@ def summarize_parameter_samples(samples: np.ndarray) -> tuple[tuple[float, ...],
         means.append(mean)
         errors.append(err)
     return tuple(means), tuple(errors)
+
+
+def _summarize_ground_state_matrix_element(
+    sample_params: np.ndarray,
+    *,
+    lattice_spacing_fm: float,
+) -> tuple[float, float, float, float]:
+    success_mask = np.all(np.isfinite(sample_params), axis=1)
+    if not np.any(success_mask):
+        return float("nan"), float("nan"), float("nan"), float("nan")
+    m0_samples = np.asarray(sample_params[success_mask, 0], dtype=float)
+    m0_mean, m0_err = robust_mean_and_error(m0_samples)
+    gev_scale = HBAR_C_GEV_FM / lattice_spacing_fm
+    return m0_mean, m0_err, m0_mean * gev_scale, m0_err * gev_scale
+
+
+def _iter_decay_constant_scan_windows(tmin: int, tmax: int, *, max_t: int) -> tuple[tuple[int, int], ...]:
+    windows: list[tuple[int, int]] = []
+    for scan_tmin in range(tmin - 2, tmin + 3):
+        for scan_tmax in range(tmax - 2, tmax + 1):
+            if 0 <= scan_tmin <= scan_tmax <= max_t:
+                windows.append((scan_tmin, scan_tmax))
+    return tuple(windows)
+
+
+def _iter_decay_constant_two_point_tmins(tmin: int, tmax: int) -> tuple[int, ...]:
+    return tuple(candidate for candidate in range(tmin - 1, tmin + 2) if candidate <= tmax)
 
 
 def _summarize_bootstrap_series(samples: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -454,7 +474,7 @@ def _write_component_outputs(
             handle.write(f"two_point_fit_table_resolved {record.two_point_fit_table_resolved}\n")
             handle.write(f"two_point_fit_tmax_source {record.two_point_fit_tmax_source}\n")
             handle.write(f"two_point_fit_tmax {record.two_point_fit_tmax}\n")
-            handle.write(f"success_meanfit {int(record.fit_result.success)}\n")
+            handle.write(f"success_bootstrap_center {int(record.fit_result.success)}\n")
             handle.write(f"chi2_dof {record.fit_result.chi2_dof:.10e}\n")
             handle.write(f"pvalue {record.fit_result.pvalue:.10e}\n")
             for idx in range(nstates):
@@ -462,7 +482,7 @@ def _write_component_outputs(
             handle.write(f"end_bz {record.bz}\n")
 
     with table_path.open("w", encoding="utf-8") as handle:
-        header = ["bz", "tmin", "tmax", "success_meanfit", "chi2_dof", "pvalue", "two_point_fit_tmax"]
+        header = ["bz", "tmin", "tmax", "success_bootstrap_center", "chi2_dof", "pvalue", "two_point_fit_tmax"]
         header += [f"m{idx}_mean" for idx in range(nstates)]
         header += [f"m{idx}_err" for idx in range(nstates)]
         handle.write("\t".join(header) + "\n")
@@ -620,6 +640,66 @@ def _write_component_outputs(
     return outputs
 
 
+def _write_decay_constant_check_summary(
+    output_root: Path,
+    stem: str,
+    records: tuple[TMDWFOutputRecord, ...],
+    *,
+    lattice_spacing_fm: float,
+    pz: int,
+    gm: str,
+    eta: str,
+    base_tmin: int,
+    base_tmax: int,
+) -> Path:
+    summary_path = output_root / f"{stem}_decay_constant_check_summary.txt"
+    with summary_path.open("w", encoding="utf-8") as handle:
+        handle.write("decay_constant_check true\n")
+        handle.write(f"pz {pz}\n")
+        handle.write(f"gm {gm}\n")
+        handle.write(f"eta {eta}\n")
+        handle.write(f"lattice_spacing_fm {lattice_spacing_fm:.4g}\n")
+        handle.write(f"base_tfit {base_tmin} {base_tmax}\n")
+        handle.write(
+            "component\tnstates\tbT\tbz\ttmin\ttmax\ttwo_point_fit_tmin\t"
+            "decay_constant_gev_mean\tdecay_constant_gev_err\tchi2_dof\tpvalue\t"
+            "two_point_fit_tmax\tsuccess_bootstrap_center\n"
+        )
+        sortable_records: list[tuple[float, TMDWFOutputRecord, float, float]] = []
+        for record in records:
+            _, _, m0_gev_mean, m0_gev_err = _summarize_ground_state_matrix_element(
+                record.sample_params,
+                lattice_spacing_fm=lattice_spacing_fm,
+            )
+            sort_key = -m0_gev_mean if np.isfinite(m0_gev_mean) else float("inf")
+            sortable_records.append((sort_key, record, m0_gev_mean, m0_gev_err))
+        for _, record, m0_gev_mean, m0_gev_err in sorted(
+            sortable_records,
+            key=lambda item: (item[0], item[1].component, item[1].nstates, item[1].two_point_fit_tmin, item[1].tmin, item[1].tmax),
+        ):
+            handle.write(
+                "\t".join(
+                    [
+                        record.component,
+                        str(record.nstates),
+                        "0",
+                        "0",
+                        str(record.tmin),
+                        str(record.tmax),
+                        str(record.two_point_fit_tmin),
+                        f"{m0_gev_mean:.4g}",
+                        f"{m0_gev_err:.4g}",
+                        f"{record.fit_result.chi2_dof:.4g}",
+                        f"{record.fit_result.pvalue:.4g}",
+                        str(record.two_point_fit_tmax),
+                        str(int(record.fit_result.success)),
+                    ]
+                )
+                + "\n"
+            )
+    return summary_path
+
+
 def run_tmdwf_nstate_fit(
     input_file: str | Path,
     *,
@@ -640,7 +720,7 @@ def run_tmdwf_nstate_fit(
         dataset_root = spec.results_dir / title
         dataset_root.mkdir(parents=True, exist_ok=True)
 
-        fit_reference_cache: dict[int, tuple[Path, int, np.ndarray, np.ndarray]] = {}
+        fit_reference_cache: dict[int, tuple[Path, int, int, np.ndarray, np.ndarray]] = {}
         two_point_window = spec.two_point_fit_window_by_pz.get(pz)
         if two_point_window is None:
             raise ValueError(f"missing two_point_fit_window_by_pz entry for pz={pz}")
@@ -655,6 +735,7 @@ def run_tmdwf_nstate_fit(
             )
             fit_reference_cache[nstates] = (
                 fit_reference.path,
+                fit_reference.tmin,
                 fit_reference.tmax,
                 fit_reference.amplitudes,
                 fit_reference.energies,
@@ -669,15 +750,145 @@ def run_tmdwf_nstate_fit(
             qtmdwf_path = resolve_qtmdwf_h5_path(spec.qtmdwf_h5, pz=pz, gm=gm)
             with h5py.File(qtmdwf_path, "r") as qtmdwf_handle:
                 for eta in spec.etalist:
+                    if spec.decay_constant_check:
+                        decay_constant_records: list[TMDWFOutputRecord] = []
+                        fit_window = fit_windows.get((gm, pz), fit_windows.get((None, pz)))
+                        if fit_window is None:
+                            raise ValueError(f"missing fit_window entry for gm={gm}, pz={pz}")
+                        fit_tmin, fit_tmax = fit_window
+                        bT = 0
+                        bz = 0
+                        numerator_selected = _load_tmdwf_correlator_from_handle(
+                            qtmdwf_handle,
+                            spec.dataset_path_template,
+                            gm=gm,
+                            eta=eta,
+                            pz=pz,
+                            tdirs=spec.tdirlist,
+                            bT=bT,
+                            bz=bz,
+                            nt=spec.nt,
+                            ns=spec.ns,
+                            file_label=qtmdwf_path,
+                        )[:, t0 : t1 + 1]
+                        numerator_binned = bin_samples(numerator_selected, binsize=spec.binsize)
+                        denominator_binned = bin_samples(c2pt_selected, binsize=spec.binsize)
+                        if numerator_binned.shape != denominator_binned.shape:
+                            raise ValueError("numerator and denominator must have matching post-binning shapes")
+                        n_cfg = numerator_binned.shape[0]
+                        if n_cfg < 2:
+                            raise ValueError("bootstrap requires at least two samples")
+                        n_boot = n_cfg if spec.bootstrap_samples is None else spec.bootstrap_samples
+                        draw_size = n_cfg if spec.bootstrap_size is None else spec.bootstrap_size
+                        indices = common_bootstrap_indices(n_cfg, draw_size, seed=spec.seed, n_boot=n_boot)
+                        numerator_boot = bootstrap_means(numerator_binned, indices=indices)
+                        denominator_boot = bootstrap_means(denominator_binned, indices=indices)
+                        ratio_samples = np.divide(
+                            numerator_boot,
+                            denominator_boot,
+                            out=np.full_like(numerator_boot, np.nan + 0.0j),
+                            where=denominator_boot != 0.0,
+                        )
+                        scan_windows = _iter_decay_constant_scan_windows(
+                            fit_tmin,
+                            fit_tmax,
+                            max_t=ratio_samples.shape[1] - 1,
+                        )
+                        if not scan_windows:
+                            raise ValueError(f"no valid decay-constant scan windows for gm={gm}, pz={pz}")
+                        two_point_tmin_values = _iter_decay_constant_two_point_tmins(two_point_tmin, two_point_tmax)
+                        if not two_point_tmin_values:
+                            raise ValueError(
+                                f"no valid decay-constant two-point tmin values for gm={gm}, pz={pz}"
+                            )
+                        decay_fit_reference_cache: dict[tuple[int, int], tuple[Path, int, np.ndarray, np.ndarray]] = {}
+                        for scan_two_point_tmin in two_point_tmin_values:
+                            for nstates in spec.nstates:
+                                cache_key = (nstates, scan_two_point_tmin)
+                                if cache_key not in decay_fit_reference_cache:
+                                    fit_reference = resolve_two_point_fit_reference(
+                                        spec.two_point_fit_root,
+                                        title=title,
+                                        nstates=nstates,
+                                        tmin=scan_two_point_tmin,
+                                        tmax=two_point_tmax,
+                                    )
+                                    decay_fit_reference_cache[cache_key] = (
+                                        fit_reference.path,
+                                        fit_reference.tmax,
+                                        fit_reference.amplitudes,
+                                        fit_reference.energies,
+                                    )
+                                fit_table_path, resolved_two_point_tmax, amplitudes, energies = decay_fit_reference_cache[cache_key]
+                                for scan_tmin, scan_tmax in scan_windows:
+                                    fit_result, sample_params = fit_tmdwf_component(
+                                        ratio_samples,
+                                        amplitudes,
+                                        energies,
+                                        spec.nt,
+                                        pz,
+                                        spec.ns,
+                                        gm,
+                                        scan_tmin,
+                                        scan_tmax,
+                                        "real",
+                                    )
+                                    record = TMDWFOutputRecord(
+                                        bz=0,
+                                        component="real",
+                                        nstates=nstates,
+                                        tmin=scan_tmin,
+                                        tmax=scan_tmax,
+                                        fit_result=fit_result,
+                                        sample_params=sample_params,
+                                        amplitudes=amplitudes,
+                                        energies=energies,
+                                        pz=pz,
+                                        ns=spec.ns,
+                                        gm=gm,
+                                        two_point_fit_tmin=scan_two_point_tmin,
+                                        two_point_fit_tmax=resolved_two_point_tmax,
+                                        two_point_fit_table_resolved=str(fit_table_path),
+                                        two_point_fit_tmax_source="config",
+                                        tsrange_start=t0,
+                                        tsrange_end=t1,
+                                        ratio_samples=ratio_samples,
+                                    )
+                                    decay_constant_records.append(record)
+                                    _, _, decay_constant_gev_mean, decay_constant_gev_err = _summarize_ground_state_matrix_element(
+                                        sample_params,
+                                        lattice_spacing_fm=spec.lattice_spacing_fm,
+                                    )
+                                    print(
+                                        f"[decay_constant_check] pz={pz} gm={gm} eta={eta} "
+                                        f"two_point_tmin={scan_two_point_tmin} tfit={scan_tmin}:{scan_tmax} "
+                                        f"nstates={nstates} decay_constant={decay_constant_gev_mean:.4g} "
+                                        f"+/- {decay_constant_gev_err:.4g} GeV chi2_dof={fit_result.chi2_dof:.4g}"
+                                    )
+                        summary_path = _write_decay_constant_check_summary(
+                            dataset_root,
+                            f"{title}_{sanitize_token(gm)}_{sanitize_token(eta)}",
+                            tuple(decay_constant_records),
+                            lattice_spacing_fm=spec.lattice_spacing_fm,
+                            pz=pz,
+                            gm=gm,
+                            eta=eta,
+                            base_tmin=fit_tmin,
+                            base_tmax=fit_tmax,
+                        )
+                        outputs.append(summary_path)
+                        continue
                     eta_ratio_tables: dict[int, Path] = {}
                     eta_curve_tables: dict[int, dict[str, dict[int, Path]]] = {}
                     eta_fit_tables: dict[int, dict[str, dict[int, Path]]] = {}
                     eta_sample_tables: dict[int, dict[str, dict[int, Path]]] = {}
-                    for bT in spec.bTlist:
+                    selected_bT_values = (0,) if spec.decay_constant_check else spec.bTlist
+                    bz_values = (0,) if spec.decay_constant_check else spec.bzlist
+                    for bT in selected_bT_values:
                         grouped_records: dict[tuple[str, int], list[TMDWFOutputRecord]] = {}
                         grouped_ratio_records: list[TMDWFRatioRecord] = []
                         primary_nstate = spec.nstates[0]
-                        for bz in spec.bzlist:
+                        for bz in bz_values:
                             numerator_selected = _load_tmdwf_correlator_from_handle(
                                 qtmdwf_handle,
                                 spec.dataset_path_template,
@@ -716,7 +927,7 @@ def run_tmdwf_nstate_fit(
                                 raise ValueError(f"missing fit_window entry for gm={gm}, pz={pz}")
                             fit_tmin, fit_tmax = fit_window
                             for nstates in spec.nstates:
-                                fit_table_path, two_point_tmax, amplitudes, energies = fit_reference_cache[nstates]
+                                fit_table_path, two_point_tmin, two_point_tmax, amplitudes, energies = fit_reference_cache[nstates]
                                 if nstates == primary_nstate:
                                     grouped_ratio_records.append(
                                         TMDWFRatioRecord(
@@ -755,13 +966,14 @@ def run_tmdwf_nstate_fit(
                                             sample_params=sample_params,
                                             amplitudes=amplitudes,
                                             energies=energies,
-                                            pz=pz,
-                                            ns=spec.ns,
-                                            gm=gm,
-                                            two_point_fit_tmax=two_point_tmax,
-                                            two_point_fit_table_resolved=str(fit_table_path),
-                                            two_point_fit_tmax_source="config",
-                                            tsrange_start=t0,
+                                        pz=pz,
+                                        ns=spec.ns,
+                                        gm=gm,
+                                        two_point_fit_tmin=two_point_tmin,
+                                        two_point_fit_tmax=two_point_tmax,
+                                        two_point_fit_table_resolved=str(fit_table_path),
+                                        two_point_fit_tmax_source="config",
+                                        tsrange_start=t0,
                                             tsrange_end=t1,
                                             ratio_samples=ratio_samples,
                                         )
@@ -798,7 +1010,7 @@ def run_tmdwf_nstate_fit(
                             for nstates in spec.nstates:
                                 fit_tables_by_bT = {
                                     bT: eta_fit_tables[bT][component][nstates]
-                                    for bT in spec.bTlist
+                                    for bT in selected_bT_values
                                     if component in eta_fit_tables[bT] and nstates in eta_fit_tables[bT][component]
                                 }
                                 if fit_tables_by_bT:

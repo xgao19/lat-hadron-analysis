@@ -152,7 +152,7 @@ def _normalized_fit_header(target_header: list[str]) -> list[str]:
         "bz",
         "tmin",
         "tmax",
-        "success_meanfit",
+        "success_bootstrap_center",
         "chi2_dof",
         "pvalue",
         "shared_window_flag",

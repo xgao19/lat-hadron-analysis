@@ -93,6 +93,7 @@ TMDWF_INPUT_KEYS = {
     "ns",
     "nt",
     "lattice_spacing_fm",
+    "decay_constant_check",
     "fit_target",
     "fit_component",
     "nstates",
@@ -411,6 +412,7 @@ def render_tmdwf_fit_input_text(config: dict[str, Any]) -> str:
 
     lines = [
         f"{config['title_pattern']} {config['ns']} {config['nt']} {config['lattice_spacing_fm']}",
+        f"decay_constant_check {_as_scalar_string(config.get('decay_constant_check', False))}",
         f"fit_target {_as_scalar_string(config['fit_target'])}",
         f"fit_component {_as_scalar_string(config['fit_component'])}",
         f"nstates {_as_scalar_string(config['nstates'])}",
