@@ -338,7 +338,7 @@ def _iter_decay_constant_scan_windows(tmin: int, tmax: int, *, max_t: int) -> tu
     windows: list[tuple[int, int]] = []
     for scan_tmin in range(tmin - 2, tmin + 3):
         for scan_tmax in range(tmax - 2, tmax + 1):
-            if 0 <= scan_tmin <= scan_tmax <= max_t:
+            if 0 <= scan_tmin + 1 < scan_tmax <= max_t:
                 windows.append((scan_tmin, scan_tmax))
     return tuple(windows)
 
@@ -463,6 +463,7 @@ def _write_component_outputs(
     sample_path = samples_dir / f"{stem}_{component}_{nstates}state_samples.txt"
     curve_path = tables_dir / f"{stem}_{component}_{nstates}state_curve.txt"
     plot_path = plots_dir / f"{stem}_{component}_{nstates}state_ratio_fit.pdf"
+    plot_bz_values = (0, 4, 8, 12, 16, 20)
 
     with summary_path.open("w", encoding="utf-8") as handle:
         handle.write(f"component {component}\n")
@@ -569,7 +570,10 @@ def _write_component_outputs(
     outputs = [summary_path, table_path, sample_path, curve_path]
     if make_plots:
         plot_series: list[RatioFitPlotSeries] = []
-        for record in records:
+        selected_records = tuple(record for record in records if record.bz in plot_bz_values)
+        if not selected_records:
+            selected_records = records
+        for record in selected_records:
             times = np.arange(record.tsrange_start, record.tsrange_end + 1, dtype=int)
             ratio_real_mean, ratio_real_p16, ratio_real_p84 = _summarize_bootstrap_series(np.real(record.ratio_samples))
             ratio_imag_mean, ratio_imag_p16, ratio_imag_p84 = _summarize_bootstrap_series(np.imag(record.ratio_samples))
@@ -644,6 +648,7 @@ def _write_decay_constant_check_summary(
     output_root: Path,
     stem: str,
     records: tuple[TMDWFOutputRecord, ...],
+    base_fit_records: tuple[TMDWFOutputRecord, ...],
     *,
     lattice_spacing_fm: float,
     pz: int,
@@ -659,11 +664,43 @@ def _write_decay_constant_check_summary(
         handle.write(f"gm {gm}\n")
         handle.write(f"eta {eta}\n")
         handle.write(f"lattice_spacing_fm {lattice_spacing_fm:.4g}\n")
+        handle.write("bT 0\n")
+        handle.write("bz 0\n")
         handle.write(f"base_tfit {base_tmin} {base_tmax}\n")
+        handle.write("begin_base_tfit\n")
         handle.write(
-            "component\tnstates\tbT\tbz\ttmin\ttmax\ttwo_point_fit_tmin\t"
-            "decay_constant_gev_mean\tdecay_constant_gev_err\tchi2_dof\tpvalue\t"
-            "two_point_fit_tmax\tsuccess_bootstrap_center\n"
+            "component\tnstates\ttwo_point_fit_tmin\ttmin\ttmax\t"
+            "decay_constant_gev_mean\tdecay_constant_gev_rel_err\tchi2_dof\tpvalue\t"
+            "two_point_fit_tmax\n"
+        )
+        for record in base_fit_records:
+            _, _, m0_gev_mean, m0_gev_err = _summarize_ground_state_matrix_element(
+                record.sample_params,
+                lattice_spacing_fm=lattice_spacing_fm,
+            )
+            m0_gev_rel_err = m0_gev_err / abs(m0_gev_mean) if np.isfinite(m0_gev_mean) and m0_gev_mean != 0.0 else float("nan")
+            handle.write(
+                "\t".join(
+                    [
+                        record.component,
+                        str(record.nstates),
+                        str(record.two_point_fit_tmin),
+                        str(record.tmin),
+                        str(record.tmax),
+                        f"{m0_gev_mean:.4g}",
+                        f"{m0_gev_rel_err:.4g}",
+                        f"{record.fit_result.chi2_dof:.4g}",
+                        f"{record.fit_result.pvalue:.4g}",
+                        str(record.two_point_fit_tmax),
+                    ]
+                )
+                + "\n"
+            )
+        handle.write("end_base_tfit\n")
+        handle.write(
+            "component\tnstates\ttwo_point_fit_tmin\ttmin\ttmax\t"
+            "decay_constant_gev_mean\tdecay_constant_gev_rel_err\tchi2_dof\tpvalue\t"
+            "two_point_fit_tmax\n"
         )
         sortable_records: list[tuple[float, TMDWFOutputRecord, float, float]] = []
         for record in records:
@@ -671,9 +708,10 @@ def _write_decay_constant_check_summary(
                 record.sample_params,
                 lattice_spacing_fm=lattice_spacing_fm,
             )
+            m0_gev_rel_err = m0_gev_err / abs(m0_gev_mean) if np.isfinite(m0_gev_mean) and m0_gev_mean != 0.0 else float("nan")
             sort_key = -m0_gev_mean if np.isfinite(m0_gev_mean) else float("inf")
-            sortable_records.append((sort_key, record, m0_gev_mean, m0_gev_err))
-        for _, record, m0_gev_mean, m0_gev_err in sorted(
+            sortable_records.append((sort_key, record, m0_gev_mean, m0_gev_rel_err))
+        for _, record, m0_gev_mean, m0_gev_rel_err in sorted(
             sortable_records,
             key=lambda item: (item[0], item[1].component, item[1].nstates, item[1].two_point_fit_tmin, item[1].tmin, item[1].tmax),
         ):
@@ -682,17 +720,14 @@ def _write_decay_constant_check_summary(
                     [
                         record.component,
                         str(record.nstates),
-                        "0",
-                        "0",
+                        str(record.two_point_fit_tmin),
                         str(record.tmin),
                         str(record.tmax),
-                        str(record.two_point_fit_tmin),
                         f"{m0_gev_mean:.4g}",
-                        f"{m0_gev_err:.4g}",
+                        f"{m0_gev_rel_err:.4g}",
                         f"{record.fit_result.chi2_dof:.4g}",
                         f"{record.fit_result.pvalue:.4g}",
                         str(record.two_point_fit_tmax),
-                        str(int(record.fit_result.success)),
                     ]
                 )
                 + "\n"
@@ -859,16 +894,47 @@ def run_tmdwf_nstate_fit(
                                         sample_params,
                                         lattice_spacing_fm=spec.lattice_spacing_fm,
                                     )
+                                    decay_constant_gev_rel_err = (
+                                        decay_constant_gev_err / abs(decay_constant_gev_mean)
+                                        if np.isfinite(decay_constant_gev_mean) and decay_constant_gev_mean != 0.0
+                                        else float("nan")
+                                    )
                                     print(
                                         f"[decay_constant_check] pz={pz} gm={gm} eta={eta} "
                                         f"two_point_tmin={scan_two_point_tmin} tfit={scan_tmin}:{scan_tmax} "
                                         f"nstates={nstates} decay_constant={decay_constant_gev_mean:.4g} "
-                                        f"+/- {decay_constant_gev_err:.4g} GeV chi2_dof={fit_result.chi2_dof:.4g}"
+                                        f"rel_err={decay_constant_gev_rel_err:.4g} chi2_dof={fit_result.chi2_dof:.4g}"
                                     )
+                        base_fit_records = tuple(
+                            record
+                            for record in decay_constant_records
+                            if record.tmin == fit_tmin and record.tmax == fit_tmax and record.two_point_fit_tmin == two_point_tmin
+                        )
+                        if len(base_fit_records) != len(spec.nstates):
+                            raise ValueError(
+                                f"could not find base_tfit records for gm={gm}, pz={pz}: expected {len(spec.nstates)}, found {len(base_fit_records)}"
+                            )
+                        for record in base_fit_records:
+                            _, _, base_decay_constant_gev_mean, base_decay_constant_gev_err = _summarize_ground_state_matrix_element(
+                                record.sample_params,
+                                lattice_spacing_fm=spec.lattice_spacing_fm,
+                            )
+                            base_decay_constant_gev_rel_err = (
+                                base_decay_constant_gev_err / abs(base_decay_constant_gev_mean)
+                                if np.isfinite(base_decay_constant_gev_mean) and base_decay_constant_gev_mean != 0.0
+                                else float("nan")
+                            )
+                            print(
+                                f"[decay_constant_check] pz={pz} gm={gm} eta={eta} "
+                                f"two_point_tmin={record.two_point_fit_tmin} tfit={record.tmin}:{record.tmax} "
+                                f"nstates={record.nstates} base_decay_constant={base_decay_constant_gev_mean:.4g} "
+                                f"rel_err={base_decay_constant_gev_rel_err:.4g} chi2_dof={record.fit_result.chi2_dof:.4g}"
+                            )
                         summary_path = _write_decay_constant_check_summary(
                             dataset_root,
                             f"{title}_{sanitize_token(gm)}_{sanitize_token(eta)}",
                             tuple(decay_constant_records),
+                            base_fit_records,
                             lattice_spacing_fm=spec.lattice_spacing_fm,
                             pz=pz,
                             gm=gm,
@@ -883,6 +949,7 @@ def run_tmdwf_nstate_fit(
                     eta_fit_tables: dict[int, dict[str, dict[int, Path]]] = {}
                     eta_sample_tables: dict[int, dict[str, dict[int, Path]]] = {}
                     selected_bT_values = (0,) if spec.decay_constant_check else spec.bTlist
+                    plot_bT_values = (0,) if spec.decay_constant_check else tuple(bT for bT in spec.bTlist if bT % 2 == 0)
                     bz_values = (0,) if spec.decay_constant_check else spec.bzlist
                     for bT in selected_bT_values:
                         grouped_records: dict[tuple[str, int], list[TMDWFOutputRecord]] = {}
@@ -1010,7 +1077,7 @@ def run_tmdwf_nstate_fit(
                             for nstates in spec.nstates:
                                 fit_tables_by_bT = {
                                     bT: eta_fit_tables[bT][component][nstates]
-                                    for bT in selected_bT_values
+                                    for bT in plot_bT_values
                                     if component in eta_fit_tables[bT] and nstates in eta_fit_tables[bT][component]
                                 }
                                 if fit_tables_by_bT:

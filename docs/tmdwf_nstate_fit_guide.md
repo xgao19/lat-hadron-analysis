@@ -136,7 +136,7 @@ In `decay_constant_check` mode:
 - the workflow takes the base `[tmin, tmax]`
 - it scans `tmin - 2` to `tmin + 2`
 - it scans `tmax - 2` to `tmax`
-- only valid windows inside the retained time range are kept
+- only valid windows inside the retained time range are kept, with `tmin + 1 < tmax` so each candidate window has at least 3 points
 - the two-point reference `tmin` also scans `tmin - 1` to `tmin + 1` around the row selected by `two_point_fit_window_by_pz`
 - conceptually, the scan is organized as: pick a two-point reference `tmin`, then scan the TMDWF `fit_window` around it
 
@@ -182,11 +182,16 @@ For `decay_constant_check` mode, it additionally writes:
 
 The diagnostic summary records:
 
+- fixed `bT = 0` and `bz = 0`
+- the base `tfit`
+- a separate base-fit block selected from the sweep results, using the same row format as the sweep table
 - the scanned `tmin` and `tmax`
+- the associated two-point fit `tmin`
 - the decay constant in GeV
-- its bootstrap uncertainty
+- its relative bootstrap uncertainty
 - `chi2_dof`
 - `pvalue`
+- the `m0` vs `bz` plot only uses even `bT` values
 - the associated two-point fit provenance
 
 The console output also prints the same diagnostic information in a compact line per scanned window.
@@ -219,7 +224,11 @@ What to look for:
 
 - the decay constant should be as flat as possible across nearby windows
 - the best window is usually the one closest to the `pz = 0` result
-- if several windows behave well, prefer the one with a stable `chi2`
+- if several windows behave well, prefer the one closest to the `pz = 0` result
+- `chi2` should not be in the worst-looking group among the nearby candidates
+- the relative error should also not be in the worst-looking group among the nearby candidates
+- for large `z`, the real part should not become overly negative, especially at large `tmax`
+- if the trend looks wrong at large `tmax`, shrink `tmax` first even when the decay constant is already close to the ideal value
 - `tmin` is still the first thing to tune
 - `tmax` is a secondary tuning knob, but it should still avoid the region where the ratio becomes noisy or visibly distorted
 
@@ -228,6 +237,8 @@ Recommended heuristic:
 - first compare windows around the same two-point reference
 - if every scan point still looks bad, change the two-point reference window and try again
 - if the result is still unstable after that, the data may simply be too noisy or too contaminated to support a clean extraction
+- for the initial `fit_window`, usually start with a `tmin` equal to the chosen two-point `tmin` or a little larger, and choose `tmax` by requiring the TMDWF/2pt ratio to stay smooth and non-odd
+- when the decay constant is already close to the ideal value, still prefer smaller `tmax` if the large-`z` real part starts to drift negative or loses the expected trend
 
 In other words:
 

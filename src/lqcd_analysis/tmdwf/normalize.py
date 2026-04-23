@@ -528,10 +528,11 @@ def run_tmdwf_normalization(
                 if spec.make_plots and fit_tables_by_bT:
                     plots_dir = (spec.results_dir / title / "plots")
                     plots_dir.mkdir(parents=True, exist_ok=True)
+                    plot_fit_tables_by_bT = {bT: path for bT, path in fit_tables_by_bT.items() if bT % 2 == 0}
                     outputs.append(
                         plot_tmdwf_m0_from_fit_tables(
                             plots_dir / f"{title}_{gm}_{eta}_{spec.normalization_mode}_{spec.component}_{spec.nstates}state_m0_vs_bz.pdf",
-                            fit_tables_by_bT,
+                            plot_fit_tables_by_bT,
                             component=spec.component,
                             nstates=spec.nstates,
                             title=f"{title} {gm} {eta} {spec.normalization_mode} {spec.component} {spec.nstates}state m0 vs bz",

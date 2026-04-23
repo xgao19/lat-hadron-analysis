@@ -259,7 +259,7 @@ The TMDWF workflow:
 - records downstream-friendly metadata in grouped fit tables:
   - `fit_window_tmax_used`
 - when `decay_constant_check` is true, restricts the fit to `bT = bz = 0`, scans `tmin - 2` to `tmin + 2` and `tmax - 2` to `tmax`, also scans the two-point reference `tmin - 1` to `tmin + 1`, and writes a dedicated `*_decay_constant_check_summary.txt`
-- the decay-constant check summary and console output report the decay constant in GeV together with its error and `chi2_dof`
+- the decay-constant check summary and console output report the decay constant in GeV together with its relative error and `chi2_dof`; the summary also records the fixed `bT = bz = 0`, the base `tfit`, a base-fit block selected from the sweep results using the same row format as the sweep table, and the associated two-point `tmin`
 
 For a fixed `(title, gm, eta, bT, component, nstates)` combination, the grouped
 TMDWF outputs now look like:
@@ -306,7 +306,11 @@ Useful extra TMDWF fit controls:
   workflow ignores `bTlist` and `bzlist`, uses only the real part at
   `bT = bz = 0`, and scans nearby fit windows around the requested
   `fit_window`. It also scans the two-point reference `tmin` around the value
-  selected by `two_point_fit_window_by_pz`.
+  selected by `two_point_fit_window_by_pz`. For the initial `fit_window`,
+  a practical starting point is a `tmin` equal to the chosen two-point `tmin`
+  or slightly larger, with `tmax` chosen to keep the TMDWF/2pt ratio smooth
+  and non-odd. The scan only keeps windows with `tmin + 1 < tmax`, so each
+  candidate window has at least 3 points.
 These TMDWF templates are intentionally example workflow templates rather than
 fully runnable tracked examples, because they depend on user-local HDF5 data.
 
@@ -382,8 +386,8 @@ This CS-kernel workflow:
 
 - reads one Fourier bootstrap sample table for each requested `(gm, eta, bT, pz, component, nstates, normalization_mode)` combination
 - converts lattice momentum integers into physical momenta using the ensemble metadata
-- preserves the legacy type-2 estimator logic, including the absolute value inside the logarithm
-- by default uses the full requested `pzlist` in one extraction group: `P1 = pzmin`, `P2 = all larger requested momenta`
+- fits the legacy type-2 CS-kernel directly in the scalar `real` or `imag` component channel, using the second-formula relation between `P1`, `P2`, and `gamma^{\overline{MS}}`
+- by default uses the full requested `pzlist` in one extraction group, with the shared `P1` taken from the first requested momentum unless you set `reference_p1`
 - also supports `pair_mode adjacent` for neighboring pairs like `5-6`, `6-7`, `7-8`
 - writes bootstrap samples, 16/50/84 summary bands, and chi2/dof diagnostics
 - currently supports only the legacy `CG` matching scheme for type-2 extraction, with clean validation
@@ -404,6 +408,7 @@ mu 2.0
 scheme CG
 extraction_type type2
 pair_mode all
+reference_p1 auto
 kernel_labels LO NLO NLL
 bTrange 0 4
 pzrange 2 6
@@ -433,8 +438,12 @@ Option guide:
   keep this as `type2` for the legacy qTMDWF CS-kernel method.
 - `pair_mode`:
   controls which momentum combinations are fit.
-  `all` means a single extraction group per `bT` using `pzmin` as `P1` and all larger requested momenta as `P2`.
+  `all` means a single extraction group per `bT` using a shared `P1` and all other requested momenta as `P2`.
   `adjacent` means one extraction group per neighboring pair, e.g. `5-6`, `6-7`, `7-8`.
+  `fixed_p1` means one extraction group per `P2` using a shared `P1`; it only writes the pairwise breakdown plot, not the band plot.
+  `reference_p1` is optional and fixes that shared `P1` explicitly; when omitted, the workflow uses `pzlist[0]`.
+  `fixed_p1` output filenames include a `fixedp1_...` tag so they do not collide with the `all`-mode files.
+  The fit is done in the chosen scalar `component` channel; `real` and `imag` are both supported.
 - `kernel_labels`:
   one or more perturbative labels to run in batch. The legacy order mapping is preserved exactly:
   `LO -> 0`, `NLO/NLL -> 1`, `NNLO/NNLL -> 2`.
@@ -456,6 +465,7 @@ Expected input table format:
 - The workflow reads the repository-native Fourier sample table format:
   one row per `(sample_id, x)` with a `q_sample` column.
 - Internally those long-form rows are regrouped into a bootstrap matrix with shape `(n_samples, n_x)` before the CS estimator and constant fit are applied.
+  Internally those long-form rows are regrouped into a bootstrap matrix with shape `(n_samples, n_x)` before the direct gamma fit is applied.
 
 For each `(kernel_label, bT, pair-group)` combination, the workflow writes:
 
@@ -463,8 +473,9 @@ For each `(kernel_label, bT, pair-group)` combination, the workflow writes:
 - `tables/*_band.txt`
 - `samples/*_samples.txt`
 - `diagnostics/*_diagnostics.txt`
-- `plots/*_band.pdf` when `plot true`
-- `plots/*_adjacent_breakdown.pdf` when `plot true` and `pair_mode adjacent`
+- `plots/*_band.pdf` when `plot true` and `pair_mode all`
+- `plots/*_pairwise_breakdown.pdf` when `plot true` and `pair_mode adjacent` or `pair_mode fixed_p1`
+- `fixed_p1` breakdown plots include a `fixedp1_refpz...` tag in the filename
 
 Template inputs are provided in:
 
@@ -521,6 +532,8 @@ normalization_mode raw
 scheme CG
 extraction_type type2
 kernel_label LO
+pair_mode fixed_p1
+reference_p1 5
 bTrange 0 4
 x_range 0.25 0.75
 reference_pz_labels 5-6 6-7 7-8
@@ -547,6 +560,10 @@ Option guide:
   keep this as `type2` for the legacy qTMDWF CS-kernel method.
 - `kernel_label`:
   which perturbative CS-kernel label to average. The workflow currently expects one label at a time.
+- `pair_mode`:
+  optional source filter. Use `all`, `adjacent`, or `fixed_p1` to select which CS-kernel extraction runs to average. If omitted, all matching modes are used.
+- `reference_p1`:
+  optional fixed shared `P1` filter. When provided, or when set to `auto`, only CS-kernel outputs with that reference momentum are averaged. If omitted, no `P1` filter is applied.
 - `bTlist` / `bTrange`:
   which transverse separations to process.
 - `x_range`:
@@ -559,7 +576,7 @@ Option guide:
 Expected input data shape:
 
 - The workflow reads the repository-native CS-kernel summary bands and bootstrap sample tables.
-- It groups the CS-kernel x-dependent results by `bT`. If `x_range` is provided, it uses that interval directly; otherwise it applies the physical x-selection cuts. It then averages across the selected x values for each bootstrap sample.
+- It groups the CS-kernel x-dependent results by `bT`. If `x_range` is provided, it uses that interval directly; otherwise it applies the physical x-selection cuts. It also applies any requested source filters such as `pair_mode` or `reference_p1`, then averages across the selected x values for each bootstrap sample.
 - The output summary uses the mean of the sample means as the central value, a percentile-based statistical error from the sample means, and the mean within-sample standard deviation as the systematic error.
 
 For each requested `bT`, the workflow writes:
@@ -592,6 +609,7 @@ The data products passed between these steps are:
   reads those Fourier-space bootstrap outputs and performs the legacy type-2 multi-`Pz` CS-kernel extraction.
 - `tmdwf-cs-kernel-average`:
   reads those CS-kernel outputs and averages the x-dependent results over the selected x window for each `bT`.
+  It can also filter the source outputs by `pair_mode` and `reference_p1` when you need to separate `all`, `adjacent`, or `fixed_p1` extraction runs.
 
 Practical choices:
 

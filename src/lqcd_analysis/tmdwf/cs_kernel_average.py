@@ -5,7 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ..common.parsing import parse_int_list_or_range
+from ..common.parsing import parse_int_list_or_range, parse_optional_int
 from .plotting import plot_tmdwf_cs_kernel_average_bT
 
 
@@ -22,6 +22,8 @@ class TMDWFCSKernelAverageInput:
     scheme: str
     extraction_type: str
     kernel_label: str
+    pair_mode: str | None
+    reference_p1: int | None
     bTlist: tuple[int, ...]
     x_range: tuple[float, float] | None
     reference_pz_labels: tuple[str, ...]
@@ -199,6 +201,14 @@ def parse_tmdwf_cs_kernel_average_input(
     scheme = entries["scheme"][0].strip().upper()
     extraction_type = entries["extraction_type"][0].strip().lower()
     kernel_label = entries["kernel_label"][0].strip().upper()
+    pair_mode = entries.get("pair_mode", [None])[0]
+    if pair_mode is not None:
+        pair_mode = pair_mode.strip().lower()
+        if pair_mode not in {"all", "adjacent", "fixed_p1"}:
+            raise ValueError("pair_mode must be one of: all, adjacent, fixed_p1")
+    reference_p1 = None
+    if "reference_p1" in entries:
+        reference_p1 = parse_optional_int(entries["reference_p1"][0])
     x_range = _parse_x_range(entries, file_path)
 
     reference_pz_labels = tuple(entries.get("reference_pz_labels", []))
@@ -219,6 +229,8 @@ def parse_tmdwf_cs_kernel_average_input(
         scheme=scheme,
         extraction_type=extraction_type,
         kernel_label=kernel_label,
+        pair_mode=pair_mode,
+        reference_p1=reference_p1,
         bTlist=parse_int_list_or_range(entries, "bTlist", "bTrange"),
         x_range=x_range,
         reference_pz_labels=reference_pz_labels,
@@ -292,6 +304,10 @@ def _matches_source(record: TMDWFCSKernelBandRecord, spec: TMDWFCSKernelAverageI
     for key, expected in checks.items():
         if metadata.get(key) != expected:
             return False
+    if spec.pair_mode is not None and metadata.get("pair_mode") != spec.pair_mode:
+        return False
+    if spec.reference_p1 is not None and metadata.get("reference_p1") != str(spec.reference_p1):
+        return False
     return True
 
 
@@ -312,6 +328,7 @@ def discover_tmdwf_cs_kernel_sources(spec: TMDWFCSKernelAverageInput) -> list[tu
             "no TMDWF CS-kernel outputs matched the requested filters: "
             f"title_pattern={spec.title_pattern}, gm={spec.gm}, eta={spec.eta}, component={spec.component}, "
             f"normalization_mode={spec.normalization_mode}, scheme={spec.scheme}, "
+            f"pair_mode={spec.pair_mode}, reference_p1={spec.reference_p1}, "
             f"extraction_type={spec.extraction_type}, kernel_label={spec.kernel_label}"
         )
     return sources
@@ -489,9 +506,15 @@ def _write_average_outputs(
     if spec.x_range is not None:
         x_min, x_max = spec.x_range
         x_token = f"xrange{x_min:.3f}_{x_max:.3f}".replace(".", "p")
+    mode_tokens: list[str] = []
+    if spec.pair_mode is not None:
+        mode_tokens.append(f"pairmode{spec.pair_mode}")
+    if spec.reference_p1 is not None:
+        mode_tokens.append(f"refp1{spec.reference_p1}")
+    mode_token = f"_{'_'.join(mode_tokens)}" if mode_tokens else ""
     stem = (
         f"{output_title}_{spec.gm}_{spec.eta}_{spec.normalization_mode}_{spec.component}"
-        f"_{spec.nstates}state_{spec.scheme}_{spec.kernel_label}_{spec.extraction_type}"
+        f"_{spec.nstates}state_{spec.scheme}_{spec.kernel_label}_{spec.extraction_type}{mode_token}"
         f"_refpz{refpz_token}_{x_token}"
     )
     summary_path = output_root / f"{stem}_summary.txt"
@@ -511,6 +534,10 @@ def _write_average_outputs(
         handle.write(f"scheme {spec.scheme}\n")
         handle.write(f"extraction_type {spec.extraction_type}\n")
         handle.write(f"kernel_label {spec.kernel_label}\n")
+        if spec.pair_mode is not None:
+            handle.write(f"pair_mode {spec.pair_mode}\n")
+        if spec.reference_p1 is not None:
+            handle.write(f"reference_p1 {spec.reference_p1}\n")
         if spec.x_range is not None:
             handle.write(f"x_range {spec.x_range[0]:.10e} {spec.x_range[1]:.10e}\n")
         handle.write(f"reference_pz_labels {' '.join(spec.reference_pz_labels) if spec.reference_pz_labels else 'all'}\n")

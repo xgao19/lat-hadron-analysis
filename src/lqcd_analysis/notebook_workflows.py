@@ -157,6 +157,7 @@ TMDWF_CS_KERNEL_KEYS = {
     "scheme",
     "extraction_type",
     "pair_mode",
+    "reference_p1",
     "kernel_labels",
     "kernel",
     "bTlist",
@@ -180,6 +181,8 @@ TMDWF_CS_KERNEL_AVERAGE_KEYS = {
     "scheme",
     "extraction_type",
     "kernel_label",
+    "pair_mode",
+    "reference_p1",
     "bTlist",
     "bTrange",
     "x_range",
@@ -560,6 +563,8 @@ def render_tmdwf_cs_kernel_input_text(config: dict[str, Any]) -> str:
         lines.append(f"pzrange {_as_scalar_string(config['pzrange'])}")
     if "x_window" in config and config["x_window"] is not None:
         lines.append(f"x_window {_as_scalar_string(config['x_window'])}")
+    if "reference_p1" in config and config["reference_p1"] is not None:
+        lines.append(f"reference_p1 {_as_scalar_string(config['reference_p1'])}")
     for optional_key in ("plot", "results_dir"):
         if optional_key in config and config[optional_key] is not None:
             lines.append(f"{optional_key} {_as_scalar_string(config[optional_key])}")
@@ -600,6 +605,10 @@ def render_tmdwf_cs_kernel_average_input_text(config: dict[str, Any]) -> str:
         f"extraction_type {_as_scalar_string(config['extraction_type'])}",
         f"kernel_label {_as_scalar_string(config['kernel_label'])}",
     ]
+    if "pair_mode" in config and config["pair_mode"] is not None:
+        lines.append(f"pair_mode {_as_scalar_string(config['pair_mode'])}")
+    if "reference_p1" in config and config["reference_p1"] is not None:
+        lines.append(f"reference_p1 {_as_scalar_string(config['reference_p1'])}")
     if "bTlist" in config and config["bTlist"] is not None:
         lines.append(f"bTlist {_as_scalar_string(config['bTlist'])}")
     elif "bTrange" in config and config["bTrange"] is not None:
@@ -831,6 +840,7 @@ def validate_tmdwf_cs_kernel_notebook_config(config: dict[str, Any]) -> dict[str
         "scheme": parsed.scheme,
         "extraction_type": parsed.extraction_type,
         "pair_mode": parsed.pair_mode,
+        "reference_p1": parsed.reference_p1,
         "kernel_labels": parsed.kernel_labels,
         "bTlist": parsed.bTlist,
         "pzlist": parsed.pzlist,
@@ -857,6 +867,8 @@ def validate_tmdwf_cs_kernel_average_notebook_config(config: dict[str, Any]) -> 
         "scheme": parsed.scheme,
         "extraction_type": parsed.extraction_type,
         "kernel_label": parsed.kernel_label,
+        "pair_mode": parsed.pair_mode,
+        "reference_p1": parsed.reference_p1,
         "bTlist": parsed.bTlist,
         "x_range": parsed.x_range,
         "reference_pz_labels": parsed.reference_pz_labels,

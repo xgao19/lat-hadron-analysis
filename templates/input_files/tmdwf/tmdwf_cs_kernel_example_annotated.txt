@@ -28,6 +28,7 @@ mu 2.0
 scheme CG
 extraction_type type2
 pair_mode all
+reference_p1 auto
 kernel_labels LO NLO NLL NNLO NNLL
 
 # Batch ranges.
@@ -41,9 +42,16 @@ pzrange 2 6
 #   and is recorded explicitly in the CS-kernel outputs
 
 # Pair construction mode:
-# - all: use pzmin as P1 and all larger requested momenta as the shared P2 set
-#        so one output group is produced for the full pz window
+# - all: use the shared reference_p1 if provided, otherwise the first requested
+#        pz in pzlist, and compare it against the remaining requested momenta
+#        in one output group for the full pz window
 # - adjacent: build one output group per neighboring pair, e.g. 5-6, 6-7, 7-8
+# - fixed_p1: use the shared reference_p1 if provided, otherwise the first
+#             requested pz in pzlist, and build one output group per later P2
+# - reference_p1: optional fixed shared P1 momentum. When omitted or set to
+#   auto, the workflow keeps using the first requested pz in pzlist.
+# - fixed_p1 filenames are tagged with fixedp1_... so they do not collide with
+#   the band-style all-mode outputs.
 
 # Legacy default x window for the constant-in-P2 fit.
 # Only x values inside this window are used when fitting the estimator
@@ -55,7 +63,7 @@ x_window 0.2 0.8
 # Optional plot output.
 # When true, also write one quick-look PDF band plot for each
 # (kernel_label, bT, pair-group) output group.
-# In pair_mode adjacent, this also writes one combined breakdown plot
+# In pair_mode adjacent or fixed_p1, this also writes one pairwise breakdown plot
 # showing data log-ratio, matching correction, and total estimator.
 plot true
 
@@ -65,5 +73,7 @@ plot true
 # - <results_dir>/<title_pattern with pz->multiPz>/tables/*_refpz<pzmin-pzmax>_type2_band.txt
 # - <results_dir>/<title_pattern with pz->multiPz>/samples/*_refpz<pzmin-pzmax>_type2_samples.txt
 # - <results_dir>/<title_pattern with pz->multiPz>/diagnostics/*_refpz<pzmin-pzmax>_type2_diagnostics.txt
-# - <results_dir>/<title_pattern with pz->multiPz>/plots/*_band.pdf   (when plot=true)
+# - <results_dir>/<title_pattern with pz->multiPz>/plots/*_band.pdf   (when plot=true and pair_mode=all)
+# - <results_dir>/<title_pattern with pz->multiPz>/plots/*_pairwise_breakdown.pdf   (when plot=true and pair_mode=adjacent or fixed_p1)
+#   fixed_p1 breakdown plots include a fixedp1_refpz... tag in the filename
 results_dir results_tmdwf_cs_kernel

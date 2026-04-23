@@ -14,6 +14,7 @@ mu 2.0
 scheme CG
 extraction_type type2
 pair_mode all
+reference_p1 auto
 kernel_labels LO NLO NLL
 bTrange 0 4
 pzrange 2 6

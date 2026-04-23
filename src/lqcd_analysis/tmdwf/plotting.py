@@ -322,6 +322,7 @@ def plot_tmdwf_m0_vs_bz(
         return save_plot_status(output_path.with_suffix(".txt"), "matplotlib not installed; plot was skipped")
 
     fig, ax = plt.subplots(figsize=figsize)
+    ax.axhline(0.0, color="0.5", linestyle="--", linewidth=1.0, zorder=0)
     for index, item in enumerate(series):
         ax.errorbar(
             item.bz,
@@ -535,14 +536,14 @@ def write_tmdwf_plot_notebook(
                     "chosen_bT = available_bT[0]\n",
                     "component = 'real'\n",
                     "nstates = max(int(key) for key in curve_tables[str(chosen_bT)][component])\n",
-                    "bz_values = None  # set to e.g. (0, 2) to draw a subset for the ratio plot\n",
+                    "bz_values = None  # set to e.g. (0, 4, 8, 12, 16, 20) to draw a subset for the ratio plot\n",
                     "ratio_figsize = (7.0, 4.5)\n",
                     "ratio_xlim = None\n",
                     "ratio_ylim = None\n",
                     "show_fit_window = True\n",
                     "ratio_output_name = None  # e.g. 'custom_ratio_plot.pdf'\n",
                     "ratio_alternate_output_dir = None\n",
-                    "selected_bT_values = None  # set to e.g. (0, 2) for the m0-vs-bz plot\n",
+                    "selected_bT_values = tuple(value for value in available_bT if value % 2 == 0)  # even bT only for the m0-vs-bz plot\n",
                     "m0_figsize = (6.5, 4.5)\n",
                     "m0_xlim = None\n",
                     "m0_ylim = None\n",
@@ -564,7 +565,7 @@ def write_tmdwf_plot_notebook(
                 "source": [
                     "## Quick Tuning\n",
                     "Pick `chosen_bT`, `component`, and `nstates` for the ratio plot, then adjust limits or output paths.\n",
-                    "For m0-vs-bz, keep the same `component` and `nstates`, and optionally restrict `selected_bT_values` before rerunning that section.\n",
+                    "For m0-vs-bz, keep the same `component` and `nstates`, and optionally adjust `selected_bT_values` before rerunning that section.\n",
                 ],
             },
             {
