@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 
 from .tmdwf.cs_kernel_extract import run_tmdwf_cs_kernel_workflow
+from .tmdwf.cs_kernel_joint import run_tmdwf_cs_kernel_joint_workflow
 from .tmdwf.cs_kernel_average import run_tmdwf_cs_kernel_average_workflow
 from .tmdwf.fourier import run_tmdwf_fourier_workflow
 from .tmdwf.fit_nstate import run_tmdwf_nstate_fit
@@ -143,6 +144,20 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Directory for averaged CS-kernel tables and samples",
     )
+
+    tmdwf_cs_kernel_joint_parser = subparsers.add_parser(
+        "tmdwf-cs-kernel-joint",
+        help="Fit a joint continuous gamma_eff(x,bT) surface from TMDWF Fourier samples.",
+    )
+    tmdwf_cs_kernel_joint_parser.add_argument(
+        "input_file",
+        help="Input control file for the joint TMDWF CS-kernel gamma_eff workflow",
+    )
+    tmdwf_cs_kernel_joint_parser.add_argument(
+        "--results-dir",
+        default=None,
+        help="Directory for joint CS-kernel surface tables, samples, and diagnostics",
+    )
     return parser
 
 
@@ -219,6 +234,15 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.command == "tmdwf-cs-kernel-average":
         outputs = run_tmdwf_cs_kernel_average_workflow(
+            args.input_file,
+            results_dir=args.results_dir,
+        )
+        for output in outputs:
+            print(output)
+        return
+
+    if args.command == "tmdwf-cs-kernel-joint":
+        outputs = run_tmdwf_cs_kernel_joint_workflow(
             args.input_file,
             results_dir=args.results_dir,
         )

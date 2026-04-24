@@ -107,6 +107,30 @@ automatic `bT` summary plot alongside the tabular outputs.
 The notebook template for the same workflow is self-contained and does not
 require this input file.
 
+### TMDWF Joint CS-Kernel Effective Surface Example
+
+```bash
+lqcd-analysis tmdwf-cs-kernel-joint \
+  templates/input_files/tmdwf/tmdwf_cs_kernel_joint_example.txt
+```
+
+Annotated version:
+
+```text
+templates/input_files/tmdwf/tmdwf_cs_kernel_joint_example_annotated.txt
+```
+
+This joint template is the plain-text batch interface for fitting a continuous
+`gamma_eff(x,bT)` surface directly from Fourier bootstrap samples across one
+or more ensembles. It does not consume the per-ensemble `tmdwf-cs-kernel`
+outputs or the averaged CS-kernel outputs. Each `ensemble` line provides that
+ensemble's Fourier output root, momentum list, lattice spacing, and bT list;
+the fit keeps the ensemble's own physical `Pz` and physical `bT = nT * a`.
+
+The compact example uses placeholder local paths. Replace those paths, lattice
+metadata, momentum ranges, and spline knots with values matching your analysis
+directories before running.
+
 ## Plot Example
 
 Run the N-state fit example first, then:

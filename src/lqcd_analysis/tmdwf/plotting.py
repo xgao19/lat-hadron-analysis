@@ -96,6 +96,51 @@ def plot_tmdwf_cs_kernel_average_bT(
     return output_path
 
 
+def plot_tmdwf_joint_cs_kernel_x_band(
+    output_path: str | Path,
+    *,
+    x_values: np.ndarray,
+    band_p16: np.ndarray,
+    band_p50: np.ndarray,
+    band_p84: np.ndarray,
+    bT_fm: float,
+    title: str,
+    kernel_label: str,
+    spline_kind: str,
+    figsize: tuple[float, float] = (6.8, 4.5),
+    xlim: tuple[float, float] | None = None,
+    ylim: tuple[float, float] | None = None,
+) -> Path:
+    output_path = Path(output_path)
+    plt = prepare_matplotlib()
+    if plt is None:
+        return save_plot_status(output_path.with_suffix(".txt"), "matplotlib not installed; plot was skipped")
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.fill_between(x_values, band_p16, band_p84, color="C0", alpha=0.22, linewidth=0)
+    ax.plot(
+        x_values,
+        band_p50,
+        color="C0",
+        linewidth=1.3,
+        label=f"{kernel_label} {spline_kind}",
+    )
+    ax.set_xlabel("x")
+    ax.set_ylabel(r"$\gamma_{\mathrm{eff}}(x,b_T)$")
+    ax.set_title(f"{title} bT={bT_fm:.3f} fm")
+    if xlim is not None:
+        ax.set_xlim(*xlim)
+    if ylim is not None:
+        ax.set_ylim(*ylim)
+    ax.grid(True, alpha=0.2)
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(output_path)
+    plt.close(fig)
+    return output_path
+
+
 def _parse_grouped_table(path: str | Path) -> tuple[dict[str, str], list[str], list[list[str]]]:
     metadata: dict[str, str] = {}
     header: list[str] | None = None

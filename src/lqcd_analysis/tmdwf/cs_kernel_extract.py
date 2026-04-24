@@ -204,6 +204,44 @@ def load_cs_kernel_dataset(
     return dataset
 
 
+def compute_pairwise_type2_estimators(
+    reference_samples: np.ndarray,
+    comparison_samples: list[np.ndarray],
+    *,
+    scheme: str,
+    kernel_label: str,
+    mu: float,
+    x_value: float,
+    p1_gev: float,
+    p2_gevs: list[float],
+    component: str = "real",
+) -> tuple[list[np.ndarray], np.ndarray]:
+    if len(comparison_samples) != len(p2_gevs):
+        raise ValueError("comparison_samples and p2_gevs must have the same length")
+    if reference_samples.ndim != 1:
+        raise ValueError("reference_samples must be one-dimensional")
+    estimators: list[np.ndarray] = []
+    sigmas: list[float] = []
+    for comparison, p2_gev in zip(comparison_samples, p2_gevs, strict=True):
+        if comparison.ndim != 1 or comparison.shape != reference_samples.shape:
+            raise ValueError("each comparison sample array must match reference_samples")
+        log_ratio = 1.0 / np.log(p1_gev / p2_gev) * np.log(np.abs(reference_samples / comparison))
+        correction = evaluate_type2_matching_correction(
+            scheme=scheme,
+            kernel_label=kernel_label,
+            mu=mu,
+            p1=p1_gev,
+            p2=p2_gev,
+            x=x_value,
+            component=component,
+        )
+        estimator = log_ratio + correction
+        q16, _, q84 = _legacy_quantile_triplet(estimator)
+        estimators.append(estimator)
+        sigmas.append(float(max(0.5 * (q84 - q16), np.finfo(float).eps)))
+    return estimators, np.asarray(sigmas, dtype=float)
+
+
 def fit_gamma_direct_across_p2(
     reference_samples: np.ndarray,
     comparison_samples: list[np.ndarray],
@@ -214,7 +252,7 @@ def fit_gamma_direct_across_p2(
     x_value: float,
     p1_gev: float,
     p2_gevs: list[float],
-    component: str,
+    component: str = "real",
 ) -> tuple[np.ndarray, np.ndarray]:
     if len(comparison_samples) != len(p2_gevs):
         raise ValueError("comparison_samples and p2_gevs must have the same length")
@@ -276,7 +314,7 @@ def extract_cs_kernel_for_reference(
     kernel_label: str,
     mu: float,
     scheme: str,
-    component: str,
+    component: str = "real",
     ns: int,
     lattice_spacing_fm: float,
     x_window: tuple[float, float],
@@ -354,7 +392,7 @@ def summarize_cs_kernel_adjacent_breakdown(
     kernel_label: str,
     mu: float,
     scheme: str,
-    component: str,
+    component: str = "real",
     ns: int,
     lattice_spacing_fm: float,
     x_window: tuple[float, float],
@@ -600,7 +638,7 @@ def run_tmdwf_cs_kernel_workflow(
                             output_root
                             / "plots"
                             / f"{output_title}_{gm}_{eta}_{spec.normalization_mode}_{spec.component}_{spec.nstates}state_"
-                              f"{spec.scheme}_{kernel_label}_bT{bT}_{spec.extraction_type}_{breakdown_tag}_pairwise_breakdown.pdf"
+                              f"{spec.scheme}_{kernel_label}_bT{bT}_{spec.extraction_type}_{breakdown_tag}_breakdown.pdf"
                         )
                         plot_tmdwf_cs_kernel_adjacent_breakdown(
                             breakdown_path,

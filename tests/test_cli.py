@@ -16,6 +16,7 @@ class CLITests(unittest.TestCase):
         self.assertIn("tmdwf-fourier", help_text)
         self.assertIn("tmdwf-cs-kernel", help_text)
         self.assertIn("tmdwf-cs-kernel-average", help_text)
+        self.assertIn("tmdwf-cs-kernel-joint", help_text)
 
     def test_two_point_effective_mass_cli_dispatches_to_workflow(self) -> None:
         output_buffer = io.StringIO()
@@ -80,6 +81,29 @@ class CLITests(unittest.TestCase):
         printed = output_buffer.getvalue()
         self.assertIn("/tmp/cs_avg_summary.txt", printed)
         self.assertIn("/tmp/cs_avg_values.txt", printed)
+
+    def test_tmdwf_cs_kernel_joint_cli_dispatches_to_workflow(self) -> None:
+        output_buffer = io.StringIO()
+        fake_outputs = [Path("/tmp/cs_joint_surface.txt"), Path("/tmp/cs_joint_samples.txt")]
+        with patch(
+            "lqcd_analysis.cli.run_tmdwf_cs_kernel_joint_workflow",
+            return_value=fake_outputs,
+        ) as mock_run:
+            with redirect_stdout(output_buffer):
+                main(
+                    [
+                        "tmdwf-cs-kernel-joint",
+                        "cs_joint_input.txt",
+                        "--results-dir",
+                        "/tmp/cs_joint_results",
+                    ]
+                )
+
+        self.assertEqual(mock_run.call_args.args[0], "cs_joint_input.txt")
+        self.assertEqual(mock_run.call_args.kwargs["results_dir"], "/tmp/cs_joint_results")
+        printed = output_buffer.getvalue()
+        self.assertIn("/tmp/cs_joint_surface.txt", printed)
+        self.assertIn("/tmp/cs_joint_samples.txt", printed)
 
 
 if __name__ == "__main__":

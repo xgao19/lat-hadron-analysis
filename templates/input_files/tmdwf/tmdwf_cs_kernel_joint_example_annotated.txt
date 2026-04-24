@@ -1,0 +1,55 @@
+# Joint TMDWF CS-kernel effective-surface fit.
+# This workflow reads Fourier bootstrap samples directly and fits
+# gamma_eff(x, bT) as a continuous tensor-product piecewise-linear spline.
+
+# Shared channel settings.
+gm T5
+eta eta0
+component real
+nstates 2
+normalization_mode mode3
+mu 2.0
+scheme CG
+kernel_label LO
+
+# Reference momentum scale in GeV used in the direct evolution formula.
+# This is a physical P1 scale, not a lattice pz integer.
+reference_p1_gev 1.0
+
+# Fit only x values inside this window.
+x_window 0.2 0.8
+
+# Optional explicit spline knots. If omitted, the workflow uses the observed
+# x values and physical bT values, capped at a modest number of knots.
+x_knots 0.2 0.3 0.4 0.5 0.6 0.7 0.8
+bT_knots_fm 0.05 0.10 0.15 0.20 0.25 0.30
+
+# Spline interpolation kind between knots. Supported values are:
+# - linear: piecewise-linear hat basis
+# - cubic: natural cubic spline basis
+spline_kind linear
+
+# Whether to write one gamma_eff(x, bT) band plot for each bT knot.
+plot true
+
+# Print bootstrap-fit progress while running. If progress_every is omitted,
+# the workflow reports roughly every 5% of the bootstrap samples.
+progress true
+progress_every 10
+
+# One ensemble line per ensemble:
+# ensemble <label> <input_root> <title_pattern> <Ns> <a_fm> pz=<list/range> bT=<list/range>
+#
+# Lists are comma-separated. Inclusive ranges use start:stop.
+# title_pattern follows the existing Fourier/CS convention where * is replaced by pz.
+# Keep each ensemble entry on one line when using the file.
+ensemble l48a060 /path/to/l48/4-FT-new l48c64a060_m140_fit_pz* 48 0.060 pz=1:5 bT=0:20
+ensemble l64a050 /path/to/l64/4-FT-new l64c64a050_m140_fit_pz* 64 0.050 pz=3:8 bT=0:30
+
+# Output root for:
+# - joint_gamma_eff/*_summary.txt
+# - joint_gamma_eff/tables/*_surface.txt
+# - joint_gamma_eff/samples/*_samples.txt
+# - joint_gamma_eff/diagnostics/*_diagnostics.txt
+# - joint_gamma_eff/plots/*_x_band.pdf
+results_dir results_tmdwf_cs_kernel_joint

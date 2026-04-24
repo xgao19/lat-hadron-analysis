@@ -486,6 +486,116 @@ A matching notebook template is also provided in:
 
 - `templates/tmdwf/tmdwf_cs_kernel_template.ipynb`
 
+## TMDWF Joint CS-Kernel Effective Surface
+
+For multi-ensemble studies, the repository also provides a joint downstream
+fit that reads Fourier bootstrap samples directly and fits a continuous
+effective surface
+
+```text
+gamma_eff(x, bT)
+```
+
+using a tensor-product piecewise-linear spline. This path does not consume
+`tmdwf-cs-kernel` or `tmdwf-cs-kernel-average` outputs. It is intended as the
+clean first-stage joint fit before adding discretization, finite-volume, or
+large-momentum systematic terms.
+
+```bash
+lqcd-analysis tmdwf-cs-kernel-joint input_tmdwf_cs_kernel_joint.txt
+```
+
+This joint workflow:
+
+- reads repository-native Fourier bootstrap sample tables from each requested
+  ensemble
+- keeps each ensemble's own physical `Pz` and physical `bT = nT * a`
+- fits `gamma_eff(x,bT)` as a continuous spline surface rather than forcing
+  different ensembles onto a common lattice `bT` grid
+- uses the direct type-2 evolution relation in the scalar `real` or `imag`
+  component channel
+- analytically eliminates one nuisance amplitude for each
+  `(ensemble, sample_id, x, bT)` group during the nonlinear spline fit
+- writes the bootstrap surface, summary quantiles, and chi2/dof diagnostics
+
+Expected key input fields include:
+
+```text
+gm T5
+eta eta0
+component real
+nstates 2
+normalization_mode mode3
+mu 2.0
+scheme CG
+kernel_label LO
+reference_p1_gev 1.0
+x_window 0.2 0.8
+x_knots 0.2 0.3 0.4 0.5 0.6 0.7 0.8
+bT_knots_fm 0.05 0.10 0.15 0.20 0.25 0.30
+spline_kind linear
+plot true
+progress true
+progress_every 10
+ensemble l48a060 /path/l48 l48_pz* 48 0.060 pz=1:5 bT=0:20
+ensemble l64a050 /path/l64 l64_pz* 64 0.050 pz=3:8 bT=0:30
+results_dir results_tmdwf_cs_kernel_joint
+```
+
+Option guide:
+
+- `gm`, `eta`, `component`, `nstates`, `normalization_mode`:
+  select the Fourier output family to consume. These settings are shared by
+  all ensembles in the joint fit.
+- `mu`, `scheme`, `kernel_label`:
+  matching settings used in the same type-2 correction machinery as
+  `tmdwf-cs-kernel`. The first version supports one `kernel_label` per run.
+- `reference_p1_gev`:
+  physical reference momentum scale in GeV used in the direct evolution
+  formula. This is not a lattice momentum integer.
+- `x_window`:
+  x range included in the joint fit.
+- `x_knots`, `bT_knots_fm`:
+  optional spline knots for the continuous `gamma_eff(x,bT)` surface. If
+  omitted, the workflow chooses knots from the observed x and physical bT
+  values, capped at a modest number of knots.
+- `spline_kind`:
+  interpolation kind between knots. Use `linear` for the piecewise-linear hat
+  basis or `cubic` for a natural cubic spline basis.
+- `plot`:
+  whether to write one `gamma_eff(x,bT)` band plot for each `bT_knots_fm`
+  value.
+- `progress`, `progress_every`:
+  whether to print bootstrap-fit progress and how many completed bootstrap
+  samples to wait between progress reports. If `progress_every` is omitted,
+  the workflow reports roughly every 5% of the bootstrap samples.
+- `ensemble`:
+  one line per ensemble, with
+  `label input_root title_pattern Ns lattice_spacing_fm pz=<list/range> bT=<list/range>`.
+  Lists are comma-separated; inclusive ranges use `start:stop`. The
+  `title_pattern` follows the existing convention where `*` is replaced by the
+  lattice momentum integer.
+- `results_dir`:
+  output root for the joint summary, surface table, bootstrap surface samples,
+  and diagnostics.
+
+The workflow writes:
+
+- `joint_gamma_eff/*_summary.txt`
+- `joint_gamma_eff/tables/*_surface.txt`
+- `joint_gamma_eff/samples/*_samples.txt`
+- `joint_gamma_eff/diagnostics/*_diagnostics.txt`
+- `joint_gamma_eff/plots/*_x_band.pdf`
+
+Template inputs are provided in:
+
+- `templates/input_files/tmdwf/tmdwf_cs_kernel_joint_example.txt`
+- `templates/input_files/tmdwf/tmdwf_cs_kernel_joint_example_annotated.txt`
+
+A matching notebook template is also provided in:
+
+- `templates/tmdwf/tmdwf_cs_kernel_joint_template.ipynb`
+
 ## TMDWF CS-Kernel Averaging
 
 The repository also provides a downstream averaging step that consumes existing
@@ -597,6 +707,10 @@ The intended downstream chain is now:
 4. `tmdwf-cs-kernel`
 5. optional `tmdwf-cs-kernel-average`
 
+For the joint effective-surface path, replace steps 4 and 5 with:
+
+4. `tmdwf-cs-kernel-joint`
+
 The data products passed between these steps are:
 
 - `tmdwf-nstate-fit`:
@@ -609,7 +723,11 @@ The data products passed between these steps are:
   reads those Fourier-space bootstrap outputs and performs the legacy type-2 multi-`Pz` CS-kernel extraction.
 - `tmdwf-cs-kernel-average`:
   reads those CS-kernel outputs and averages the x-dependent results over the selected x window for each `bT`.
-  It can also filter the source outputs by `pair_mode` and `reference_p1` when you need to separate `all`, `adjacent`, or `fixed_p1` extraction runs.
+  It can also filter the source outputs by `pair_mode` and `reference_p1`
+  when you need to separate `all`, `adjacent`, or `fixed_p1` extraction runs.
+- `tmdwf-cs-kernel-joint`:
+  reads Fourier-space bootstrap outputs directly from one or more ensembles
+  and fits a shared continuous `gamma_eff(x,bT)` surface.
 
 Practical choices:
 
@@ -634,6 +752,8 @@ This means the repository now supports these two common chains cleanly:
   `fit -> normalize(modeX) -> fourier(modeX) -> cs-kernel(modeX)`
 - averaged CS-kernel chain:
   `fit -> normalize(optional) -> fourier -> cs-kernel -> cs-kernel-average`
+- joint effective-surface chain:
+  `fit -> normalize(optional) -> fourier -> cs-kernel-joint`
 
 ## Workflows
 
@@ -653,6 +773,7 @@ Current notebook templates:
 - `templates/tmdwf/tmdwf_normalize_template.ipynb`
 - `templates/tmdwf/tmdwf_fourier_template.ipynb`
 - `templates/tmdwf/tmdwf_cs_kernel_template.ipynb`
+- `templates/tmdwf/tmdwf_cs_kernel_joint_template.ipynb`
 - `templates/two_point/plot_2pt_template.ipynb`
 
 Notebook templates are thin wrappers around the existing analysis code. They are intended for clarity and interactive use, while the plain-text input-file workflow remains the stable batch-style interface.
@@ -679,12 +800,14 @@ and plain-text example inputs under:
 - `templates/input_files/tmdwf/tmdwf_normalize_example.txt`
 - `templates/input_files/tmdwf/tmdwf_fourier_example.txt`
 - `templates/input_files/tmdwf/tmdwf_cs_kernel_example.txt`
+- `templates/input_files/tmdwf/tmdwf_cs_kernel_joint_example.txt`
 - `templates/input_files/two_point/plot_2pt_example_command.txt`
 - `templates/input_files/two_point/tgevp_example_realdata_annotated.txt`
 - `templates/input_files/two_point/nstate_fit_1state_example_realdata_annotated.txt`
 - `templates/input_files/two_point/nstate_fit_2state_example_realdata_annotated.txt`
 - `templates/input_files/tmdwf/tmdwf_nstate_example_annotated.txt`
 - `templates/input_files/tmdwf/tmdwf_cs_kernel_example_annotated.txt`
+- `templates/input_files/tmdwf/tmdwf_cs_kernel_joint_example_annotated.txt`
 - `templates/tmdwf/tmdwf_nstate_template.ipynb`
 
 These examples use repository-relative paths, so they can be run directly from the repository root.

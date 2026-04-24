@@ -12,6 +12,7 @@ from lqcd_analysis.notebook_workflows import (
     render_nstate_fit_input_text,
     render_tmdwf_cs_kernel_input_text,
     render_tmdwf_cs_kernel_average_input_text,
+    render_tmdwf_cs_kernel_joint_input_text,
     render_tmdwf_fourier_input_text,
     render_tmdwf_fit_input_text,
     render_tmdwf_normalize_input_text,
@@ -20,6 +21,7 @@ from lqcd_analysis.notebook_workflows import (
     run_nstate_fit_from_notebook,
     run_tmdwf_cs_kernel_from_notebook,
     run_tmdwf_cs_kernel_average_from_notebook,
+    run_tmdwf_cs_kernel_joint_from_notebook,
     run_tmdwf_fourier_from_notebook,
     run_tmdwf_fit_from_notebook,
     run_tmdwf_normalize_from_notebook,
@@ -29,6 +31,7 @@ from lqcd_analysis.notebook_workflows import (
     validate_plot_2pt_notebook_config,
     validate_tmdwf_cs_kernel_notebook_config,
     validate_tmdwf_cs_kernel_average_notebook_config,
+    validate_tmdwf_cs_kernel_joint_notebook_config,
     validate_tmdwf_fourier_notebook_config,
     validate_tmdwf_notebook_config,
     validate_tmdwf_normalize_notebook_config,
@@ -140,6 +143,44 @@ class NotebookWorkflowTests(unittest.TestCase):
             "bTrange": [0, 2],
             "x_range": [0.25, 0.75],
             "reference_pz_labels": ["5-6", "6-7"],
+        }
+        self.tmdwf_cs_kernel_joint_config = {
+            "ensembles": [
+                {
+                    "label": "coarse",
+                    "input_root": "/tmp/tmdwf_joint_coarse",
+                    "title_pattern": "coarse_pz*",
+                    "ns": 48,
+                    "lattice_spacing_fm": 0.060,
+                    "pzlist": [3, 4, 5],
+                    "bTlist": [0, 1, 2],
+                },
+                {
+                    "label": "fine",
+                    "input_root": "/tmp/tmdwf_joint_fine",
+                    "title_pattern": "fine_pz*",
+                    "ns": 64,
+                    "lattice_spacing_fm": 0.050,
+                    "pzrange": [4, 6],
+                    "bTrange": [0, 3],
+                },
+            ],
+            "gm": "T5",
+            "eta": "eta0",
+            "component": "real",
+            "nstates": 2,
+            "normalization_mode": "mode3",
+            "mu": 2.0,
+            "scheme": "CG",
+            "kernel_label": "LO",
+            "reference_p1_gev": 1.0,
+            "x_window": [0.2, 0.8],
+            "x_knots": [0.2, 0.4, 0.6, 0.8],
+            "bT_knots_fm": [0.05, 0.10, 0.15],
+            "spline_kind": "linear",
+            "plot": True,
+            "progress": True,
+            "progress_every": 10,
         }
 
     def test_render_tgevp_text(self) -> None:
@@ -502,6 +543,64 @@ class NotebookWorkflowTests(unittest.TestCase):
         self.assertIn("reference_pz_labels 5-6 6-7", text)
         self.assertIn("x_range 0.25 0.75", text)
         self.assertIn("results_dir /tmp/tmdwf_cs_kernel_average", text)
+
+    def test_render_tmdwf_cs_kernel_joint_text(self) -> None:
+        text = render_tmdwf_cs_kernel_joint_input_text(
+            {
+                **self.tmdwf_cs_kernel_joint_config,
+                "results_dir": "/tmp/tmdwf_cs_kernel_joint",
+            }
+        )
+        self.assertIn("gm T5", text)
+        self.assertIn("eta eta0", text)
+        self.assertIn("normalization_mode mode3", text)
+        self.assertIn("kernel_label LO", text)
+        self.assertIn("reference_p1_gev 1.0", text)
+        self.assertIn("x_knots 0.2 0.4 0.6 0.8", text)
+        self.assertIn("bT_knots_fm 0.05 0.1 0.15", text)
+        self.assertIn("spline_kind linear", text)
+        self.assertIn("plot true", text)
+        self.assertIn("progress true", text)
+        self.assertIn("progress_every 10", text)
+        self.assertIn("ensemble coarse /tmp/tmdwf_joint_coarse coarse_pz*", text)
+        self.assertIn("pz=3,4,5 bT=0,1,2", text)
+        self.assertIn("ensemble fine /tmp/tmdwf_joint_fine fine_pz*", text)
+        self.assertIn("pz=4:6 bT=0:3", text)
+        self.assertIn("results_dir /tmp/tmdwf_cs_kernel_joint", text)
+
+    def test_validate_tmdwf_cs_kernel_joint_notebook_config(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            coarse = tmp / "coarse"
+            fine = tmp / "fine"
+            coarse.mkdir()
+            fine.mkdir()
+            config = {
+                **self.tmdwf_cs_kernel_joint_config,
+                "ensembles": [
+                    {
+                        **self.tmdwf_cs_kernel_joint_config["ensembles"][0],
+                        "input_root": str(coarse),
+                    },
+                    {
+                        **self.tmdwf_cs_kernel_joint_config["ensembles"][1],
+                        "input_root": str(fine),
+                    },
+                ],
+            }
+            validated = validate_tmdwf_cs_kernel_joint_notebook_config(config)
+        self.assertEqual(validated["gm"], "T5")
+        self.assertEqual(validated["kernel_label"], "LO")
+        self.assertEqual(validated["reference_p1_gev"], 1.0)
+        self.assertEqual(validated["spline_kind"], "linear")
+        self.assertTrue(validated["plot"])
+        self.assertTrue(validated["progress"])
+        self.assertEqual(validated["progress_every"], 10)
+        self.assertEqual(validated["ensembles"][0].label, "coarse")
+        self.assertEqual(validated["ensembles"][0].pzlist, (3, 4, 5))
+        self.assertEqual(validated["ensembles"][1].bTlist, (0, 1, 2, 3))
 
     def test_validate_tmdwf_cs_kernel_average_notebook_config(self) -> None:
         import tempfile
@@ -973,6 +1072,23 @@ class NotebookWorkflowTests(unittest.TestCase):
         self.assertIn("\"reference_pz_labels\": [\"5-6\", \"6-7\", \"7-8\"]", joined)
         self.assertIn("# Data / metadata settings", joined)
         self.assertIn("# User Inputs", joined)
+
+    def test_tmdwf_cs_kernel_joint_template_contains_expected_workflow_hooks(self) -> None:
+        path = Path("templates/tmdwf/tmdwf_cs_kernel_joint_template.ipynb")
+        notebook = json.loads(path.read_text(encoding="utf-8"))
+        joined = "\n".join("".join(cell.get("source", [])) for cell in notebook["cells"])
+        self.assertIn("render_tmdwf_cs_kernel_joint_input_text", joined)
+        self.assertIn("validate_tmdwf_cs_kernel_joint_notebook_config", joined)
+        self.assertIn("run_tmdwf_cs_kernel_joint_from_notebook", joined)
+        self.assertIn("\"kernel_label\": \"LO\"", joined)
+        self.assertIn("\"reference_p1_gev\": 1.0", joined)
+        self.assertIn("\"spline_kind\": \"linear\"", joined)
+        self.assertIn("\"plot\": True", joined)
+        self.assertIn("\"progress\": True", joined)
+        self.assertIn("\"normalization_mode\": \"mode3\"", joined)
+        self.assertIn("\"ensembles\": [", joined)
+        self.assertIn("gamma_eff(x,bT)", joined)
+        self.assertIn("## Option Guide", joined)
 
     def test_example_input_files_parse(self) -> None:
         tgevp_input = Path("templates/input_files/two_point/tgevp_example_realdata.txt")

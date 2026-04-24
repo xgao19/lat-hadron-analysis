@@ -13,6 +13,10 @@ from .tmdwf.cs_kernel_average import (
     parse_tmdwf_cs_kernel_average_input,
     run_tmdwf_cs_kernel_average_workflow,
 )
+from .tmdwf.cs_kernel_joint import (
+    parse_tmdwf_cs_kernel_joint_input,
+    run_tmdwf_cs_kernel_joint_workflow,
+)
 from .tmdwf.fourier import (
     parse_tmdwf_fourier_input,
     run_tmdwf_fourier_workflow,
@@ -190,6 +194,27 @@ TMDWF_CS_KERNEL_AVERAGE_KEYS = {
     "results_dir",
 }
 TMDWF_CS_KERNEL_AVERAGE_RUN_KEYS = {"results_dir"}
+TMDWF_CS_KERNEL_JOINT_KEYS = {
+    "ensembles",
+    "gm",
+    "eta",
+    "component",
+    "nstates",
+    "normalization_mode",
+    "mu",
+    "scheme",
+    "kernel_label",
+    "reference_p1_gev",
+    "x_window",
+    "x_knots",
+    "bT_knots_fm",
+    "spline_kind",
+    "plot",
+    "progress",
+    "progress_every",
+    "results_dir",
+}
+TMDWF_CS_KERNEL_JOINT_RUN_KEYS = {"results_dir"}
 TMDWF_NORMALIZE_KEYS = {
     "title_pattern",
     "input_root",
@@ -623,6 +648,84 @@ def render_tmdwf_cs_kernel_average_input_text(config: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _format_joint_ensemble_line(ensemble: dict[str, Any]) -> str:
+    required = ["label", "input_root", "title_pattern", "ns", "lattice_spacing_fm"]
+    missing = [key for key in required if key not in ensemble]
+    if missing:
+        raise ValueError(f"missing TMDWF CS-kernel joint ensemble keys: {missing}")
+    if "pzlist" in ensemble and ensemble["pzlist"] is not None:
+        pz_text = ",".join(str(value) for value in ensemble["pzlist"])
+    elif "pzrange" in ensemble and ensemble["pzrange"] is not None:
+        pz_text = ":".join(str(value) for value in ensemble["pzrange"])
+    else:
+        raise ValueError("missing TMDWF CS-kernel joint ensemble key: pzlist or pzrange")
+    if "bTlist" in ensemble and ensemble["bTlist"] is not None:
+        bT_text = ",".join(str(value) for value in ensemble["bTlist"])
+    elif "bTrange" in ensemble and ensemble["bTrange"] is not None:
+        bT_text = ":".join(str(value) for value in ensemble["bTrange"])
+    else:
+        raise ValueError("missing TMDWF CS-kernel joint ensemble key: bTlist or bTrange")
+    return (
+        f"ensemble {_as_scalar_string(ensemble['label'])} "
+        f"{_as_scalar_string(ensemble['input_root'])} "
+        f"{_as_scalar_string(ensemble['title_pattern'])} "
+        f"{_as_scalar_string(ensemble['ns'])} "
+        f"{_as_scalar_string(ensemble['lattice_spacing_fm'])} "
+        f"pz={pz_text} bT={bT_text}"
+    )
+
+
+def render_tmdwf_cs_kernel_joint_input_text(config: dict[str, Any]) -> str:
+    config = _subset_config(config, TMDWF_CS_KERNEL_JOINT_KEYS)
+    required = [
+        "ensembles",
+        "gm",
+        "eta",
+        "component",
+        "nstates",
+        "normalization_mode",
+        "mu",
+        "kernel_label",
+        "reference_p1_gev",
+    ]
+    missing = [key for key in required if key not in config]
+    if missing:
+        raise ValueError(f"missing TMDWF CS-kernel joint notebook config keys: {missing}")
+    if not config["ensembles"]:
+        raise ValueError("TMDWF CS-kernel joint notebook config requires at least one ensemble")
+
+    lines = [
+        f"gm {_as_scalar_string(config['gm'])}",
+        f"eta {_as_scalar_string(config['eta'])}",
+        f"component {_as_scalar_string(config['component'])}",
+        f"nstates {_as_scalar_string(config['nstates'])}",
+        f"normalization_mode {_as_scalar_string(config['normalization_mode'])}",
+        f"mu {_as_scalar_string(config['mu'])}",
+        f"scheme {_as_scalar_string(config.get('scheme', 'CG'))}",
+        f"kernel_label {_as_scalar_string(config['kernel_label'])}",
+        f"reference_p1_gev {_as_scalar_string(config['reference_p1_gev'])}",
+    ]
+    if "x_window" in config and config["x_window"] is not None:
+        lines.append(f"x_window {_as_scalar_string(config['x_window'])}")
+    if "x_knots" in config and config["x_knots"] is not None:
+        lines.append(f"x_knots {_as_scalar_string(config['x_knots'])}")
+    if "bT_knots_fm" in config and config["bT_knots_fm"] is not None:
+        lines.append(f"bT_knots_fm {_as_scalar_string(config['bT_knots_fm'])}")
+    if "spline_kind" in config and config["spline_kind"] is not None:
+        lines.append(f"spline_kind {_as_scalar_string(config['spline_kind'])}")
+    if "plot" in config and config["plot"] is not None:
+        lines.append(f"plot {_as_scalar_string(config['plot'])}")
+    if "progress" in config and config["progress"] is not None:
+        lines.append(f"progress {_as_scalar_string(config['progress'])}")
+    if "progress_every" in config and config["progress_every"] is not None:
+        lines.append(f"progress_every {_as_scalar_string(config['progress_every'])}")
+    for ensemble in config["ensembles"]:
+        lines.append(_format_joint_ensemble_line(ensemble))
+    if "results_dir" in config and config["results_dir"] is not None:
+        lines.append(f"results_dir {_as_scalar_string(config['results_dir'])}")
+    return "\n".join(lines) + "\n"
+
+
 def render_tmdwf_normalize_input_text(config: dict[str, Any]) -> str:
     config = _subset_config(config, TMDWF_NORMALIZE_KEYS)
     required = [
@@ -878,6 +981,36 @@ def validate_tmdwf_cs_kernel_average_notebook_config(config: dict[str, Any]) -> 
     return validated
 
 
+def validate_tmdwf_cs_kernel_joint_notebook_config(config: dict[str, Any]) -> dict[str, Any]:
+    input_path = _materialize_input_text(
+        render_tmdwf_cs_kernel_joint_input_text(config),
+        "input_tmdwf_cs_kernel_joint.txt",
+    )
+    parsed = parse_tmdwf_cs_kernel_joint_input(input_path)
+    validated = {
+        "ensembles": parsed.ensembles,
+        "gm": parsed.gm,
+        "eta": parsed.eta,
+        "component": parsed.component,
+        "nstates": parsed.nstates,
+        "normalization_mode": parsed.normalization_mode,
+        "mu": parsed.mu,
+        "scheme": parsed.scheme,
+        "kernel_label": parsed.kernel_label,
+        "reference_p1_gev": parsed.reference_p1_gev,
+        "x_window": parsed.x_window,
+        "x_knots": parsed.x_knots,
+        "bT_knots_fm": parsed.bT_knots_fm,
+        "spline_kind": parsed.spline_kind,
+        "plot": parsed.make_plots,
+        "progress": parsed.show_progress,
+        "progress_every": parsed.progress_every,
+    }
+    if "results_dir" in config and config["results_dir"] is not None:
+        validated["results_dir"] = Path(config["results_dir"])
+    return validated
+
+
 def validate_tmdwf_normalize_notebook_config(config: dict[str, Any]) -> dict[str, Any]:
     input_path = _materialize_input_text(render_tmdwf_normalize_input_text(config), "input_tmdwf_normalize.txt")
     parsed = parse_tmdwf_normalize_input(input_path)
@@ -1003,6 +1136,22 @@ def run_tmdwf_cs_kernel_average_from_notebook(
         run_config["results_dir"] = _guess_notebook_dir()
     input_path = _materialize_input_text(render_tmdwf_cs_kernel_average_input_text(config), "input_tmdwf_cs_kernel_average.txt")
     return run_tmdwf_cs_kernel_average_workflow(input_path, results_dir=run_config["results_dir"])
+
+
+def run_tmdwf_cs_kernel_joint_from_notebook(
+    config: dict[str, Any],
+    **overrides: Any,
+) -> list[Path]:
+    run_config = {"results_dir": None}
+    run_config.update(_subset_config(config, TMDWF_CS_KERNEL_JOINT_RUN_KEYS))
+    run_config.update({key: value for key, value in overrides.items() if value is not None})
+    if run_config["results_dir"] is None:
+        run_config["results_dir"] = _guess_notebook_dir()
+    input_path = _materialize_input_text(
+        render_tmdwf_cs_kernel_joint_input_text(config),
+        "input_tmdwf_cs_kernel_joint.txt",
+    )
+    return run_tmdwf_cs_kernel_joint_workflow(input_path, results_dir=run_config["results_dir"])
 
 
 def run_tmdwf_normalize_from_notebook(
