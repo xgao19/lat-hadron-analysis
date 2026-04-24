@@ -1031,7 +1031,7 @@ class NotebookWorkflowTests(unittest.TestCase):
         self.assertIn("\"bTlist\": [0]", joined)
         self.assertIn("\"normalization_mode\": \"raw\"", joined)
         self.assertIn("\"x_range\": [-0.5, 1.5]", joined)
-        self.assertIn("# Data / metadata settings", joined)
+        self.assertIn("# Data settings", joined)
         self.assertIn("# Fourier-transform parameter settings", joined)
 
     def test_tmdwf_normalize_template_contains_expected_workflow_hooks(self) -> None:
@@ -1042,7 +1042,7 @@ class NotebookWorkflowTests(unittest.TestCase):
         self.assertIn("validate_tmdwf_normalize_notebook_config", joined)
         self.assertIn("run_tmdwf_normalize_from_notebook", joined)
         self.assertIn("\"normalization_mode\": \"mode1\"", joined)
-        self.assertIn("# Data / metadata settings", joined)
+        self.assertIn("# Data settings", joined)
         self.assertIn("# Normalization settings", joined)
 
     def test_tmdwf_cs_kernel_template_contains_expected_workflow_hooks(self) -> None:
@@ -1058,19 +1058,18 @@ class NotebookWorkflowTests(unittest.TestCase):
         self.assertIn("\"normalization_mode\": \"raw\"", joined)
         self.assertIn("\"component\": \"real\"", joined)
         self.assertIn("Expected input data shape", joined)
-        self.assertIn("# Data / metadata settings", joined)
+        self.assertIn("# Data settings", joined)
         self.assertIn("# CS-kernel extraction settings", joined)
 
     def test_tmdwf_cs_kernel_average_template_contains_expected_workflow_hooks(self) -> None:
         path = Path("templates/tmdwf/tmdwf_cs_kernel_average_template.ipynb")
         notebook = json.loads(path.read_text(encoding="utf-8"))
         joined = "\n".join("".join(cell.get("source", [])) for cell in notebook["cells"])
-        self.assertIn("render_tmdwf_cs_kernel_average_input_text", joined)
         self.assertIn("validate_tmdwf_cs_kernel_average_notebook_config", joined)
         self.assertIn("run_tmdwf_cs_kernel_average_from_notebook", joined)
         self.assertIn("\"kernel_label\": \"LO\"", joined)
         self.assertIn("\"reference_pz_labels\": [\"5-6\", \"6-7\", \"7-8\"]", joined)
-        self.assertIn("# Data / metadata settings", joined)
+        self.assertIn("# Data settings", joined)
         self.assertIn("# User Inputs", joined)
 
     def test_tmdwf_cs_kernel_joint_template_contains_expected_workflow_hooks(self) -> None:
@@ -1087,7 +1086,7 @@ class NotebookWorkflowTests(unittest.TestCase):
         self.assertIn("\"progress\": True", joined)
         self.assertIn("\"normalization_mode\": \"mode3\"", joined)
         self.assertIn("\"ensembles\": [", joined)
-        self.assertIn("gamma_eff(x,bT)", joined)
+        self.assertIn("gamma_eff(x, bT)", joined)
         self.assertIn("## Option Guide", joined)
 
     def test_example_input_files_parse(self) -> None:

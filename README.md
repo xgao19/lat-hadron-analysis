@@ -489,14 +489,17 @@ A matching notebook template is also provided in:
 ## TMDWF Joint CS-Kernel Effective Surface
 
 For multi-ensemble studies, the repository also provides a joint downstream
-fit that reads Fourier bootstrap samples directly and fits a continuous
-effective surface
+fit that reads Fourier bootstrap samples directly and fits the effective
+anomalous dimension
 
 ```text
 gamma_eff(x, bT)
 ```
 
-using a tensor-product piecewise-linear spline. This path does not consume
+at each specified x independently, parameterizing the bT dependence with a 1D
+piecewise-linear or cubic spline. The fit uses the direct type-2 evolution
+relation simultaneously across all ensembles, analytically eliminating one
+nuisance amplitude per `(ensemble, bT)` group. This path does not consume
 `tmdwf-cs-kernel` or `tmdwf-cs-kernel-average` outputs. It is intended as the
 clean first-stage joint fit before adding discretization, finite-volume, or
 large-momentum systematic terms.
@@ -510,13 +513,15 @@ This joint workflow:
 - reads repository-native Fourier bootstrap sample tables from each requested
   ensemble
 - keeps each ensemble's own physical `Pz` and physical `bT = nT * a`
-- fits `gamma_eff(x,bT)` as a continuous spline surface rather than forcing
-  different ensembles onto a common lattice `bT` grid
+- fits `gamma_eff(bT)` independently at each `x_knots` point using a 1D bT
+  spline, then writes the combined `gamma_eff(x,bT)` surface
 - uses the direct type-2 evolution relation in the scalar `real` or `imag`
-  component channel
+  component channel, with the matching correction evaluated at each x's actual
+  data-grid value (the nearest grid point to the requested x_knot)
 - analytically eliminates one nuisance amplitude for each
-  `(ensemble, sample_id, x, bT)` group during the nonlinear spline fit
-- writes the bootstrap surface, summary quantiles, and chi2/dof diagnostics
+  `(ensemble, bT)` group during each per-x nonlinear spline fit
+- writes the bootstrap surface, summary quantiles, chi2/dof diagnostics, and
+  spline coefficients for reconstructing `gamma_eff(bT)` at arbitrary bT values
 
 Expected key input fields include:
 
@@ -554,21 +559,30 @@ Option guide:
   physical reference momentum scale in GeV used in the direct evolution
   formula. This is not a lattice momentum integer.
 - `x_window`:
-  x range included in the joint fit.
-- `x_knots`, `bT_knots_fm`:
-  optional spline knots for the continuous `gamma_eff(x,bT)` surface. If
-  omitted, the workflow chooses knots from the observed x and physical bT
-  values, capped at a modest number of knots.
+  x range. Observations whose actual data-grid x value falls outside this
+  window are excluded from the fit.
+- `x_knots`:
+  the x values at which `gamma_eff(x,bT)` is fitted independently. Each
+  `x_knot` is mapped to the nearest point on the data x-grid; the actual
+  x value is recorded in the output. If omitted, the workflow picks up to 6
+  evenly spaced points within `x_window`.
+- `bT_knots_fm`:
+  spline knots (in fm) for the bT-direction spline parameterizing
+  `gamma_eff(bT)` at each x. If omitted, the workflow uses the unique
+  physical bT values across all ensembles, capped at 8 knots.
 - `spline_kind`:
-  interpolation kind between knots. Use `linear` for the piecewise-linear hat
-  basis or `cubic` for a natural cubic spline basis.
+  interpolation kind for the bT spline. Use `linear` for the piecewise-linear
+  hat basis or `cubic` for a natural cubic spline basis.
 - `plot`:
-  whether to write one `gamma_eff(x,bT)` band plot for each `bT_knots_fm`
-  value.
+  whether to write one `gamma_eff` vs x band plot for each `bT_knots_fm`
+  value, per-x pz-diagnostics plots showing data vs fit for each
+  `(ensemble, bT)` group, and a diagnostics notebook for redrawing
+  those plots from saved outputs.
 - `progress`, `progress_every`:
-  whether to print bootstrap-fit progress and how many completed bootstrap
-  samples to wait between progress reports. If `progress_every` is omitted,
-  the workflow reports roughly every 5% of the bootstrap samples.
+  whether to print bootstrap-fit progress (per x and per sample) and how many
+  completed bootstrap samples to wait between progress reports. If
+  `progress_every` is omitted, the workflow reports roughly every 5% of the
+  bootstrap samples.
 - `ensemble`:
   one line per ensemble, with
   `label input_root title_pattern Ns lattice_spacing_fm pz=<list/range> bT=<list/range>`.
@@ -577,15 +591,29 @@ Option guide:
   lattice momentum integer.
 - `results_dir`:
   output root for the joint summary, surface table, bootstrap surface samples,
-  and diagnostics.
+  spline coefficients, and diagnostics.
 
 The workflow writes:
 
 - `joint_gamma_eff/*_summary.txt`
 - `joint_gamma_eff/tables/*_surface.txt`
 - `joint_gamma_eff/samples/*_samples.txt`
+- `joint_gamma_eff/samples/*_coefficients.txt`
 - `joint_gamma_eff/diagnostics/*_diagnostics.txt`
 - `joint_gamma_eff/plots/*_x_band.pdf`
+- `joint_gamma_eff/plots/diagnostics/*_x{X}_*_pz_diagnostics.pdf`
+- `joint_gamma_eff/plots/diagnostics/*_diagnostics_notebook.ipynb`
+
+The `*_coefficients.txt` file records the spline coefficients for every
+bootstrap sample at each x, so that `gamma_eff(bT)` can be reconstructed at
+any bT value using `_spline_basis(bT_values, bT_knots_fm, kind=spline_kind) @ coeffs`.
+The `bT_knots_fm` and `spline_kind` are recorded in `*_summary.txt`.
+
+The `*_pz_diagnostics.pdf` files show, for each fitted x, data points and the
+reconstructed fit band in `O vs pz` space organized per ensemble. The
+`*_diagnostics_notebook.ipynb` notebook redraws these plots from saved outputs
+and supports custom x/bT selection plus cross-ensemble comparison at matching
+physical bT values.
 
 Template inputs are provided in:
 

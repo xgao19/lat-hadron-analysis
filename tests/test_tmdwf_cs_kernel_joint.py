@@ -180,6 +180,64 @@ class TMDWFCSKernelJointTests(unittest.TestCase):
             expected = 0.15 + 0.2 * 0.25 + 0.7 * 0.12 + 0.015
             self.assertAlmostEqual(by_point[(0.25, 0.12)], expected, places=5)
 
+            coeff_path = (
+                tmp
+                / "results"
+                / "joint_gamma_eff"
+                / "samples"
+                / "joint_T5_eta0_mode3_real_2state_CG_LO_gamma_eff_coefficients.txt"
+            )
+            self.assertIn(coeff_path, outputs)
+            coeff_lines = [
+                line.strip()
+                for line in coeff_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            coeff_header = coeff_lines[0].split("\t")
+            self.assertEqual(coeff_header[0], "x")
+            self.assertEqual(coeff_header[1], "sample_id")
+            self.assertTrue(all(col.startswith("c") for col in coeff_header[2:]))
+            # 2 x-points × 4 samples = 8 data rows + header
+            self.assertEqual(len(coeff_lines), 9)
+
+            coeff_data = {
+                (float(parts[0]), int(parts[1])): [float(c) for c in parts[2:]]
+                for line in coeff_lines[1:]
+                for parts in [line.split("\t")]
+            }
+
+            # Verify coefficients reconstruct surface values at knot points.
+            # At a knot point the coefficient equals gamma_eff for that sample.
+            samples_path = (
+                tmp
+                / "results"
+                / "joint_gamma_eff"
+                / "samples"
+                / "joint_T5_eta0_mode3_real_2state_CG_LO_gamma_eff_samples.txt"
+            )
+            self.assertIn(samples_path, outputs)
+            sample_lines = [
+                line.strip()
+                for line in samples_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            gamma_sample_0 = None
+            for line in sample_lines[1:]:
+                parts = line.split("\t")
+                if (
+                    abs(float(parts[0]) - 0.25) < 1e-6
+                    and abs(float(parts[1]) - 0.12) < 1e-6
+                    and int(parts[2]) == 0
+                ):
+                    gamma_sample_0 = float(parts[3])
+                    break
+            self.assertIsNotNone(gamma_sample_0)
+            self.assertAlmostEqual(
+                coeff_data[(0.25, 0)][2],
+                gamma_sample_0,
+                places=10,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

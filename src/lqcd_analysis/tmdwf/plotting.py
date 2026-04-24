@@ -141,6 +141,107 @@ def plot_tmdwf_joint_cs_kernel_x_band(
     return output_path
 
 
+def plot_tmdwf_joint_cs_kernel_pz_diagnostics(
+    output_dir: str | Path,
+    groups: list[object],
+    *,
+    stem: str,
+    x_actual: float,
+    max_cols: int = 4,
+    figsize_per_panel: tuple[float, float] = (3.8, 2.8),
+) -> list[Path]:
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    plt = prepare_matplotlib()
+    if plt is None:
+        return [save_plot_status(
+            output_dir / f"{stem}_x{x_actual:.3f}_diagnostics.txt",
+            "matplotlib not installed; plot was skipped",
+        )]
+
+    if not groups:
+        return [save_plot_status(
+            output_dir / f"{stem}_x{x_actual:.3f}_diagnostics.txt",
+            "no groups with sufficient pz points for diagnostics",
+        )]
+
+    # Group by ensemble label
+    ensemble_groups: dict[str, list[object]] = {}
+    for g in groups:
+        ensemble_groups.setdefault(g.ensemble_label, []).append(g)
+
+    outputs: list[Path] = []
+    x_token = f"{x_actual:.3f}".replace(".", "p")
+
+    for ens_label, ens_groups in ensemble_groups.items():
+        n_panels = len(ens_groups)
+        n_cols = min(max_cols, n_panels)
+        n_rows = int(np.ceil(n_panels / n_cols))
+        figsize = (figsize_per_panel[0] * n_cols, figsize_per_panel[1] * n_rows)
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize, squeeze=False)
+
+        # Collect y-range for shared scale
+        all_y = np.concatenate(
+            [
+                np.concatenate(
+                    [g.data_median, g.data_p16, g.data_p84,
+                     g.model_median, g.model_p16, g.model_p84]
+                )
+                for g in ens_groups
+            ]
+        )
+        y_min, y_max = np.percentile(all_y, [1.0, 99.0])
+        y_pad = max(0.05 * (y_max - y_min), 1e-6)
+        y_lim = (y_min - y_pad, y_max + y_pad)
+
+        for idx, g in enumerate(ens_groups):
+            row, col = divmod(idx, n_cols)
+            ax = axes[row, col]
+            ax.errorbar(
+                g.pz_gev,
+                g.data_median,
+                yerr=[g.data_median - g.data_p16, g.data_p84 - g.data_median],
+                fmt="o",
+                ms=4,
+                capsize=2,
+                color="C0",
+                label="data",
+            )
+            ax.fill_between(
+                g.pz_gev,
+                g.model_p16,
+                g.model_p84,
+                color="C1",
+                alpha=0.22,
+                linewidth=0,
+            )
+            ax.plot(g.pz_gev, g.model_median, color="C1", linewidth=1.2, label="fit")
+            ax.set_title(f"bT={g.bT_fm:.3f} fm", fontsize=8)
+            ax.set_ylim(*y_lim)
+            ax.tick_params(labelsize=7)
+
+        # Hide unused panels
+        for idx in range(n_panels, n_rows * n_cols):
+            row, col = divmod(idx, n_cols)
+            axes[row, col].set_visible(False)
+
+        # Shared axis labels on figure
+        fig.supxlabel("pz [GeV]", fontsize=9)
+        fig.supylabel("O(x, bT, pz)", fontsize=9)
+        fig.suptitle(
+            f"{ens_label}  x={x_actual:.3f}  pz-diagnostics",
+            fontsize=10,
+        )
+        fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.97])
+
+        plot_path = output_dir / f"{stem}_x{x_token}_{ens_label}_pz_diagnostics.pdf"
+        fig.savefig(plot_path)
+        plt.close(fig)
+        outputs.append(plot_path)
+
+    return outputs
+
+
 def _parse_grouped_table(path: str | Path) -> tuple[dict[str, str], list[str], list[list[str]]]:
     metadata: dict[str, str] = {}
     header: list[str] | None = None
@@ -726,6 +827,376 @@ def write_tmdwf_plot_notebook(
                     "    target_plot = fourier_output_dir / fourier_plot_name\n",
                     "    generated_plot.replace(target_plot)\n",
                     "fourier_outputs\n",
+                ],
+            },
+        ],
+        "metadata": {
+            "kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"},
+            "language_info": {"name": "python", "version": "3.12"},
+        },
+        "nbformat": 4,
+        "nbformat_minor": 5,
+    }
+    notebook_path.parent.mkdir(parents=True, exist_ok=True)
+    notebook_path.write_text(json.dumps(notebook, indent=2), encoding="utf-8")
+    return notebook_path
+
+
+def write_tmdwf_cs_kernel_joint_diagnostics_notebook(
+    notebook_path: str | Path,
+    *,
+    summary_path: str | Path,
+    coefficients_path: str | Path,
+    results_dir: str | Path,
+) -> Path:
+    notebook_path = Path(notebook_path)
+    results_dir = Path(results_dir)
+    repo_src = Path(__file__).resolve().parents[1]
+    notebook = {
+        "cells": [
+            {
+                "cell_type": "markdown",
+                "metadata": {},
+                "source": [
+                    "# TMDWF Joint CS-Kernel Diagnostics\n",
+                    "\n",
+                    "Redraw pz-diagnostics plots from saved joint-fit outputs.\n",
+                    "Adjust `x_selection`, `bT_selection_fm`, and figure settings below, then run all cells.\n",
+                ],
+            },
+            {
+                "cell_type": "code",
+                "execution_count": None,
+                "metadata": {},
+                "outputs": [],
+                "source": [
+                    "from pathlib import Path\n",
+                    "import sys\n",
+                    "import numpy as np\n",
+                    f"sys.path.insert(0, {str(repo_src)!r})\n",
+                    "from lqcd_analysis.tmdwf.cs_kernel_joint import (\n",
+                    "    parse_joint_summary,\n",
+                    "    load_joint_coefficients_table,\n",
+                    "    _preload_datasets,\n",
+                    "    _build_observations_at_x,\n",
+                    "    _build_diagnostic_groups,\n",
+                    "    _evaluate_bT_surface,\n",
+                    "    _spline_basis,\n",
+                    "    TMDWFCSKernelJointInput,\n",
+                    "    JointCSEnsembleInput,\n",
+                    ")\n",
+                    "from lqcd_analysis.tmdwf.plotting import (\n",
+                    "    plot_tmdwf_joint_cs_kernel_pz_diagnostics,\n",
+                    "    prepare_matplotlib,\n",
+                    ")\n",
+                ],
+            },
+            {
+                "cell_type": "code",
+                "execution_count": None,
+                "metadata": {},
+                "outputs": [],
+                "source": [
+                    f"summary_path = Path({str(summary_path)!r})\n",
+                    f"coefficients_path = Path({str(coefficients_path)!r})\n",
+                    f"output_dir = Path({str(results_dir)!r}) / 'joint_gamma_eff' / 'plots' / 'diagnostics'\n",
+                    "output_dir.mkdir(parents=True, exist_ok=True)\n",
+                    "output_dir",
+                ],
+            },
+            {
+                "cell_type": "code",
+                "execution_count": None,
+                "metadata": {},
+                "outputs": [],
+                "source": [
+                    "# Parse saved results\n",
+                    "cfg = parse_joint_summary(summary_path)\n",
+                    "coeffs_by_x = load_joint_coefficients_table(coefficients_path)\n",
+                    "\n",
+                    "# Rebuild ensemble spec for data loading\n",
+                    "ensembles = tuple(\n",
+                    "    JointCSEnsembleInput(\n",
+                    "        label=e['label'],\n",
+                    "        input_root=Path(e['input_root']),\n",
+                    "        title_pattern=e['title_pattern'],\n",
+                    "        ns=e['ns'],\n",
+                    "        lattice_spacing_fm=e['lattice_spacing_fm'],\n",
+                    "        pzlist=tuple(e['pzlist']),\n",
+                    "        bTlist=tuple(e['bTlist']),\n",
+                    "    )\n",
+                    "    for e in cfg['ensembles']\n",
+                    ")\n",
+                    "spec = TMDWFCSKernelJointInput(\n",
+                    "    ensembles=ensembles,\n",
+                    "    gm=cfg['gm'],\n",
+                    "    eta=cfg['eta'],\n",
+                    "    component=cfg['component'],\n",
+                    "    nstates=cfg['nstates'],\n",
+                    "    normalization_mode=cfg['normalization_mode'],\n",
+                    "    mu=cfg['mu'],\n",
+                    "    scheme=cfg['scheme'],\n",
+                    "    kernel_label=cfg['kernel_label'],\n",
+                    "    reference_p1_gev=cfg['reference_p1_gev'],\n",
+                    "    x_window=cfg['x_window'],\n",
+                    "    x_knots=cfg['x_fit_points'],\n",
+                    "    bT_knots_fm=cfg['bT_knots_fm'],\n",
+                    "    spline_kind=cfg['spline_kind'],\n",
+                    "    make_plots=False,\n",
+                    "    show_progress=True,\n",
+                    "    progress_every=None,\n",
+                    "    results_dir=output_dir.parent.parent,\n",
+                    ")\n",
+                    "cfg, spec",
+                ],
+            },
+            {
+                "cell_type": "code",
+                "execution_count": None,
+                "metadata": {},
+                "outputs": [],
+                "source": [
+                    "# Preload Fourier datasets (may take a moment)\n",
+                    "datasets, x_grid, n_samples = _preload_datasets(spec)\n",
+                    "f'Loaded {len(datasets)} ensembles, x_grid shape={x_grid.shape}, {n_samples} bootstrap samples'",
+                ],
+            },
+            {
+                "cell_type": "markdown",
+                "metadata": {},
+                "source": [
+                    "## Plot Settings\n",
+                    "\n",
+                    "Edit this cell to control which x and bT values are plotted.\n",
+                ],
+            },
+            {
+                "cell_type": "code",
+                "execution_count": None,
+                "metadata": {},
+                "outputs": [],
+                "source": [
+                    "# -- x selection --\n",
+                    "# 'all' or a list of x values (matched to nearest data-grid point)\n",
+                    "x_selection = 'all'  # e.g. [0.2, 0.4, 0.6]\n",
+                    "\n",
+                    "# -- bT selection (physical fm) --\n",
+                    "# None = all available; or a list of bT values in fm\n",
+                    "# When set, only groups whose physical bT is within match_tolerance\n",
+                    "# of a listed value are plotted.\n",
+                    "bT_selection_fm = None  # e.g. [0.12, 0.24, 0.48]\n",
+                    "match_tolerance_fm = 0.005  # tolerance for matching physical bT\n",
+                    "\n",
+                    "# -- plot every (ensemble, bT) group regardless of pz count --\n",
+                    "\n",
+                    "# -- figure layout --\n",
+                    "max_cols = 4\n",
+                    "figsize_per_panel = (3.8, 2.8)",
+                ],
+            },
+            {
+                "cell_type": "code",
+                "execution_count": None,
+                "metadata": {},
+                "outputs": [],
+                "source": [
+                    "# Resolve x values to plot\n",
+                    "if x_selection == 'all':\n",
+                    "    x_list = list(cfg['x_fit_points'])\n",
+                    "else:\n",
+                    "    x_list = [float(x_grid[np.argmin(np.abs(x_grid - xv))]) for xv in x_selection]\n",
+                    "x_list",
+                ],
+            },
+            {
+                "cell_type": "code",
+                "execution_count": None,
+                "metadata": {},
+                "outputs": [],
+                "source": [
+                    "# Build diagnostic groups for each x\n",
+                    "from lqcd_analysis.tmdwf.cs_kernel_joint import _find_x_indices\n",
+                    "\n",
+                    "all_groups: dict[float, list] = {}  # x_actual -> list of DiagnosticGroupData\n",
+                    "for x_val in x_list:\n",
+                    "    x_matches = _find_x_indices(np.asarray([x_val]), x_grid)\n",
+                    "    if not x_matches:\n",
+                    "        print(f'x={x_val:.3f}: not on data grid, skipping')\n",
+                    "        continue\n",
+                    "    x_idx, x_actual = x_matches[0]\n",
+                    "    if x_actual not in coeffs_by_x:\n",
+                    "        print(f'x={x_actual:.3f}: no coefficients found, skipping')\n",
+                    "        continue\n",
+                    "\n",
+                    "    obs = _build_observations_at_x(datasets, x_idx, cfg['x_window'], n_samples)\n",
+                    "    if not obs:\n",
+                    "        print(f'x={x_actual:.3f}: no observations in x_window, skipping')\n",
+                    "        continue\n",
+                    "\n",
+                    "    # Build PerXFitResult from saved coefficients\n",
+                    "    coeffs = coeffs_by_x[x_actual]\n",
+                    "    n_obs = len({o.group_id for o in obs})\n",
+                    "    fake_chi2 = np.zeros(coeffs.shape[0], dtype=float)\n",
+                    "    from lqcd_analysis.tmdwf.cs_kernel_joint import PerXFitResult\n",
+                    "    result = PerXFitResult(\n",
+                    "        x_actual=x_actual,\n",
+                    "        bT_knots_fm=cfg['bT_knots_fm'],\n",
+                    "        coeff_samples=coeffs,\n",
+                    "        chi2_dof=fake_chi2,\n",
+                    "        n_observations=len(obs),\n",
+                    "        n_groups=n_obs,\n",
+                    "    )\n",
+                    "\n",
+                    "    groups = _build_diagnostic_groups(\n",
+                    "        obs,\n",
+                    "        result,\n",
+                    "        sample_count=n_samples,\n",
+                    "        reference_p1_gev=cfg['reference_p1_gev'],\n",
+                    "        scheme=cfg['scheme'],\n",
+                    "        kernel_label=cfg['kernel_label'],\n",
+                    "        mu=cfg['mu'],\n",
+                    "        component=cfg['component'],\n",
+                    "        spline_kind=cfg['spline_kind'],\n",
+                    "    )\n",
+                    "    print(f'x={x_actual:.3f}: {len(groups)} groups')\n",
+                    "    all_groups[x_actual] = groups\n",
+                    "\n",
+                    "f'Built diagnostic data for {len(all_groups)} x-points'",
+                ],
+            },
+            {
+                "cell_type": "code",
+                "execution_count": None,
+                "metadata": {},
+                "outputs": [],
+                "source": [
+                    "# Filter groups by bT selection\n",
+                    "def _filter_by_bT(groups, bT_list, tol):\n",
+                    "    if bT_list is None:\n",
+                    "        return groups\n",
+                    "    filtered = []\n",
+                    "    for g in groups:\n",
+                    "        for target in bT_list:\n",
+                    "            if abs(g.bT_fm - target) <= tol:\n",
+                    "                filtered.append(g)\n",
+                    "                break\n",
+                    "    return filtered\n",
+                    "\n",
+                    "for x_val, groups in all_groups.items():\n",
+                    "    all_groups[x_val] = _filter_by_bT(groups, bT_selection_fm, match_tolerance_fm)\n",
+                    "    print(f'x={x_val:.3f}: {len(all_groups[x_val])} groups after bT filter')",
+                ],
+            },
+            {
+                "cell_type": "markdown",
+                "metadata": {},
+                "source": [
+                    "## Per-Ensemble Diagnostic Plots\n",
+                    "\n",
+                    "One multi-panel PDF per x per ensemble. Data points and reconstructed fit band\n",
+                    "for each `(ensemble, bT)` group with sufficient pz values.\n",
+                ],
+            },
+            {
+                "cell_type": "code",
+                "execution_count": None,
+                "metadata": {},
+                "outputs": [],
+                "source": [
+                    "stem = f\"joint_{cfg['gm']}_{cfg['eta']}_{cfg['normalization_mode']}_{cfg['component']}_\" \\\n",
+                    "       f\"{cfg['nstates']}state_{cfg['scheme']}_{cfg['kernel_label']}_gamma_eff\"\n",
+                    "\n",
+                    "plot_paths = []\n",
+                    "for x_val, groups in all_groups.items():\n",
+                    "    paths = plot_tmdwf_joint_cs_kernel_pz_diagnostics(\n",
+                    "        output_dir,\n",
+                    "        groups,\n",
+                    "        stem=stem,\n",
+                    "        x_actual=x_val,\n",
+                    "        max_cols=max_cols,\n",
+                    "        figsize_per_panel=figsize_per_panel,\n",
+                    "    )\n",
+                    "    plot_paths.extend(paths)\n",
+                    "plot_paths",
+                ],
+            },
+            {
+                "cell_type": "markdown",
+                "metadata": {},
+                "source": [
+                    "## Cross-Ensemble bT Comparison\n",
+                    "\n",
+                    "For a user-specified list of physical bT values, overlay data and fit from all\n",
+                    "ensembles at matching bT on the same axes.\n",
+                ],
+            },
+            {
+                "cell_type": "code",
+                "execution_count": None,
+                "metadata": {},
+                "outputs": [],
+                "source": [
+                    "# bT values (fm) to compare across ensembles\n",
+                    "compare_bT_fm = [0.12, 0.24, 0.48, 0.72]  # edit as needed\n",
+                    "compare_tolerance_fm = 0.008\n",
+                    "compare_max_cols = 3\n",
+                    "compare_panel_size = (4.0, 3.0)\n",
+                    "\n",
+                    "plt = prepare_matplotlib()\n",
+                    "if plt is not None:\n",
+                    "    for x_val, groups in all_groups.items():\n",
+                    "        # Collect matching groups for each target bT\n",
+                    "        bT_groups: dict[float, list] = {}\n",
+                    "        for g in groups:\n",
+                    "            for target in compare_bT_fm:\n",
+                    "                if abs(g.bT_fm - target) <= compare_tolerance_fm:\n",
+                    "                    bT_groups.setdefault(target, []).append(g)\n",
+                    "                    break\n",
+                    "\n",
+                    "        if not bT_groups:\n",
+                    "            continue\n",
+                    "\n",
+                    "        n_panels = len(bT_groups)\n",
+                    "        n_cols = min(compare_max_cols, n_panels)\n",
+                    "        n_rows = int(np.ceil(n_panels / n_cols))\n",
+                    "        figsize = (compare_panel_size[0] * n_cols, compare_panel_size[1] * n_rows)\n",
+                    "        fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize, squeeze=False)\n",
+                    "\n",
+                    "        x_token = f\"{x_val:.3f}\".replace('.', 'p')\n",
+                    "        for idx, (target_bT, bT_grp) in enumerate(sorted(bT_groups.items())):\n",
+                    "            row, col = divmod(idx, n_cols)\n",
+                    "            ax = axes[row, col]\n",
+                    "            for ens_idx, g in enumerate(bT_grp):\n",
+                    "                color = f'C{ens_idx}'\n",
+                    "                label = f\"{g.ensemble_label} (bT={g.bT_fm:.3f})\"\n",
+                    "                ax.errorbar(\n",
+                    "                    g.pz_gev, g.data_median,\n",
+                    "                    yerr=[g.data_median - g.data_p16, g.data_p84 - g.data_median],\n",
+                    "                    fmt='o', ms=4, capsize=2, color=color, label=label,\n",
+                    "                )\n",
+                    "                ax.fill_between(\n",
+                    "                    g.pz_gev, g.model_p16, g.model_p84,\n",
+                    "                    color=color, alpha=0.18, linewidth=0,\n",
+                    "                )\n",
+                    "                ax.plot(g.pz_gev, g.model_median, color=color, linewidth=1.2)\n",
+                    "            ax.set_title(f'bT={target_bT:.3f} fm', fontsize=9)\n",
+                    "            ax.set_xlabel('pz [GeV]', fontsize=8)\n",
+                    "            ax.set_ylabel('O(x, bT, pz)', fontsize=8)\n",
+                    "            ax.legend(fontsize=7)\n",
+                    "            ax.tick_params(labelsize=7)\n",
+                    "\n",
+                    "        for idx in range(n_panels, n_rows * n_cols):\n",
+                    "            row, col = divmod(idx, n_cols)\n",
+                    "            axes[row, col].set_visible(False)\n",
+                    "\n",
+                    "        fig.suptitle(f'Cross-ensemble comparison  x={x_val:.3f}', fontsize=11)\n",
+                    "        fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.96])\n",
+                    "        comp_path = output_dir / f'{stem}_x{x_token}_cross_ensemble.pdf'\n",
+                    "        fig.savefig(comp_path)\n",
+                    "        plt.close(fig)\n",
+                    "        print(f'Saved: {comp_path}')\n",
+                    "else:\n",
+                    "    print('matplotlib not installed')\n",
                 ],
             },
         ],

@@ -120,16 +120,28 @@ Annotated version:
 templates/input_files/tmdwf/tmdwf_cs_kernel_joint_example_annotated.txt
 ```
 
-This joint template is the plain-text batch interface for fitting a continuous
-`gamma_eff(x,bT)` surface directly from Fourier bootstrap samples across one
-or more ensembles. It does not consume the per-ensemble `tmdwf-cs-kernel`
-outputs or the averaged CS-kernel outputs. Each `ensemble` line provides that
-ensemble's Fourier output root, momentum list, lattice spacing, and bT list;
-the fit keeps the ensemble's own physical `Pz` and physical `bT = nT * a`.
+This joint template is the plain-text batch interface for fitting
+`gamma_eff(x,bT)` independently at each specified x from Fourier bootstrap
+samples across one or more ensembles. At each x the bT dependence is
+parameterized by a 1D piecewise-linear or cubic spline; the amplitude per
+`(ensemble, bT)` group is eliminated analytically. It does not consume the
+per-ensemble `tmdwf-cs-kernel` outputs or the averaged CS-kernel outputs. Each
+`ensemble` line provides that ensemble's Fourier output root, momentum list,
+lattice spacing, and bT list; the fit keeps the ensemble's own physical `Pz`
+and physical `bT = nT * a`.
+
+Outputs now include `*_coefficients.txt` under `samples/` with the bT-spline coefficients for
+every bootstrap sample at each x, so that `gamma_eff(bT)` can be reconstructed
+at arbitrary bT values.
+
+When `plot` is enabled, the workflow also writes per-x diagnostic plots under
+`joint_gamma_eff/plots/diagnostics/` showing data points and the reconstructed
+fit band in pz-space for each `(ensemble, bT)` group with at least three
+momentum values.
 
 The compact example uses placeholder local paths. Replace those paths, lattice
-metadata, momentum ranges, and spline knots with values matching your analysis
-directories before running.
+metadata, momentum ranges, and x/bT knot values with values matching your
+analysis directories before running.
 
 ## Plot Example
 

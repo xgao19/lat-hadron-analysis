@@ -1,6 +1,7 @@
 # Joint TMDWF CS-kernel effective-surface fit.
 # This workflow reads Fourier bootstrap samples directly and fits
-# gamma_eff(x, bT) as a continuous tensor-product piecewise-linear spline.
+# gamma_eff(x, bT) independently at each specified x, parameterizing
+# the bT-dependence with a 1D piecewise-linear or cubic spline.
 
 # Shared channel settings.
 gm T5
@@ -16,24 +17,34 @@ kernel_label LO
 # This is a physical P1 scale, not a lattice pz integer.
 reference_p1_gev 1.0
 
-# Fit only x values inside this window.
+# Fit only x values whose actual data-grid value falls inside this window.
+# The fitted x points are specified by x_knots below; the window acts as
+# an additional filter on the nearest data-grid points.
 x_window 0.2 0.8
 
-# Optional explicit spline knots. If omitted, the workflow uses the observed
-# x values and physical bT values, capped at a modest number of knots.
+# x values at which gamma_eff is fitted independently.
+# Each value is mapped to the nearest point on the data x-grid; the actual
+# data-grid x value is recorded in the output. If omitted, the workflow
+# picks up to 6 evenly spaced points within x_window.
 x_knots 0.2 0.3 0.4 0.5 0.6 0.7 0.8
+
+# Spline knots (in fm) for the bT-direction spline.
+# At each x, gamma_eff(bT) is expanded as a linear or cubic spline on
+# these knots. If omitted, the workflow uses the unique physical bT
+# values across all ensembles, capped at 8 knots.
 bT_knots_fm 0.05 0.10 0.15 0.20 0.25 0.30
 
-# Spline interpolation kind between knots. Supported values are:
+# Spline kind for the bT-direction interpolation. Supported values are:
 # - linear: piecewise-linear hat basis
 # - cubic: natural cubic spline basis
 spline_kind linear
 
-# Whether to write one gamma_eff(x, bT) band plot for each bT knot.
+# Whether to write one gamma_eff vs x band plot for each bT knot.
 plot true
 
-# Print bootstrap-fit progress while running. If progress_every is omitted,
-# the workflow reports roughly every 5% of the bootstrap samples.
+# Print bootstrap-fit progress (per x and per sample) while running.
+# If progress_every is omitted, the workflow reports roughly every 5%
+# of the bootstrap samples.
 progress true
 progress_every 10
 
@@ -50,6 +61,7 @@ ensemble l64a050 /path/to/l64/4-FT-new l64c64a050_m140_fit_pz* 64 0.050 pz=3:8 b
 # - joint_gamma_eff/*_summary.txt
 # - joint_gamma_eff/tables/*_surface.txt
 # - joint_gamma_eff/samples/*_samples.txt
+# - joint_gamma_eff/samples/*_coefficients.txt
 # - joint_gamma_eff/diagnostics/*_diagnostics.txt
 # - joint_gamma_eff/plots/*_x_band.pdf
 results_dir results_tmdwf_cs_kernel_joint
