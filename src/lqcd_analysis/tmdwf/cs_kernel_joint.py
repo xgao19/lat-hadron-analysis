@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 import time
 
@@ -8,6 +8,7 @@ import numpy as np
 from scipy.interpolate import CubicSpline
 from scipy.optimize import least_squares
 
+from ..common.constants import HBAR_C_GEV_FM, HBAR_C_MEV_FM
 from .cs_kernel_extract import (
     CSKernelObservable,
     _legacy_quantile_triplet,
@@ -35,6 +36,7 @@ class JointCSEnsembleInput:
     lattice_spacing_fm: float
     pzlist: tuple[int, ...]
     bTlist: tuple[int, ...]
+    m_pi_mev: float = 140.0
 
 
 @dataclass(frozen=True)
@@ -57,6 +59,10 @@ class TMDWFCSKernelJointInput:
     show_progress: bool
     progress_every: int | None
     results_dir: Path
+    fit_a2_correction: bool = False
+    fit_fv_correction: bool = False
+    fit_pz2_correction: bool = False
+    fit_apz2_correction: bool = False
 
 
 @dataclass(frozen=True)
@@ -69,16 +75,61 @@ class JointCSObservation:
     value: float
     sigma: float
     ensemble_label: str
+    a_fm: float
+    exp_m_pi_L: float
 
 
 @dataclass(frozen=True)
 class PerXFitResult:
     x_actual: float
     bT_knots_fm: np.ndarray
-    coeff_samples: np.ndarray
+    coeff_samples: np.ndarray  # (n_samples, n_total_coeffs): [gamma, alpha?, beta?, kappa?, lambda?]
     chi2_dof: np.ndarray
     n_observations: int
     n_groups: int
+    n_gamma_knots: int
+    fit_a2_correction: bool = False
+    fit_fv_correction: bool = False
+    fit_pz2_correction: bool = False
+    fit_apz2_correction: bool = False
+
+    @property
+    def gamma_samples(self) -> np.ndarray:
+        return self.coeff_samples[:, :self.n_gamma_knots]
+
+    def _block_slice(self, block_index: int) -> slice:
+        """Return slice for correction block 0=alpha, 1=beta, 2=kappa, 3=lambda (skipping disabled blocks)."""
+        offset = self.n_gamma_knots
+        blocks = [self.fit_a2_correction, self.fit_fv_correction,
+                  self.fit_pz2_correction, self.fit_apz2_correction]
+        for i in range(block_index):
+            if blocks[i]:
+                offset += self.n_gamma_knots
+        return slice(offset, offset + self.n_gamma_knots)
+
+    @property
+    def alpha_samples(self) -> np.ndarray | None:
+        if not self.fit_a2_correction:
+            return None
+        return self.coeff_samples[:, self._block_slice(0)]
+
+    @property
+    def beta_samples(self) -> np.ndarray | None:
+        if not self.fit_fv_correction:
+            return None
+        return self.coeff_samples[:, self._block_slice(1)]
+
+    @property
+    def kappa_samples(self) -> np.ndarray | None:
+        if not self.fit_pz2_correction:
+            return None
+        return self.coeff_samples[:, self._block_slice(2)]
+
+    @property
+    def lambda_samples(self) -> np.ndarray | None:
+        if not self.fit_apz2_correction:
+            return None
+        return self.coeff_samples[:, self._block_slice(3)]
 
 
 @dataclass(frozen=True)
@@ -145,6 +196,7 @@ def _parse_ensemble(tokens: list[str], path: Path) -> JointCSEnsembleInput:
         lattice_spacing_fm=float(tokens[4]),
         pzlist=_parse_int_items(options["pz"]),
         bTlist=_parse_int_items(options["bT"]),
+        m_pi_mev=float(options["m_pi"]) if "m_pi" in options else 140.0,
     )
 
 
@@ -209,6 +261,11 @@ def parse_tmdwf_cs_kernel_joint_input(
     output_root = Path(results_dir) if results_dir is not None else Path(
         entries.get("results_dir", [default_results_dir])[0]
     )
+    def _parse_bool(entries, key, default=False):
+        if key not in entries:
+            return default
+        return entries[key][0].lower() not in {"false", "0", "no"}
+
     return TMDWFCSKernelJointInput(
         ensembles=tuple(ensembles),
         gm=entries["gm"][0],
@@ -234,6 +291,10 @@ def parse_tmdwf_cs_kernel_joint_input(
         show_progress=show_progress,
         progress_every=progress_every,
         results_dir=output_root,
+        fit_a2_correction=_parse_bool(entries, "fit_a2_correction"),
+        fit_fv_correction=_parse_bool(entries, "fit_fv_correction"),
+        fit_pz2_correction=_parse_bool(entries, "fit_pz2_correction"),
+        fit_apz2_correction=_parse_bool(entries, "fit_apz2_correction"),
     )
 
 
@@ -350,6 +411,9 @@ def _build_observations_at_x(
     group_id = 0
     for ensemble, dataset in ensemble_datasets:
         d_p = momentum_unit_gev(ensemble.ns, ensemble.lattice_spacing_fm)
+        a_fm = ensemble.lattice_spacing_fm
+        m_pi_l = ensemble.m_pi_mev * ensemble.ns * a_fm / HBAR_C_MEV_FM
+        exp_m_pi_L = float(np.exp(-m_pi_l))
         for bT in ensemble.bTlist:
             bT_fm = float(bT * ensemble.lattice_spacing_fm)
             reference = dataset[(bT, ensemble.pzlist[0])]
@@ -372,6 +436,8 @@ def _build_observations_at_x(
                             value=float(samples[sample_id]),
                             sigma=sigma,
                             ensemble_label=ensemble.label,
+                            a_fm=a_fm,
+                            exp_m_pi_L=exp_m_pi_L,
                         )
                     )
             group_id += 1
@@ -409,12 +475,17 @@ def fit_gamma_eff_at_x(
     component: str,
     show_progress: bool,
     progress_every: int | None,
+    fit_a2_correction: bool = False,
+    fit_fv_correction: bool = False,
+    fit_pz2_correction: bool = False,
+    fit_apz2_correction: bool = False,
 ) -> PerXFitResult:
     obs_bT = np.asarray([obs.bT_fm for obs in observations], dtype=float)
     design = _spline_basis(obs_bT, bT_knots_fm, kind=spline_kind)
+    n_knots = design.shape[1]
     pz_values = np.asarray([obs.pz_gev for obs in observations], dtype=float)
     log_p = np.log(pz_values / reference_p1_gev)
-    corrections = np.asarray(
+    delta_m = np.asarray(
         [
             evaluate_type2_matching_correction(
                 scheme=scheme,
@@ -432,14 +503,43 @@ def fit_gamma_eff_at_x(
     group_ids = np.asarray([obs.group_id for obs in observations], dtype=int)
     sigma = np.asarray([obs.sigma for obs in observations], dtype=float)
     n_groups = int(group_ids.max()) + 1
-    coeff_samples = np.empty((sample_count, design.shape[1]), dtype=float)
+
+    # Precompute per-observation correction scales
+    a2_vals = np.asarray([obs.a_fm ** 2 for obs in observations], dtype=float)
+    fv_vals = np.asarray([obs.exp_m_pi_L for obs in observations], dtype=float)
+    inv_pz2_vals = np.asarray(
+        [(1.0 / obs.x ** 2 + 1.0 / (1.0 - obs.x) ** 2) / obs.pz_gev ** 2 for obs in observations],
+        dtype=float,
+    )
+    apz2_vals = np.asarray(
+        [(obs.a_fm * obs.pz_gev / HBAR_C_GEV_FM) ** 2 for obs in observations],
+        dtype=float,
+    )
+
+    # Build active correction blocks
+    correction_blocks: list[tuple[str, np.ndarray]] = []
+    if fit_a2_correction:
+        correction_blocks.append(("a2", a2_vals))
+    if fit_fv_correction:
+        correction_blocks.append(("fv", fv_vals))
+    if fit_pz2_correction:
+        correction_blocks.append(("pz2", inv_pz2_vals))
+    if fit_apz2_correction:
+        correction_blocks.append(("apz2", apz2_vals))
+    n_corr_blocks = len(correction_blocks)
+    n_total_coeffs = n_knots * (1 + n_corr_blocks)
+
+    coeff_samples = np.empty((sample_count, n_total_coeffs), dtype=float)
     chi2_dof = np.empty(sample_count, dtype=float)
-    previous = np.zeros(design.shape[1], dtype=float)
+    previous = np.zeros(n_total_coeffs, dtype=float)
     progress_every = progress_every or max(1, sample_count // 20)
+
     if show_progress:
+        corr_desc = ", ".join(b[0] for b in correction_blocks) if correction_blocks else "none"
         print(
             f"    bootstrap fit: {sample_count} samples, {len(observations)} observations, "
-            f"{n_groups} nuisance groups, {design.shape[1]} bT-spline coefficients",
+            f"{n_groups} nuisance groups, {n_knots} bT-knots, "
+            f"{n_total_coeffs} total coeffs ({n_knots} gamma + {n_corr_blocks * n_knots} corrections [{corr_desc}])",
             flush=True,
         )
     t_start = time.monotonic()
@@ -451,13 +551,37 @@ def fit_gamma_eff_at_x(
         values = np.asarray([obs.value for obs in observations], dtype=float)[mask]
         local_design = design[mask]
         local_log_p = log_p[mask]
-        local_corrections = corrections[mask]
+        local_delta_m = delta_m[mask]
         local_groups = group_ids[mask]
         local_sigma = sigma[mask]
+        local_a2 = a2_vals[mask]
+        local_fv = fv_vals[mask]
+        local_inv_pz2 = inv_pz2_vals[mask]
+        local_apz2 = apz2_vals[mask]
 
         def residuals(coeffs: np.ndarray) -> np.ndarray:
-            gamma = local_design @ coeffs
-            evolution = np.exp(local_log_p * (gamma - local_corrections))
+            # gamma_eff(bT) from first n_knots coefficients
+            gamma = local_design @ coeffs[:n_knots]
+            # multiplicative correction factor = 1 + Σ c_block * D * block_coeffs
+            corr_factor = np.ones(len(gamma), dtype=float)
+            block_offset = n_knots
+            if fit_a2_correction:
+                alpha = local_design @ coeffs[block_offset:block_offset + n_knots]
+                corr_factor += local_a2 * alpha
+                block_offset += n_knots
+            if fit_fv_correction:
+                beta = local_design @ coeffs[block_offset:block_offset + n_knots]
+                corr_factor += local_fv * beta
+                block_offset += n_knots
+            if fit_pz2_correction:
+                kappa = local_design @ coeffs[block_offset:block_offset + n_knots]
+                corr_factor += local_inv_pz2 * kappa
+                block_offset += n_knots
+            if fit_apz2_correction:
+                lam = local_design @ coeffs[block_offset:block_offset + n_knots]
+                corr_factor += local_apz2 * lam
+                block_offset += n_knots
+            evolution = np.exp(local_log_p * (gamma - local_delta_m)) * corr_factor
             amplitudes = np.zeros(n_groups, dtype=float)
             for g in np.unique(local_groups):
                 g_mask = local_groups == g
@@ -472,7 +596,7 @@ def fit_gamma_eff_at_x(
         result = least_squares(residuals, previous, method="trf")
         coeff_samples[sample_id] = result.x
         previous = result.x
-        dof = values.size - n_groups - design.shape[1]
+        dof = values.size - n_groups - n_total_coeffs
         chi2_dof[sample_id] = float(np.sum(result.fun ** 2) / dof) if dof > 0 else float("nan")
         done = sample_id + 1
         if show_progress and (done == 1 or done == sample_count or done % progress_every == 0):
@@ -492,6 +616,11 @@ def fit_gamma_eff_at_x(
         chi2_dof=chi2_dof,
         n_observations=len(observations),
         n_groups=n_groups,
+        n_gamma_knots=n_knots,
+        fit_a2_correction=fit_a2_correction,
+        fit_fv_correction=fit_fv_correction,
+        fit_pz2_correction=fit_pz2_correction,
+        fit_apz2_correction=fit_apz2_correction,
     )
 
 
@@ -534,6 +663,8 @@ def _build_diagnostic_groups(
         pz_arr = np.asarray(pz_set, dtype=float)
         bT_fm = group_obs[0].bT_fm
         ensemble_label = group_obs[0].ensemble_label
+        a_fm = group_obs[0].a_fm
+        exp_m_pi_L = group_obs[0].exp_m_pi_L
 
         # -- data quantiles per pz --
         data_median = np.empty(len(pz_set), dtype=float)
@@ -551,11 +682,12 @@ def _build_diagnostic_groups(
         # -- model reconstruction per sample --
         model_samples = np.empty((sample_count, len(pz_set)), dtype=float)
         gamma_per_sample = _evaluate_bT_surface(
-            per_x_result.coeff_samples,
+            per_x_result.gamma_samples,
             np.asarray([bT_fm]),
             per_x_result.bT_knots_fm,
             spline_kind,
         )[:, 0]  # shape (sample_count,)
+
         log_p = np.log(pz_arr / reference_p1_gev)
         corrections = np.asarray([correction_cache[pz] for pz in pz_set], dtype=float)
         sigma_by_pz = np.asarray(
@@ -568,6 +700,40 @@ def _build_diagnostic_groups(
 
         for sample_id in range(sample_count):
             evolution = np.exp(log_p * (gamma_per_sample[sample_id] - corrections))
+            # Build per-pz correction factor
+            pz_corr = np.ones(len(pz_set), dtype=float)
+            if per_x_result.fit_a2_correction and per_x_result.alpha_samples is not None:
+                pz_corr += a_fm ** 2 * _evaluate_bT_surface(
+                    per_x_result.alpha_samples[sample_id],
+                    np.asarray([bT_fm]),
+                    per_x_result.bT_knots_fm,
+                    spline_kind,
+                )[0]
+            if per_x_result.fit_fv_correction and per_x_result.beta_samples is not None:
+                pz_corr += exp_m_pi_L * _evaluate_bT_surface(
+                    per_x_result.beta_samples[sample_id],
+                    np.asarray([bT_fm]),
+                    per_x_result.bT_knots_fm,
+                    spline_kind,
+                )[0]
+            if per_x_result.fit_pz2_correction and per_x_result.kappa_samples is not None:
+                kappa_val = _evaluate_bT_surface(
+                    per_x_result.kappa_samples[sample_id],
+                    np.asarray([bT_fm]),
+                    per_x_result.bT_knots_fm,
+                    spline_kind,
+                )[0]
+                x_weight = 1.0 / per_x_result.x_actual ** 2 + 1.0 / (1.0 - per_x_result.x_actual) ** 2
+                pz_corr += (x_weight / pz_arr ** 2) * kappa_val
+            if per_x_result.fit_apz2_correction and per_x_result.lambda_samples is not None:
+                lam_val = _evaluate_bT_surface(
+                    per_x_result.lambda_samples[sample_id],
+                    np.asarray([bT_fm]),
+                    per_x_result.bT_knots_fm,
+                    spline_kind,
+                )[0]
+                pz_corr += (a_fm * pz_arr / HBAR_C_GEV_FM) ** 2 * lam_val
+            evolution = evolution * pz_corr
             weights = 1.0 / sigma_by_pz ** 2
             o_sample = np.asarray(
                 [
@@ -655,8 +821,9 @@ def _write_joint_outputs(
     with surface_path.open("w", encoding="utf-8") as handle:
         handle.write("x\tbT_fm\tgamma_p16\tgamma_p50\tgamma_p84\n")
         for result in per_x_results:
+            gamma = result.gamma_samples
             for j, bT_val in enumerate(result.bT_knots_fm):
-                values = result.coeff_samples[:, j]
+                values = gamma[:, j]
                 q16, q50, q84 = _legacy_quantile_triplet(values)
                 handle.write(
                     f"{result.x_actual:.10e}\t{bT_val:.10e}\t"
@@ -668,22 +835,79 @@ def _write_joint_outputs(
     with samples_path.open("w", encoding="utf-8") as handle:
         handle.write("x\tbT_fm\tsample_id\tgamma_eff\n")
         for result in per_x_results:
-            for sample_id, coeffs in enumerate(result.coeff_samples):
+            gamma = result.gamma_samples
+            for sample_id in range(gamma.shape[0]):
+                coeffs = gamma[sample_id]
                 for j, bT_val in enumerate(result.bT_knots_fm):
                     handle.write(
                         f"{result.x_actual:.10e}\t{bT_val:.10e}\t"
                         f"{sample_id}\t{coeffs[j]:.10e}\n"
                     )
 
-    # -- coefficients (spline coefficients for every bootstrap sample) --
+    # -- coefficients (gamma spline coefficients for every bootstrap sample) --
     coeff_path = samples_dir / f"{stem}_coefficients.txt"
     with coeff_path.open("w", encoding="utf-8") as handle:
         header_cols = [f"c{j}" for j in range(bT_knots.size)]
         handle.write("x\tsample_id\t" + "\t".join(header_cols) + "\n")
         for result in per_x_results:
-            for sample_id, coeffs in enumerate(result.coeff_samples):
-                coeff_str = "\t".join(f"{c:.10e}" for c in coeffs)
+            gamma = result.gamma_samples
+            for sample_id in range(gamma.shape[0]):
+                coeff_str = "\t".join(f"{c:.10e}" for c in gamma[sample_id])
                 handle.write(f"{result.x_actual:.10e}\t{sample_id}\t{coeff_str}\n")
+
+    # -- correction coefficient files (one per enabled correction) --
+    correction_stems = []
+    if per_x_results[0].fit_a2_correction:
+        correction_stems.append(("a2", "alpha"))
+    if per_x_results[0].fit_fv_correction:
+        correction_stems.append(("fv", "beta"))
+    if per_x_results[0].fit_pz2_correction:
+        correction_stems.append(("pz2", "kappa"))
+    if per_x_results[0].fit_apz2_correction:
+        correction_stems.append(("apz2", "lambda"))
+
+    for short_name, full_name in correction_stems:
+        corr_coeff_path = samples_dir / f"{stem}_coefficients_{full_name}.txt"
+        with corr_coeff_path.open("w", encoding="utf-8") as handle:
+            header_cols = [f"c{j}" for j in range(bT_knots.size)]
+            handle.write("x\tsample_id\t" + "\t".join(header_cols) + "\n")
+            for result in per_x_results:
+                if short_name == "a2":
+                    samples = result.alpha_samples
+                elif short_name == "fv":
+                    samples = result.beta_samples
+                elif short_name == "pz2":
+                    samples = result.kappa_samples
+                else:
+                    samples = result.lambda_samples
+                if samples is None:
+                    continue
+                for sample_id in range(samples.shape[0]):
+                    coeff_str = "\t".join(f"{c:.10e}" for c in samples[sample_id])
+                    handle.write(f"{result.x_actual:.10e}\t{sample_id}\t{coeff_str}\n")
+
+        # Correction surface table
+        corr_surface_path = tables_dir / f"{stem}_surface_{short_name}.txt"
+        with corr_surface_path.open("w", encoding="utf-8") as handle:
+            handle.write(f"x\tbT_fm\t{short_name}_p16\t{short_name}_p50\t{short_name}_p84\n")
+            for result in per_x_results:
+                if short_name == "a2":
+                    samples = result.alpha_samples
+                elif short_name == "fv":
+                    samples = result.beta_samples
+                elif short_name == "pz2":
+                    samples = result.kappa_samples
+                else:
+                    samples = result.lambda_samples
+                if samples is None:
+                    continue
+                for j, bT_val in enumerate(result.bT_knots_fm):
+                    values = samples[:, j]
+                    q16, q50, q84 = _legacy_quantile_triplet(values)
+                    handle.write(
+                        f"{result.x_actual:.10e}\t{bT_val:.10e}\t"
+                        f"{q16:.10e}\t{q50:.10e}\t{q84:.10e}\n"
+                    )
 
     # -- diagnostics (chi2/dof per sample per x) --
     diagnostics_path = diagnostics_dir / f"{stem}_diagnostics.txt"
@@ -709,6 +933,11 @@ def _write_joint_outputs(
         handle.write(f"spline_kind {spec.spline_kind}\n")
         handle.write(f"bT_knots_fm {' '.join(f'{v:.10e}' for v in bT_knots)}\n")
         handle.write(f"x_fit_points {' '.join(f'{v:.10e}' for v in x_fit_order)}\n")
+        handle.write(f"fit_a2_correction {str(spec.fit_a2_correction).lower()}\n")
+        handle.write(f"fit_fv_correction {str(spec.fit_fv_correction).lower()}\n")
+        handle.write(f"fit_pz2_correction {str(spec.fit_pz2_correction).lower()}\n")
+        handle.write(f"fit_apz2_correction {str(spec.fit_apz2_correction).lower()}\n")
+        handle.write(f"n_gamma_knots {bT_knots.size}\n")
         handle.write(f"plot {str(spec.make_plots).lower()}\n")
         handle.write(f"progress {str(spec.show_progress).lower()}\n")
         if spec.progress_every is not None:
@@ -724,7 +953,8 @@ def _write_joint_outputs(
                 f"{ensemble.title_pattern} {ensemble.ns} "
                 f"{ensemble.lattice_spacing_fm:.10e} "
                 f"pz={','.join(str(v) for v in ensemble.pzlist)} "
-                f"bT={','.join(str(v) for v in ensemble.bTlist)}\n"
+                f"bT={','.join(str(v) for v in ensemble.bTlist)} "
+                f"m_pi={ensemble.m_pi_mev:.1f}\n"
             )
 
     outputs = [summary_path, surface_path, samples_path, coeff_path, diagnostics_path]
@@ -736,16 +966,16 @@ def _write_joint_outputs(
             surface_samples = np.asarray(
                 [
                     _evaluate_bT_surface(
-                        result.coeff_samples[si],
+                        result.gamma_samples[si],
                         np.asarray([bT_val]),
                         result.bT_knots_fm,
                         spec.spline_kind,
                     )[0]
                     for result in per_x_results
-                    for si in range(result.coeff_samples.shape[0])
+                    for si in range(result.gamma_samples.shape[0])
                 ],
                 dtype=float,
-            ).reshape(len(per_x_results), per_x_results[0].coeff_samples.shape[0])
+            ).reshape(len(per_x_results), per_x_results[0].gamma_samples.shape[0])
             q16 = np.percentile(surface_samples, 16.0, axis=1)
             q50 = np.percentile(surface_samples, 50.0, axis=1)
             q84 = np.percentile(surface_samples, 84.0, axis=1)
@@ -828,6 +1058,10 @@ def run_tmdwf_cs_kernel_joint_workflow(
             component=spec.component,
             show_progress=spec.show_progress,
             progress_every=spec.progress_every,
+            fit_a2_correction=spec.fit_a2_correction,
+            fit_fv_correction=spec.fit_fv_correction,
+            fit_pz2_correction=spec.fit_pz2_correction,
+            fit_apz2_correction=spec.fit_apz2_correction,
         )
         per_x_results.append(result)
         x_fit_order.append(x_actual)
@@ -911,6 +1145,7 @@ def parse_joint_summary(summary_path: str | Path) -> dict:
             if tokens[0] == "ensemble":
                 pz_str = tokens[6].split("=", 1)[1]
                 bT_str = tokens[7].split("=", 1)[1]
+                m_pi_str = tokens[8].split("=", 1)[1] if len(tokens) > 8 else "140.0"
                 ensembles.append({
                     "label": tokens[1],
                     "input_root": tokens[2],
@@ -919,6 +1154,7 @@ def parse_joint_summary(summary_path: str | Path) -> dict:
                     "lattice_spacing_fm": float(tokens[5]),
                     "pzlist": _parse_int_items(pz_str),
                     "bTlist": _parse_int_items(bT_str),
+                    "m_pi_mev": float(m_pi_str),
                 })
             else:
                 entries[tokens[0]] = tokens[1:]
@@ -938,6 +1174,11 @@ def parse_joint_summary(summary_path: str | Path) -> dict:
         "spline_kind": entries["spline_kind"][0],
         "bT_knots_fm": np.asarray([float(v) for v in entries["bT_knots_fm"]], dtype=float),
         "x_fit_points": np.asarray([float(v) for v in entries["x_fit_points"]], dtype=float),
+        "fit_a2_correction": entries.get("fit_a2_correction", ["false"])[0].lower() == "true",
+        "fit_fv_correction": entries.get("fit_fv_correction", ["false"])[0].lower() == "true",
+        "fit_pz2_correction": entries.get("fit_pz2_correction", ["false"])[0].lower() == "true",
+        "fit_apz2_correction": entries.get("fit_apz2_correction", ["false"])[0].lower() == "true",
+        "n_gamma_knots": int(entries["n_gamma_knots"][0]) if "n_gamma_knots" in entries else len(entries["bT_knots_fm"]),
         "ensembles": ensembles,
     }
 

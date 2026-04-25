@@ -11,6 +11,10 @@ x_window 0.2 0.8
 x_knots 0.2 0.3 0.4 0.5 0.6 0.7 0.8
 bT_knots_fm 0.05 0.10 0.15 0.20 0.25 0.30
 spline_kind linear
+# fit_a2_correction true
+# fit_fv_correction true
+# fit_pz2_correction true
+# fit_apz2_correction true
 plot true
 progress true
 progress_every 10

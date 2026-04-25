@@ -16,7 +16,6 @@ processed data.
 
 ```text
 .
-├── configs/              Example configuration files
 ├── docs/                 Notes and methodology docs
 ├── examples/
 │   ├── data/             Tracked example correlator CSV files
@@ -115,7 +114,8 @@ A matching notebook template is also provided in:
 Traditional multi-exponential fits are available as a separate workflow:
 
 ```bash
-python scripts/two_point/fit_2pt_nstate.py 2pt-nstate-fit configs/example_nstate_fit.txt
+python scripts/two_point/fit_2pt_nstate.py 2pt-nstate-fit \
+  templates/input_files/two_point/nstate_fit_2state_example_realdata.txt
 ```
 
 Expected extra input keys:

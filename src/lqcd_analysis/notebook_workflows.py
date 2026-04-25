@@ -213,6 +213,10 @@ TMDWF_CS_KERNEL_JOINT_KEYS = {
     "progress",
     "progress_every",
     "results_dir",
+    "fit_a2_correction",
+    "fit_fv_correction",
+    "fit_pz2_correction",
+    "fit_apz2_correction",
 }
 TMDWF_CS_KERNEL_JOINT_RUN_KEYS = {"results_dir"}
 TMDWF_NORMALIZE_KEYS = {
@@ -665,13 +669,16 @@ def _format_joint_ensemble_line(ensemble: dict[str, Any]) -> str:
         bT_text = ":".join(str(value) for value in ensemble["bTrange"])
     else:
         raise ValueError("missing TMDWF CS-kernel joint ensemble key: bTlist or bTrange")
+    m_pi_token = ""
+    if "m_pi_mev" in ensemble and ensemble["m_pi_mev"] is not None:
+        m_pi_token = f" m_pi={_as_scalar_string(ensemble['m_pi_mev'])}"
     return (
         f"ensemble {_as_scalar_string(ensemble['label'])} "
         f"{_as_scalar_string(ensemble['input_root'])} "
         f"{_as_scalar_string(ensemble['title_pattern'])} "
         f"{_as_scalar_string(ensemble['ns'])} "
         f"{_as_scalar_string(ensemble['lattice_spacing_fm'])} "
-        f"pz={pz_text} bT={bT_text}"
+        f"pz={pz_text} bT={bT_text}{m_pi_token}"
     )
 
 
@@ -713,6 +720,14 @@ def render_tmdwf_cs_kernel_joint_input_text(config: dict[str, Any]) -> str:
         lines.append(f"bT_knots_fm {_as_scalar_string(config['bT_knots_fm'])}")
     if "spline_kind" in config and config["spline_kind"] is not None:
         lines.append(f"spline_kind {_as_scalar_string(config['spline_kind'])}")
+    if "fit_a2_correction" in config and config["fit_a2_correction"] is not None:
+        lines.append(f"fit_a2_correction {_as_scalar_string(config['fit_a2_correction'])}")
+    if "fit_fv_correction" in config and config["fit_fv_correction"] is not None:
+        lines.append(f"fit_fv_correction {_as_scalar_string(config['fit_fv_correction'])}")
+    if "fit_pz2_correction" in config and config["fit_pz2_correction"] is not None:
+        lines.append(f"fit_pz2_correction {_as_scalar_string(config['fit_pz2_correction'])}")
+    if "fit_apz2_correction" in config and config["fit_apz2_correction"] is not None:
+        lines.append(f"fit_apz2_correction {_as_scalar_string(config['fit_apz2_correction'])}")
     if "plot" in config and config["plot"] is not None:
         lines.append(f"plot {_as_scalar_string(config['plot'])}")
     if "progress" in config and config["progress"] is not None:

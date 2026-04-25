@@ -39,6 +39,26 @@ bT_knots_fm 0.05 0.10 0.15 0.20 0.25 0.30
 # - cubic: natural cubic spline basis
 spline_kind linear
 
+# ---------------------------------------------------------------------------
+# Systematic error corrections (all default to false).
+#
+# When enabled, the joint-fit formula becomes:
+#   O = A_g * (pz/p_ref)^{gamma_eff(bT) - delta_m(pz)}
+#       * [1 + alpha(bT) * a^2 + beta(bT) * exp(-M_pi L)
+#            + kappa(bT) * (1/x^2 + 1/(1-x)^2) / pz^2
+#            + lambda(bT) * (a P_z)^2]
+#
+# Each correction coefficient (alpha, beta, kappa) is parameterized by
+# the same 1D bT-spline as gamma_eff(bT), sharing the bT_knots_fm knots.
+#
+# - fit_a2_correction:  lattice discretisation correction ~ a^2
+# - fit_fv_correction:  finite-volume correction ~ exp(-M_pi L)
+# - fit_pz2_correction: momentum power correction ~ (1/x^2+1/(1-x)^2)/pz^2
+# ---------------------------------------------------------------------------
+# fit_a2_correction true
+# fit_fv_correction true
+# fit_pz2_correction true
+
 # Whether to write one gamma_eff vs x band plot for each bT knot.
 plot true
 
@@ -49,13 +69,15 @@ progress true
 progress_every 10
 
 # One ensemble line per ensemble:
-# ensemble <label> <input_root> <title_pattern> <Ns> <a_fm> pz=<list/range> bT=<list/range>
+# ensemble <label> <input_root> <title_pattern> <Ns> <a_fm> pz=<list/range> bT=<list/range> [m_pi=<MeV>]
 #
 # Lists are comma-separated. Inclusive ranges use start:stop.
 # title_pattern follows the existing Fourier/CS convention where * is replaced by pz.
+# m_pi is the pion mass in MeV (default 140.0); used for finite-volume correction
+# via exp(-M_pi * L) = exp(-m_pi * Ns * a / (hbar c)).
 # Keep each ensemble entry on one line when using the file.
-ensemble l48a060 /path/to/l48/4-FT-new l48c64a060_m140_fit_pz* 48 0.060 pz=1:5 bT=0:20
-ensemble l64a050 /path/to/l64/4-FT-new l64c64a050_m140_fit_pz* 64 0.050 pz=3:8 bT=0:30
+ensemble l48a060 /path/to/l48/4-FT-new l48c64a060_m140_fit_pz* 48 0.060 pz=1:5 bT=0:20 m_pi=140.0
+ensemble l64a050 /path/to/l64/4-FT-new l64c64a050_m140_fit_pz* 64 0.050 pz=3:8 bT=0:30 m_pi=140.0
 
 # Output root for:
 # - joint_gamma_eff/*_summary.txt
