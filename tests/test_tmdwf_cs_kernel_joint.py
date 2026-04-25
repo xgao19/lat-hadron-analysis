@@ -6,6 +6,9 @@ import numpy as np
 
 from lqcd_analysis.tmdwf.cs_kernel_extract import momentum_unit_gev
 from lqcd_analysis.tmdwf.cs_kernel_joint import (
+    JointCSObservation,
+    _evaluate_correction_shape,
+    fit_gamma_eff_at_x,
     parse_tmdwf_cs_kernel_joint_input,
     run_tmdwf_cs_kernel_joint_workflow,
 )
@@ -91,6 +94,138 @@ class TMDWFCSKernelJointTests(unittest.TestCase):
         self.assertEqual(parsed.spline_kind, "cubic")
         self.assertFalse(parsed.make_plots)
         self.assertFalse(parsed.show_progress)
+
+    def test_analytic_corrections_use_two_parameters_per_enabled_channel(self) -> None:
+        observations = []
+        for sample_id in range(2):
+            for group_id, bT_fm in enumerate((0.1, 0.2)):
+                for pz_gev in (1.2, 1.8, 2.4):
+                    observations.append(
+                        JointCSObservation(
+                            group_id=group_id,
+                            sample_id=sample_id,
+                            x=0.4,
+                            bT_fm=bT_fm,
+                            pz_gev=pz_gev,
+                            value=1.0 + 0.05 * sample_id + 0.02 * group_id + 0.01 * pz_gev,
+                            sigma=0.05,
+                            ensemble_label="ens",
+                            a_fm=0.06,
+                            fv_prefactor=0.01,
+                            fv_exp_m_pi_bT=np.exp(0.2 * bT_fm),
+                            spatial_extent_fm=3.0,
+                        )
+                    )
+
+        result = fit_gamma_eff_at_x(
+            observations,
+            sample_count=2,
+            x_value=0.4,
+            bT_knots_fm=np.asarray([0.1, 0.2]),
+            spline_kind="linear",
+            reference_p1_gev=1.0,
+            scheme="CG",
+            kernel_label="LO",
+            mu=2.0,
+            component="real",
+            show_progress=False,
+            progress_every=None,
+            fit_a2_correction=True,
+            fit_fv_correction=True,
+            fit_pz2_correction=True,
+            fit_apz2_correction=True,
+        )
+
+        self.assertEqual(result.n_gamma_knots, 2)
+        self.assertEqual(result.n_correction_params, 7)
+        self.assertEqual(result.coeff_samples.shape, (2, 9))
+        self.assertEqual(result.alpha_samples.shape, (2, 2))
+        self.assertEqual(result.beta_samples.shape, (2, 2))
+        self.assertEqual(result.kappa_samples.shape, (2, 2))
+        self.assertEqual(result.lambda_samples.shape, (2, 1))
+
+    def test_inverse_bT_corrections_reject_zero_bT(self) -> None:
+        observations = [
+            JointCSObservation(
+                group_id=0,
+                sample_id=0,
+                x=0.4,
+                bT_fm=0.0,
+                pz_gev=1.2,
+                value=1.0,
+                sigma=0.05,
+                ensemble_label="ens",
+                a_fm=0.06,
+                fv_prefactor=0.01,
+                fv_exp_m_pi_bT=1.0,
+                spatial_extent_fm=3.0,
+            )
+        ]
+
+        with self.assertRaisesRegex(ValueError, "strictly positive bT"):
+            fit_gamma_eff_at_x(
+                observations,
+                sample_count=1,
+                x_value=0.4,
+                bT_knots_fm=np.asarray([0.0, 0.1]),
+                spline_kind="linear",
+                reference_p1_gev=1.0,
+                scheme="CG",
+                kernel_label="LO",
+                mu=2.0,
+                component="real",
+                show_progress=False,
+                progress_every=None,
+                fit_a2_correction=True,
+            )
+
+    def test_fv_shape_uses_exp_mpi_bT_and_increases_with_bT(self) -> None:
+        coeffs = np.asarray([0.2, 0.4], dtype=float)
+        values = _evaluate_correction_shape(
+            "fv",
+            coeffs,
+            np.asarray([0.1, 0.3], dtype=float),
+            fv_exp_m_pi_bT=np.asarray([np.exp(0.1), np.exp(0.3)], dtype=float),
+        )
+        self.assertTrue(np.all(np.isfinite(values)))
+        self.assertGreater(values[1], values[0])
+
+    def test_fv_correction_rejects_bT_at_box_size(self) -> None:
+        observations = []
+        for pz_gev in (1.2, 1.8):
+            observations.append(
+                JointCSObservation(
+                    group_id=0,
+                    sample_id=0,
+                    x=0.4,
+                    bT_fm=3.0,
+                    pz_gev=pz_gev,
+                    value=1.0,
+                    sigma=0.05,
+                    ensemble_label="ens",
+                    a_fm=0.06,
+                    fv_prefactor=0.01,
+                    fv_exp_m_pi_bT=np.exp(0.3),
+                    spatial_extent_fm=3.0,
+                )
+            )
+
+        with self.assertRaisesRegex(ValueError, "below the spatial box size"):
+            fit_gamma_eff_at_x(
+                observations,
+                sample_count=1,
+                x_value=0.4,
+                bT_knots_fm=np.asarray([3.0]),
+                spline_kind="linear",
+                reference_p1_gev=1.0,
+                scheme="CG",
+                kernel_label="LO",
+                mu=2.0,
+                component="real",
+                show_progress=False,
+                progress_every=None,
+                fit_fv_correction=True,
+            )
 
     def test_joint_workflow_recovers_linear_gamma_eff_surface(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

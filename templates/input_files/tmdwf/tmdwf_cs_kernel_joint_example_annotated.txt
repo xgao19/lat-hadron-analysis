@@ -1,6 +1,6 @@
-# Joint TMDWF CS-kernel effective-surface fit.
+# Joint TMDWF CS-kernel fit.
 # This workflow reads Fourier bootstrap samples directly and fits
-# gamma_eff(x, bT) independently at each specified x, parameterizing
+# gamma_MSbar(x, bT) independently at each specified x, parameterizing
 # the bT-dependence with a 1D piecewise-linear or cubic spline.
 
 # Shared channel settings.
@@ -22,14 +22,14 @@ reference_p1_gev 1.0
 # an additional filter on the nearest data-grid points.
 x_window 0.2 0.8
 
-# x values at which gamma_eff is fitted independently.
+# x values at which gamma_MSbar is fitted independently.
 # Each value is mapped to the nearest point on the data x-grid; the actual
 # data-grid x value is recorded in the output. If omitted, the workflow
 # picks up to 6 evenly spaced points within x_window.
 x_knots 0.2 0.3 0.4 0.5 0.6 0.7 0.8
 
 # Spline knots (in fm) for the bT-direction spline.
-# At each x, gamma_eff(bT) is expanded as a linear or cubic spline on
+# At each x, gamma_MSbar(bT) is expanded as a linear or cubic spline on
 # these knots. If omitted, the workflow uses the unique physical bT
 # values across all ensembles, capped at 8 knots.
 bT_knots_fm 0.05 0.10 0.15 0.20 0.25 0.30
@@ -40,26 +40,33 @@ bT_knots_fm 0.05 0.10 0.15 0.20 0.25 0.30
 spline_kind linear
 
 # ---------------------------------------------------------------------------
-# Systematic error corrections (all default to false).
+# Systematic error corrections.
 #
 # When enabled, the joint-fit formula becomes:
-#   O = A_g * (pz/p_ref)^{gamma_eff(bT) - delta_m(pz)}
-#       * [1 + alpha(bT) * a^2 + beta(bT) * exp(-M_pi L)
-#            + kappa(bT) * (1/x^2 + 1/(1-x)^2) / pz^2
-#            + lambda(bT) * (a P_z)^2]
+#   O = A_g * (pz/p_ref)^{gamma_MSbar(bT) - delta_m(pz)}
+#       * [1 + a^2 * (alpha_0 + alpha_1 / bT^2)
+#            + exp(-M_pi L) / sqrt(M_pi L) * (beta_0 + beta_1 * exp(M_pi bT))
+#            + (1/x^2 + 1/(1-x)^2) / pz^2 * (kappa_0 + kappa_1 / bT^2)
+#            + (a P_z)^2 * lambda_0]
 #
-# Each correction coefficient (alpha, beta, kappa) is parameterized by
-# the same 1D bT-spline as gamma_eff(bT), sharing the bT_knots_fm knots.
+# Corrections are multiplicative factors on the matrix element, not additive
+# corrections to gamma_MSbar or to the exponent. The a2, fv, and pz2 channels add
+# two parameters each; apz2 adds one. The central model enables a2 and pz2; fv and apz2 are useful
+# systematic variations. If a 1/bT^2 channel is enabled, the selected fit data
+# must not contain bT=0.
 #
 # - fit_a2_correction:  lattice discretisation correction ~ a^2
-# - fit_fv_correction:  finite-volume correction ~ exp(-M_pi L)
+# - fit_fv_correction:  finite-volume correction ~ exp(-M_pi L) / sqrt(M_pi L)
+#                       times [beta_0 + beta_1 exp(M_pi bT)]
 # - fit_pz2_correction: momentum power correction ~ (1/x^2+1/(1-x)^2)/pz^2
+# - fit_apz2_correction: lattice momentum correction ~ (a P_z)^2
 # ---------------------------------------------------------------------------
-# fit_a2_correction true
+fit_a2_correction true
 # fit_fv_correction true
-# fit_pz2_correction true
+fit_pz2_correction true
+# fit_apz2_correction true
 
-# Whether to write one gamma_eff vs x band plot for each bT knot.
+# Whether to write one gamma_MSbar vs x band plot for each bT knot.
 plot true
 
 # Print bootstrap-fit progress (per x and per sample) while running.
@@ -74,10 +81,11 @@ progress_every 10
 # Lists are comma-separated. Inclusive ranges use start:stop.
 # title_pattern follows the existing Fourier/CS convention where * is replaced by pz.
 # m_pi is the pion mass in MeV (default 140.0); used for finite-volume correction
-# via exp(-M_pi * L) = exp(-m_pi * Ns * a / (hbar c)).
+# via exp(-M_pi * L) / sqrt(M_pi * L) times exp(M_pi bT), with
+# M_pi L = m_pi * Ns * a / (hbar c) and M_pi bT = m_pi * bT / (hbar c).
 # Keep each ensemble entry on one line when using the file.
-ensemble l48a060 /path/to/l48/4-FT-new l48c64a060_m140_fit_pz* 48 0.060 pz=1:5 bT=0:20 m_pi=140.0
-ensemble l64a050 /path/to/l64/4-FT-new l64c64a050_m140_fit_pz* 64 0.050 pz=3:8 bT=0:30 m_pi=140.0
+ensemble l48a060 /path/to/l48/4-FT-new l48c64a060_m140_fit_pz* 48 0.060 pz=1:5 bT=1:20 m_pi=140.0
+ensemble l64a050 /path/to/l64/4-FT-new l64c64a050_m140_fit_pz* 64 0.050 pz=3:8 bT=1:30 m_pi=140.0
 
 # Output root for:
 # - joint_gamma_eff/*_summary.txt

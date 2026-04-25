@@ -11,13 +11,13 @@ x_window 0.2 0.8
 x_knots 0.2 0.3 0.4 0.5 0.6 0.7 0.8
 bT_knots_fm 0.05 0.10 0.15 0.20 0.25 0.30
 spline_kind linear
-# fit_a2_correction true
+fit_a2_correction true
 # fit_fv_correction true
-# fit_pz2_correction true
+fit_pz2_correction true
 # fit_apz2_correction true
 plot true
 progress true
 progress_every 10
-ensemble l48a060 /path/l48 l48_pz* 48 0.060 pz=1:5 bT=0:20
-ensemble l64a050 /path/l64 l64_pz* 64 0.050 pz=3:8 bT=0:30
+ensemble l48a060 /path/l48 l48_pz* 48 0.060 pz=1:5 bT=1:20
+ensemble l64a050 /path/l64 l64_pz* 64 0.050 pz=3:8 bT=1:30
 results_dir results_tmdwf_cs_kernel_joint

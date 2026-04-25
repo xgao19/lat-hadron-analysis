@@ -76,7 +76,9 @@ class JointCSObservation:
     sigma: float
     ensemble_label: str
     a_fm: float
-    exp_m_pi_L: float
+    fv_prefactor: float
+    fv_exp_m_pi_bT: float
+    spatial_extent_fm: float
 
 
 @dataclass(frozen=True)
@@ -88,6 +90,7 @@ class PerXFitResult:
     n_observations: int
     n_groups: int
     n_gamma_knots: int
+    n_correction_params: int
     fit_a2_correction: bool = False
     fit_fv_correction: bool = False
     fit_pz2_correction: bool = False
@@ -97,15 +100,22 @@ class PerXFitResult:
     def gamma_samples(self) -> np.ndarray:
         return self.coeff_samples[:, :self.n_gamma_knots]
 
+    def _block_size(self, block_index: int) -> int:
+        return 1 if block_index == 3 else 2
+
     def _block_slice(self, block_index: int) -> slice:
         """Return slice for correction block 0=alpha, 1=beta, 2=kappa, 3=lambda (skipping disabled blocks)."""
         offset = self.n_gamma_knots
-        blocks = [self.fit_a2_correction, self.fit_fv_correction,
-                  self.fit_pz2_correction, self.fit_apz2_correction]
+        blocks = [
+            self.fit_a2_correction,
+            self.fit_fv_correction,
+            self.fit_pz2_correction,
+            self.fit_apz2_correction,
+        ]
         for i in range(block_index):
             if blocks[i]:
-                offset += self.n_gamma_knots
-        return slice(offset, offset + self.n_gamma_knots)
+                offset += self._block_size(i)
+        return slice(offset, offset + self._block_size(block_index))
 
     @property
     def alpha_samples(self) -> np.ndarray | None:
@@ -412,10 +422,12 @@ def _build_observations_at_x(
     for ensemble, dataset in ensemble_datasets:
         d_p = momentum_unit_gev(ensemble.ns, ensemble.lattice_spacing_fm)
         a_fm = ensemble.lattice_spacing_fm
+        spatial_extent_fm = ensemble.ns * a_fm
         m_pi_l = ensemble.m_pi_mev * ensemble.ns * a_fm / HBAR_C_MEV_FM
-        exp_m_pi_L = float(np.exp(-m_pi_l))
+        fv_prefactor = float(np.exp(-m_pi_l) / np.sqrt(m_pi_l))
         for bT in ensemble.bTlist:
             bT_fm = float(bT * ensemble.lattice_spacing_fm)
+            fv_exp_m_pi_bT = float(np.exp(ensemble.m_pi_mev * bT_fm / HBAR_C_MEV_FM))
             reference = dataset[(bT, ensemble.pzlist[0])]
             x_value = float(reference.x[x_index])
             # Enforce x_window on actual x value
@@ -437,7 +449,9 @@ def _build_observations_at_x(
                             sigma=sigma,
                             ensemble_label=ensemble.label,
                             a_fm=a_fm,
-                            exp_m_pi_L=exp_m_pi_L,
+                            fv_prefactor=fv_prefactor,
+                            fv_exp_m_pi_bT=fv_exp_m_pi_bT,
+                            spatial_extent_fm=spatial_extent_fm,
                         )
                     )
             group_id += 1
@@ -461,6 +475,69 @@ def _default_bT_knots(
     return np.linspace(float(unique.min()), float(unique.max()), max_count)
 
 
+def _requires_inverse_bT(
+    *,
+    fit_a2_correction: bool,
+    fit_pz2_correction: bool,
+) -> bool:
+    return fit_a2_correction or fit_pz2_correction
+
+
+def _check_nonzero_bT_for_inverse_corrections(
+    bT_values_fm: np.ndarray,
+    *,
+    fit_a2_correction: bool,
+    fit_pz2_correction: bool,
+) -> None:
+    if _requires_inverse_bT(
+        fit_a2_correction=fit_a2_correction,
+        fit_pz2_correction=fit_pz2_correction,
+    ) and np.any(np.asarray(bT_values_fm, dtype=float) <= 0.0):
+        raise ValueError(
+            "analytic CS-kernel systematic corrections with 1/bT^2 require "
+            "strictly positive bT values; remove bT=0 from the joint fit or "
+            "disable a2 and pz2 corrections"
+        )
+
+
+def _check_bT_below_box_for_fv(observations: list[JointCSObservation]) -> None:
+    bad = [
+        obs
+        for obs in observations
+        if obs.bT_fm >= obs.spatial_extent_fm
+    ]
+    if bad:
+        obs = bad[0]
+        raise ValueError(
+            "finite-volume correction requires bT below the spatial box size: "
+            f"found bT={obs.bT_fm:.6g} fm and L={obs.spatial_extent_fm:.6g} fm "
+            f"for ensemble {obs.ensemble_label}"
+        )
+
+
+def _evaluate_correction_shape(
+    name: str,
+    coeffs: np.ndarray,
+    bT_values_fm: np.ndarray,
+    *,
+    fv_exp_m_pi_bT: np.ndarray | None = None,
+) -> np.ndarray:
+    coeff_array = np.asarray(coeffs, dtype=float)
+    bT = np.asarray(bT_values_fm, dtype=float)
+    c0 = coeff_array[..., 0]
+    if name == "apz2":
+        return np.expand_dims(c0, axis=-1) + np.zeros_like(bT, dtype=float)
+    c1 = coeff_array[..., 1]
+    if name == "fv":
+        if fv_exp_m_pi_bT is None:
+            raise ValueError("fv correction evaluation requires exp(M_pi bT)")
+        fv_exp = np.asarray(fv_exp_m_pi_bT, dtype=float)
+        return np.expand_dims(c0, axis=-1) + np.expand_dims(c1, axis=-1) * fv_exp
+    if np.any(bT <= 0.0):
+        raise ValueError(f"{name} correction uses 1/bT^2 and requires bT > 0")
+    return np.expand_dims(c0, axis=-1) + np.expand_dims(c1, axis=-1) / bT ** 2
+
+
 def fit_gamma_eff_at_x(
     observations: list[JointCSObservation],
     *,
@@ -481,6 +558,13 @@ def fit_gamma_eff_at_x(
     fit_apz2_correction: bool = False,
 ) -> PerXFitResult:
     obs_bT = np.asarray([obs.bT_fm for obs in observations], dtype=float)
+    _check_nonzero_bT_for_inverse_corrections(
+        obs_bT,
+        fit_a2_correction=fit_a2_correction,
+        fit_pz2_correction=fit_pz2_correction,
+    )
+    if fit_fv_correction:
+        _check_bT_below_box_for_fv(observations)
     design = _spline_basis(obs_bT, bT_knots_fm, kind=spline_kind)
     n_knots = design.shape[1]
     pz_values = np.asarray([obs.pz_gev for obs in observations], dtype=float)
@@ -506,7 +590,8 @@ def fit_gamma_eff_at_x(
 
     # Precompute per-observation correction scales
     a2_vals = np.asarray([obs.a_fm ** 2 for obs in observations], dtype=float)
-    fv_vals = np.asarray([obs.exp_m_pi_L for obs in observations], dtype=float)
+    fv_prefactor_vals = np.asarray([obs.fv_prefactor for obs in observations], dtype=float)
+    fv_exp_m_pi_bT_vals = np.asarray([obs.fv_exp_m_pi_bT for obs in observations], dtype=float)
     inv_pz2_vals = np.asarray(
         [(1.0 / obs.x ** 2 + 1.0 / (1.0 - obs.x) ** 2) / obs.pz_gev ** 2 for obs in observations],
         dtype=float,
@@ -521,13 +606,19 @@ def fit_gamma_eff_at_x(
     if fit_a2_correction:
         correction_blocks.append(("a2", a2_vals))
     if fit_fv_correction:
-        correction_blocks.append(("fv", fv_vals))
+        correction_blocks.append(("fv", fv_prefactor_vals))
     if fit_pz2_correction:
         correction_blocks.append(("pz2", inv_pz2_vals))
     if fit_apz2_correction:
         correction_blocks.append(("apz2", apz2_vals))
     n_corr_blocks = len(correction_blocks)
-    n_total_coeffs = n_knots * (1 + n_corr_blocks)
+    n_correction_params = (
+        2 * int(fit_a2_correction)
+        + 2 * int(fit_fv_correction)
+        + 2 * int(fit_pz2_correction)
+        + int(fit_apz2_correction)
+    )
+    n_total_coeffs = n_knots + n_correction_params
 
     coeff_samples = np.empty((sample_count, n_total_coeffs), dtype=float)
     chi2_dof = np.empty(sample_count, dtype=float)
@@ -538,8 +629,10 @@ def fit_gamma_eff_at_x(
         corr_desc = ", ".join(b[0] for b in correction_blocks) if correction_blocks else "none"
         print(
             f"    bootstrap fit: {sample_count} samples, {len(observations)} observations, "
-            f"{n_groups} nuisance groups, {n_knots} bT-knots, "
-            f"{n_total_coeffs} total coeffs ({n_knots} gamma + {n_corr_blocks * n_knots} corrections [{corr_desc}])",
+            f"{n_groups} nuisance groups, {n_knots} gamma bT-knots, "
+            f"2 parameters per correction channel except apz2 has 1, "
+            f"{n_total_coeffs} total coeffs "
+            f"({n_knots} gamma + {n_correction_params} corrections [{corr_desc}])",
             flush=True,
         )
     t_start = time.monotonic()
@@ -550,37 +643,44 @@ def fit_gamma_eff_at_x(
         )
         values = np.asarray([obs.value for obs in observations], dtype=float)[mask]
         local_design = design[mask]
+        local_bT = obs_bT[mask]
         local_log_p = log_p[mask]
         local_delta_m = delta_m[mask]
         local_groups = group_ids[mask]
         local_sigma = sigma[mask]
         local_a2 = a2_vals[mask]
-        local_fv = fv_vals[mask]
+        local_fv_prefactor = fv_prefactor_vals[mask]
+        local_fv_exp_m_pi_bT = fv_exp_m_pi_bT_vals[mask]
         local_inv_pz2 = inv_pz2_vals[mask]
         local_apz2 = apz2_vals[mask]
 
         def residuals(coeffs: np.ndarray) -> np.ndarray:
             # gamma_eff(bT) from first n_knots coefficients
             gamma = local_design @ coeffs[:n_knots]
-            # multiplicative correction factor = 1 + Σ c_block * D * block_coeffs
+            # Multiplicative correction factor on the matrix element.
             corr_factor = np.ones(len(gamma), dtype=float)
             block_offset = n_knots
             if fit_a2_correction:
-                alpha = local_design @ coeffs[block_offset:block_offset + n_knots]
+                alpha = _evaluate_correction_shape("a2", coeffs[block_offset:block_offset + 2], local_bT)
                 corr_factor += local_a2 * alpha
-                block_offset += n_knots
+                block_offset += 2
             if fit_fv_correction:
-                beta = local_design @ coeffs[block_offset:block_offset + n_knots]
-                corr_factor += local_fv * beta
-                block_offset += n_knots
+                beta = _evaluate_correction_shape(
+                    "fv",
+                    coeffs[block_offset:block_offset + 2],
+                    local_bT,
+                    fv_exp_m_pi_bT=local_fv_exp_m_pi_bT,
+                )
+                corr_factor += local_fv_prefactor * beta
+                block_offset += 2
             if fit_pz2_correction:
-                kappa = local_design @ coeffs[block_offset:block_offset + n_knots]
+                kappa = _evaluate_correction_shape("pz2", coeffs[block_offset:block_offset + 2], local_bT)
                 corr_factor += local_inv_pz2 * kappa
-                block_offset += n_knots
+                block_offset += 2
             if fit_apz2_correction:
-                lam = local_design @ coeffs[block_offset:block_offset + n_knots]
+                lam = _evaluate_correction_shape("apz2", coeffs[block_offset:block_offset + 1], local_bT)
                 corr_factor += local_apz2 * lam
-                block_offset += n_knots
+                block_offset += 1
             evolution = np.exp(local_log_p * (gamma - local_delta_m)) * corr_factor
             amplitudes = np.zeros(n_groups, dtype=float)
             for g in np.unique(local_groups):
@@ -617,6 +717,7 @@ def fit_gamma_eff_at_x(
         n_observations=len(observations),
         n_groups=n_groups,
         n_gamma_knots=n_knots,
+        n_correction_params=n_correction_params,
         fit_a2_correction=fit_a2_correction,
         fit_fv_correction=fit_fv_correction,
         fit_pz2_correction=fit_pz2_correction,
@@ -664,7 +765,8 @@ def _build_diagnostic_groups(
         bT_fm = group_obs[0].bT_fm
         ensemble_label = group_obs[0].ensemble_label
         a_fm = group_obs[0].a_fm
-        exp_m_pi_L = group_obs[0].exp_m_pi_L
+        fv_prefactor = group_obs[0].fv_prefactor
+        fv_exp_m_pi_bT = group_obs[0].fv_exp_m_pi_bT
 
         # -- data quantiles per pz --
         data_median = np.empty(len(pz_set), dtype=float)
@@ -703,34 +805,31 @@ def _build_diagnostic_groups(
             # Build per-pz correction factor
             pz_corr = np.ones(len(pz_set), dtype=float)
             if per_x_result.fit_a2_correction and per_x_result.alpha_samples is not None:
-                pz_corr += a_fm ** 2 * _evaluate_bT_surface(
+                pz_corr += a_fm ** 2 * _evaluate_correction_shape(
+                    "a2",
                     per_x_result.alpha_samples[sample_id],
                     np.asarray([bT_fm]),
-                    per_x_result.bT_knots_fm,
-                    spline_kind,
                 )[0]
             if per_x_result.fit_fv_correction and per_x_result.beta_samples is not None:
-                pz_corr += exp_m_pi_L * _evaluate_bT_surface(
+                pz_corr += fv_prefactor * _evaluate_correction_shape(
+                    "fv",
                     per_x_result.beta_samples[sample_id],
                     np.asarray([bT_fm]),
-                    per_x_result.bT_knots_fm,
-                    spline_kind,
+                    fv_exp_m_pi_bT=np.asarray([fv_exp_m_pi_bT]),
                 )[0]
             if per_x_result.fit_pz2_correction and per_x_result.kappa_samples is not None:
-                kappa_val = _evaluate_bT_surface(
+                kappa_val = _evaluate_correction_shape(
+                    "pz2",
                     per_x_result.kappa_samples[sample_id],
                     np.asarray([bT_fm]),
-                    per_x_result.bT_knots_fm,
-                    spline_kind,
                 )[0]
                 x_weight = 1.0 / per_x_result.x_actual ** 2 + 1.0 / (1.0 - per_x_result.x_actual) ** 2
                 pz_corr += (x_weight / pz_arr ** 2) * kappa_val
             if per_x_result.fit_apz2_correction and per_x_result.lambda_samples is not None:
-                lam_val = _evaluate_bT_surface(
+                lam_val = _evaluate_correction_shape(
+                    "apz2",
                     per_x_result.lambda_samples[sample_id],
                     np.asarray([bT_fm]),
-                    per_x_result.bT_knots_fm,
-                    spline_kind,
                 )[0]
                 pz_corr += (a_fm * pz_arr / HBAR_C_GEV_FM) ** 2 * lam_val
             evolution = evolution * pz_corr
@@ -866,10 +965,11 @@ def _write_joint_outputs(
     if per_x_results[0].fit_apz2_correction:
         correction_stems.append(("apz2", "lambda"))
 
+    correction_output_paths: list[Path] = []
     for short_name, full_name in correction_stems:
         corr_coeff_path = samples_dir / f"{stem}_coefficients_{full_name}.txt"
         with corr_coeff_path.open("w", encoding="utf-8") as handle:
-            header_cols = [f"c{j}" for j in range(bT_knots.size)]
+            header_cols = [f"{full_name}_0"] if short_name == "apz2" else [f"{full_name}_0", f"{full_name}_1"]
             handle.write("x\tsample_id\t" + "\t".join(header_cols) + "\n")
             for result in per_x_results:
                 if short_name == "a2":
@@ -885,6 +985,7 @@ def _write_joint_outputs(
                 for sample_id in range(samples.shape[0]):
                     coeff_str = "\t".join(f"{c:.10e}" for c in samples[sample_id])
                     handle.write(f"{result.x_actual:.10e}\t{sample_id}\t{coeff_str}\n")
+        correction_output_paths.append(corr_coeff_path)
 
         # Correction surface table
         corr_surface_path = tables_dir / f"{stem}_surface_{short_name}.txt"
@@ -901,13 +1002,31 @@ def _write_joint_outputs(
                     samples = result.lambda_samples
                 if samples is None:
                     continue
-                for j, bT_val in enumerate(result.bT_knots_fm):
-                    values = samples[:, j]
+                bT_values = result.bT_knots_fm
+                if short_name in {"a2", "pz2"}:
+                    bT_values = bT_values[bT_values > 0.0]
+                fv_exp_values = None
+                if short_name == "fv":
+                    m_pi_mev = spec.ensembles[0].m_pi_mev
+                    fv_exp_values = np.exp(m_pi_mev * bT_values / HBAR_C_MEV_FM)
+                for bT_val in bT_values:
+                    idx = int(np.where(bT_values == bT_val)[0][0])
+                    values = _evaluate_correction_shape(
+                        short_name,
+                        samples,
+                        np.asarray([bT_val], dtype=float),
+                        fv_exp_m_pi_bT=(
+                            np.asarray([fv_exp_values[idx]], dtype=float)
+                            if fv_exp_values is not None
+                            else None
+                        ),
+                    )[:, 0]
                     q16, q50, q84 = _legacy_quantile_triplet(values)
                     handle.write(
                         f"{result.x_actual:.10e}\t{bT_val:.10e}\t"
                         f"{q16:.10e}\t{q50:.10e}\t{q84:.10e}\n"
                     )
+        correction_output_paths.append(corr_surface_path)
 
     # -- diagnostics (chi2/dof per sample per x) --
     diagnostics_path = diagnostics_dir / f"{stem}_diagnostics.txt"
@@ -932,12 +1051,15 @@ def _write_joint_outputs(
         handle.write(f"x_window {spec.x_window[0]:.10e} {spec.x_window[1]:.10e}\n")
         handle.write(f"spline_kind {spec.spline_kind}\n")
         handle.write(f"bT_knots_fm {' '.join(f'{v:.10e}' for v in bT_knots)}\n")
+        handle.write("correction_model analytic_two_parameter_multiplicative\n")
         handle.write(f"x_fit_points {' '.join(f'{v:.10e}' for v in x_fit_order)}\n")
         handle.write(f"fit_a2_correction {str(spec.fit_a2_correction).lower()}\n")
         handle.write(f"fit_fv_correction {str(spec.fit_fv_correction).lower()}\n")
         handle.write(f"fit_pz2_correction {str(spec.fit_pz2_correction).lower()}\n")
         handle.write(f"fit_apz2_correction {str(spec.fit_apz2_correction).lower()}\n")
         handle.write(f"n_gamma_knots {bT_knots.size}\n")
+        if per_x_results:
+            handle.write(f"n_correction_params {per_x_results[0].n_correction_params}\n")
         handle.write(f"plot {str(spec.make_plots).lower()}\n")
         handle.write(f"progress {str(spec.show_progress).lower()}\n")
         if spec.progress_every is not None:
@@ -957,7 +1079,7 @@ def _write_joint_outputs(
                 f"m_pi={ensemble.m_pi_mev:.1f}\n"
             )
 
-    outputs = [summary_path, surface_path, samples_path, coeff_path, diagnostics_path]
+    outputs = [summary_path, surface_path, samples_path, coeff_path, *correction_output_paths, diagnostics_path]
 
     # -- plots: gamma_eff vs x band for each bT knot --
     if spec.make_plots:

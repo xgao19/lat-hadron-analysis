@@ -486,14 +486,14 @@ A matching notebook template is also provided in:
 
 - `templates/tmdwf/tmdwf_cs_kernel_template.ipynb`
 
-## TMDWF Joint CS-Kernel Effective Surface
+## TMDWF Joint CS-Kernel Fit
 
 For multi-ensemble studies, the repository also provides a joint downstream
-fit that reads Fourier bootstrap samples directly and fits the effective
-anomalous dimension
+fit that reads Fourier bootstrap samples directly and fits the common
+CS kernel
 
 ```text
-gamma_eff(x, bT)
+gamma_MSbar(x, bT)
 ```
 
 at each specified x independently, parameterizing the bT dependence with a 1D
@@ -513,15 +513,15 @@ This joint workflow:
 - reads repository-native Fourier bootstrap sample tables from each requested
   ensemble
 - keeps each ensemble's own physical `Pz` and physical `bT = nT * a`
-- fits `gamma_eff(bT)` independently at each `x_knots` point using a 1D bT
-  spline, then writes the combined `gamma_eff(x,bT)` surface
+- fits `gamma_MSbar(bT)` independently at each `x_knots` point using a 1D bT
+  spline, then writes the combined `gamma_MSbar(x,bT)` surface
 - uses the direct type-2 evolution relation in the scalar `real` or `imag`
   component channel, with the matching correction evaluated at each x's actual
   data-grid value (the nearest grid point to the requested x_knot)
 - analytically eliminates one nuisance amplitude for each
   `(ensemble, bT)` group during each per-x nonlinear spline fit
 - writes the bootstrap surface, summary quantiles, chi2/dof diagnostics, and
-  spline coefficients for reconstructing `gamma_eff(bT)` at arbitrary bT values
+  spline coefficients for reconstructing `gamma_MSbar(bT)` at arbitrary bT values
 
 Expected key input fields include:
 
@@ -539,11 +539,13 @@ x_window 0.2 0.8
 x_knots 0.2 0.3 0.4 0.5 0.6 0.7 0.8
 bT_knots_fm 0.05 0.10 0.15 0.20 0.25 0.30
 spline_kind linear
+fit_a2_correction true
+fit_pz2_correction true
 plot true
 progress true
 progress_every 10
-ensemble l48a060 /path/l48 l48_pz* 48 0.060 pz=1:5 bT=0:20
-ensemble l64a050 /path/l64 l64_pz* 64 0.050 pz=3:8 bT=0:30
+ensemble l48a060 /path/l48 l48_pz* 48 0.060 pz=1:5 bT=1:20
+ensemble l64a050 /path/l64 l64_pz* 64 0.050 pz=3:8 bT=1:30
 results_dir results_tmdwf_cs_kernel_joint
 ```
 
@@ -562,19 +564,29 @@ Option guide:
   x range. Observations whose actual data-grid x value falls outside this
   window are excluded from the fit.
 - `x_knots`:
-  the x values at which `gamma_eff(x,bT)` is fitted independently. Each
+  the x values at which `gamma_MSbar(x,bT)` is fitted independently. Each
   `x_knot` is mapped to the nearest point on the data x-grid; the actual
   x value is recorded in the output. If omitted, the workflow picks up to 6
   evenly spaced points within `x_window`.
 - `bT_knots_fm`:
   spline knots (in fm) for the bT-direction spline parameterizing
-  `gamma_eff(bT)` at each x. If omitted, the workflow uses the unique
+  `gamma_MSbar(bT)` at each x. If omitted, the workflow uses the unique
   physical bT values across all ensembles, capped at 8 knots.
 - `spline_kind`:
-  interpolation kind for the bT spline. Use `linear` for the piecewise-linear
-  hat basis or `cubic` for a natural cubic spline basis.
+  interpolation kind for the gamma bT spline. Use `linear` for the
+  piecewise-linear hat basis or `cubic` for a natural cubic spline basis.
+- `fit_a2_correction`, `fit_pz2_correction`:
+  recommended central multiplicative correction model. Each enabled channel
+  adds two analytic parameters rather than a bT spline. The a2 and pz2 terms
+  use short-distance-enhanced forms `c0 + c1 / bT^2`, so selected data must
+  exclude `bT=0` when either is enabled.
+- `fit_fv_correction`, `fit_apz2_correction`:
+  optional systematic variations. The finite-volume factor is
+  `exp(-M_pi L) / sqrt(M_pi L)` multiplying
+  `beta0 + beta1 exp(M_pi bT)`, with `M_pi bT` in the same units as
+  `M_pi L`; the apz2 term uses a single `lambda0` coefficient.
 - `plot`:
-  whether to write one `gamma_eff` vs x band plot for each `bT_knots_fm`
+  whether to write one `gamma_MSbar` vs x band plot for each `bT_knots_fm`
   value, per-x pz-diagnostics plots showing data vs fit for each
   `(ensemble, bT)` group, and a diagnostics notebook for redrawing
   those plots from saved outputs.
@@ -605,9 +617,10 @@ The workflow writes:
 - `joint_gamma_eff/plots/diagnostics/*_diagnostics_notebook.ipynb`
 
 The `*_coefficients.txt` file records the spline coefficients for every
-bootstrap sample at each x, so that `gamma_eff(bT)` can be reconstructed at
+bootstrap sample at each x, so that `gamma_MSbar(bT)` can be reconstructed at
 any bT value using `_spline_basis(bT_values, bT_knots_fm, kind=spline_kind) @ coeffs`.
-The `bT_knots_fm` and `spline_kind` are recorded in `*_summary.txt`.
+The `bT_knots_fm`, `spline_kind`, correction model, and correction flags are
+recorded in `*_summary.txt`.
 
 The `*_pz_diagnostics.pdf` files show, for each fitted x, data points and the
 reconstructed fit band in `O vs pz` space organized per ensemble. The
@@ -735,7 +748,7 @@ The intended downstream chain is now:
 4. `tmdwf-cs-kernel`
 5. optional `tmdwf-cs-kernel-average`
 
-For the joint effective-surface path, replace steps 4 and 5 with:
+For the joint CS-kernel path, replace steps 4 and 5 with:
 
 4. `tmdwf-cs-kernel-joint`
 
@@ -755,7 +768,7 @@ The data products passed between these steps are:
   when you need to separate `all`, `adjacent`, or `fixed_p1` extraction runs.
 - `tmdwf-cs-kernel-joint`:
   reads Fourier-space bootstrap outputs directly from one or more ensembles
-  and fits a shared continuous `gamma_eff(x,bT)` surface.
+  and fits a shared continuous `gamma_MSbar(x,bT)` surface.
 
 Practical choices:
 
@@ -780,7 +793,7 @@ This means the repository now supports these two common chains cleanly:
   `fit -> normalize(modeX) -> fourier(modeX) -> cs-kernel(modeX)`
 - averaged CS-kernel chain:
   `fit -> normalize(optional) -> fourier -> cs-kernel -> cs-kernel-average`
-- joint effective-surface chain:
+- joint CS-kernel chain:
   `fit -> normalize(optional) -> fourier -> cs-kernel-joint`
 
 ## Workflows
