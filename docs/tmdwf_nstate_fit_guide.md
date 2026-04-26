@@ -93,7 +93,8 @@ You usually want to:
 - choose a good `tmin` inside that plateau
 - keep `tmax` reasonable, but `tmax` is usually less critical than `tmin`
 
-The workflow uses this two-point fit table only to supply fixed amplitudes and energies for the TMDWF ratio model.
+The workflow uses this two-point fit table to supply fixed amplitudes and energies for the TMDWF ratio model by default.
+If you enable `two_point_fit_sample_coupled`, it instead reads the matching bootstrap sample row from the two-point sample table for each TMDWF bootstrap sample.
 
 ### 3. TMDWF Fit Settings
 

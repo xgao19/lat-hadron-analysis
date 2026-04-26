@@ -15,6 +15,10 @@ fit_a2_correction true
 # fit_fv_correction true
 fit_pz2_correction true
 # fit_apz2_correction true
+a2_correction_prior_width 1.0
+fv_correction_prior_width 1.0
+pz2_correction_prior_width 1.0
+apz2_correction_prior_width 1.0
 plot true
 progress true
 progress_every 10

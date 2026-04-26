@@ -78,6 +78,7 @@ class TMDWFCSKernelJointTests(unittest.TestCase):
                         "kernel_label LO",
                         "reference_p1_gev 1.0",
                         "spline_kind cubic",
+                        "a2_correction_prior_width 0.5",
                         "plot false",
                         "progress false",
                         f"ensemble ens {root} demo_pz* 64 0.076 pz=2,3 bT=0:1",
@@ -92,8 +93,46 @@ class TMDWFCSKernelJointTests(unittest.TestCase):
         self.assertEqual(parsed.ensembles[0].bTlist, (0, 1))
         self.assertEqual(parsed.kernel_label, "LO")
         self.assertEqual(parsed.spline_kind, "cubic")
+        self.assertEqual(parsed.a2_correction_prior_width, 0.5)
+        self.assertEqual(parsed.fv_correction_prior_width, 1.0)
         self.assertFalse(parsed.make_plots)
         self.assertFalse(parsed.show_progress)
+
+    def test_correction_prior_width_must_be_positive(self) -> None:
+        observations = [
+            JointCSObservation(
+                group_id=0,
+                sample_id=0,
+                x=0.4,
+                bT_fm=0.1,
+                pz_gev=1.2,
+                value=1.0,
+                sigma=0.05,
+                ensemble_label="ens",
+                a_fm=0.06,
+                fv_prefactor=0.01,
+                fv_exp_m_pi_bT=1.0,
+                spatial_extent_fm=3.0,
+            )
+        ]
+
+        with self.assertRaisesRegex(ValueError, "a2_correction_prior_width must be positive"):
+            fit_gamma_eff_at_x(
+                observations,
+                sample_count=1,
+                x_value=0.4,
+                bT_knots_fm=np.asarray([0.1]),
+                spline_kind="linear",
+                reference_p1_gev=1.0,
+                scheme="CG",
+                kernel_label="LO",
+                mu=2.0,
+                component="real",
+                show_progress=False,
+                progress_every=None,
+                fit_a2_correction=True,
+                a2_correction_prior_width=0.0,
+            )
 
     def test_analytic_corrections_use_two_parameters_per_enabled_channel(self) -> None:
         observations = []

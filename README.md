@@ -215,7 +215,7 @@ This first implementation:
 - supports only `1-state` and `2-state` fits
 - fits real and imaginary parts separately
 - uses fixed two-point amplitudes and energies loaded from a two-point fit-summary table
-- does not yet couple to two-point bootstrap-sample amplitudes and energies
+- can optionally couple to two-point bootstrap-sample amplitudes and energies
 - can optionally run a `decay_constant_check` mode that forces `bT = bz = 0`, fits only the real part, and scans nearby fit windows around the requested `fit_window`
 
 Expected key input fields include:
@@ -226,6 +226,7 @@ fit_component both
 nstates 1 2
 gmlist T5
 decay_constant_check false
+two_point_fit_sample_coupled false
 # notebook workflow_config: fit_window = {5: [6, 12], 6: [6, 12]}
 # plain-text input: fit_window /path/to/tmdwf_fit_windows.txt
 qtmdwf_h5 /path/to/file_or_pattern.h5
@@ -541,6 +542,10 @@ bT_knots_fm 0.05 0.10 0.15 0.20 0.25 0.30
 spline_kind linear
 fit_a2_correction true
 fit_pz2_correction true
+a2_correction_prior_width 1.0
+fv_correction_prior_width 1.0
+pz2_correction_prior_width 1.0
+apz2_correction_prior_width 1.0
 plot true
 progress true
 progress_every 10
@@ -585,6 +590,11 @@ Option guide:
   `exp(-M_pi L) / sqrt(M_pi L)` multiplying
   `beta0 + beta1 exp(M_pi bT)`, with `M_pi bT` in the same units as
   `M_pi L`; the apz2 term uses a single `lambda0` coefficient.
+- `a2_correction_prior_width`, `fv_correction_prior_width`,
+  `pz2_correction_prior_width`, `apz2_correction_prior_width`:
+  zero-centered Gaussian prior widths for the enabled correction parameters.
+  Each prior is applied only to its own channel's nuisance coefficients and
+  does not modify the main `gamma_MSbar` spline.
 - `plot`:
   whether to write one `gamma_MSbar` vs x band plot for each `bT_knots_fm`
   value, per-x pz-diagnostics plots showing data vs fit for each

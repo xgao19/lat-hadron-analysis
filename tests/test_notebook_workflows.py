@@ -1086,7 +1086,7 @@ class NotebookWorkflowTests(unittest.TestCase):
         self.assertIn("\"progress\": True", joined)
         self.assertIn("\"normalization_mode\": \"mode3\"", joined)
         self.assertIn("\"ensembles\": [", joined)
-        self.assertIn("gamma_eff(x, bT)", joined)
+        self.assertIn("gamma_MSbar(x, bT)", joined)
         self.assertIn("## Option Guide", joined)
 
     def test_example_input_files_parse(self) -> None:

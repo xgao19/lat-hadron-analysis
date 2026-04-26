@@ -63,6 +63,10 @@ class TMDWFCSKernelJointInput:
     fit_fv_correction: bool = False
     fit_pz2_correction: bool = False
     fit_apz2_correction: bool = False
+    a2_correction_prior_width: float = 1.0
+    fv_correction_prior_width: float = 1.0
+    pz2_correction_prior_width: float = 1.0
+    apz2_correction_prior_width: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -267,6 +271,12 @@ def parse_tmdwf_cs_kernel_joint_input(
     progress_every = int(entries["progress_every"][0]) if "progress_every" in entries else None
     if progress_every is not None and progress_every < 1:
         raise ValueError("progress_every must be positive")
+    def _parse_positive_float(entries, key, default):
+        value = float(entries.get(key, [default])[0])
+        if value <= 0.0:
+            raise ValueError(f"{key} must be positive")
+        return value
+
     default_results_dir = file_path.parent / "results_tmdwf_cs_kernel_joint"
     output_root = Path(results_dir) if results_dir is not None else Path(
         entries.get("results_dir", [default_results_dir])[0]
@@ -305,6 +315,10 @@ def parse_tmdwf_cs_kernel_joint_input(
         fit_fv_correction=_parse_bool(entries, "fit_fv_correction"),
         fit_pz2_correction=_parse_bool(entries, "fit_pz2_correction"),
         fit_apz2_correction=_parse_bool(entries, "fit_apz2_correction"),
+        a2_correction_prior_width=_parse_positive_float(entries, "a2_correction_prior_width", "1.0"),
+        fv_correction_prior_width=_parse_positive_float(entries, "fv_correction_prior_width", "1.0"),
+        pz2_correction_prior_width=_parse_positive_float(entries, "pz2_correction_prior_width", "1.0"),
+        apz2_correction_prior_width=_parse_positive_float(entries, "apz2_correction_prior_width", "1.0"),
     )
 
 
@@ -556,7 +570,20 @@ def fit_gamma_eff_at_x(
     fit_fv_correction: bool = False,
     fit_pz2_correction: bool = False,
     fit_apz2_correction: bool = False,
+    a2_correction_prior_width: float = 1.0,
+    fv_correction_prior_width: float = 1.0,
+    pz2_correction_prior_width: float = 1.0,
+    apz2_correction_prior_width: float = 1.0,
 ) -> PerXFitResult:
+    prior_widths = {
+        "a2": float(a2_correction_prior_width),
+        "fv": float(fv_correction_prior_width),
+        "pz2": float(pz2_correction_prior_width),
+        "apz2": float(apz2_correction_prior_width),
+    }
+    for name, width in prior_widths.items():
+        if width <= 0.0:
+            raise ValueError(f"{name}_correction_prior_width must be positive")
     obs_bT = np.asarray([obs.bT_fm for obs in observations], dtype=float)
     _check_nonzero_bT_for_inverse_corrections(
         obs_bT,
@@ -624,15 +651,23 @@ def fit_gamma_eff_at_x(
     chi2_dof = np.empty(sample_count, dtype=float)
     previous = np.zeros(n_total_coeffs, dtype=float)
     progress_every = progress_every or max(1, sample_count // 20)
+    prior_slices: list[tuple[slice, float]] = []
+    prior_offset = n_knots
+    for name, _scale in correction_blocks:
+        size = 1 if name == "apz2" else 2
+        prior_slices.append((slice(prior_offset, prior_offset + size), prior_widths[name]))
+        prior_offset += size
 
     if show_progress:
         corr_desc = ", ".join(b[0] for b in correction_blocks) if correction_blocks else "none"
+        prior_desc = ", ".join(f"{name}:0+/-{prior_widths[name]:.3g}" for name, _ in correction_blocks)
         print(
             f"    bootstrap fit: {sample_count} samples, {len(observations)} observations, "
             f"{n_groups} nuisance groups, {n_knots} gamma bT-knots, "
             f"2 parameters per correction channel except apz2 has 1, "
             f"{n_total_coeffs} total coeffs "
-            f"({n_knots} gamma + {n_correction_params} corrections [{corr_desc}])",
+            f"({n_knots} gamma + {n_correction_params} corrections [{corr_desc}]), "
+            f"correction priors [{prior_desc or 'none'}]",
             flush=True,
         )
     t_start = time.monotonic()
@@ -655,7 +690,7 @@ def fit_gamma_eff_at_x(
         local_apz2 = apz2_vals[mask]
 
         def residuals(coeffs: np.ndarray) -> np.ndarray:
-            # gamma_eff(bT) from first n_knots coefficients
+            # gamma_MSbar(bT) from first n_knots coefficients
             gamma = local_design @ coeffs[:n_knots]
             # Multiplicative correction factor on the matrix element.
             corr_factor = np.ones(len(gamma), dtype=float)
@@ -691,12 +726,16 @@ def fit_gamma_eff_at_x(
                     np.sum(weights * evo * values[g_mask]) / np.sum(weights * evo ** 2)
                 )
             model = amplitudes[local_groups] * evolution
-            return (values - model) / local_sigma
+            data_residuals = (values - model) / local_sigma
+            if not prior_slices:
+                return data_residuals
+            prior_residuals = [coeffs[sl] / width for sl, width in prior_slices]
+            return np.concatenate([data_residuals, *prior_residuals])
 
         result = least_squares(residuals, previous, method="trf")
         coeff_samples[sample_id] = result.x
         previous = result.x
-        dof = values.size - n_groups - n_total_coeffs
+        dof = result.fun.size - n_groups - n_total_coeffs
         chi2_dof[sample_id] = float(np.sum(result.fun ** 2) / dof) if dof > 0 else float("nan")
         done = sample_id + 1
         if show_progress and (done == 1 or done == sample_count or done % progress_every == 0):
@@ -882,7 +921,7 @@ def _evaluate_bT_surface(
     bT_knots_fm: np.ndarray,
     spline_kind: str,
 ) -> np.ndarray:
-    """Evaluate gamma_eff(bT) from spline coefficients.
+    """Evaluate gamma_MSbar(bT) from spline coefficients.
 
     coeffs may be 1D (single sample) or 2D (n_samples, n_knots).
     Returns shape (n_bT,) for 1D input or (n_samples, n_bT) for 2D input.
@@ -1057,6 +1096,10 @@ def _write_joint_outputs(
         handle.write(f"fit_fv_correction {str(spec.fit_fv_correction).lower()}\n")
         handle.write(f"fit_pz2_correction {str(spec.fit_pz2_correction).lower()}\n")
         handle.write(f"fit_apz2_correction {str(spec.fit_apz2_correction).lower()}\n")
+        handle.write(f"a2_correction_prior_width {spec.a2_correction_prior_width:.10e}\n")
+        handle.write(f"fv_correction_prior_width {spec.fv_correction_prior_width:.10e}\n")
+        handle.write(f"pz2_correction_prior_width {spec.pz2_correction_prior_width:.10e}\n")
+        handle.write(f"apz2_correction_prior_width {spec.apz2_correction_prior_width:.10e}\n")
         handle.write(f"n_gamma_knots {bT_knots.size}\n")
         if per_x_results:
             handle.write(f"n_correction_params {per_x_results[0].n_correction_params}\n")
@@ -1184,6 +1227,10 @@ def run_tmdwf_cs_kernel_joint_workflow(
             fit_fv_correction=spec.fit_fv_correction,
             fit_pz2_correction=spec.fit_pz2_correction,
             fit_apz2_correction=spec.fit_apz2_correction,
+            a2_correction_prior_width=spec.a2_correction_prior_width,
+            fv_correction_prior_width=spec.fv_correction_prior_width,
+            pz2_correction_prior_width=spec.pz2_correction_prior_width,
+            apz2_correction_prior_width=spec.apz2_correction_prior_width,
         )
         per_x_results.append(result)
         x_fit_order.append(x_actual)
@@ -1300,6 +1347,10 @@ def parse_joint_summary(summary_path: str | Path) -> dict:
         "fit_fv_correction": entries.get("fit_fv_correction", ["false"])[0].lower() == "true",
         "fit_pz2_correction": entries.get("fit_pz2_correction", ["false"])[0].lower() == "true",
         "fit_apz2_correction": entries.get("fit_apz2_correction", ["false"])[0].lower() == "true",
+        "a2_correction_prior_width": float(entries.get("a2_correction_prior_width", ["1.0"])[0]),
+        "fv_correction_prior_width": float(entries.get("fv_correction_prior_width", ["1.0"])[0]),
+        "pz2_correction_prior_width": float(entries.get("pz2_correction_prior_width", ["1.0"])[0]),
+        "apz2_correction_prior_width": float(entries.get("apz2_correction_prior_width", ["1.0"])[0]),
         "n_gamma_knots": int(entries["n_gamma_knots"][0]) if "n_gamma_knots" in entries else len(entries["bT_knots_fm"]),
         "ensembles": ensembles,
     }

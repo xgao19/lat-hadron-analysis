@@ -13,6 +13,11 @@ l64c64a076_m140_fit_pz* 64 64 0.076
 # and prints the decay constant in GeV.
 decay_constant_check false
 
+# Set this to true to couple each TMDWF bootstrap sample to the matching
+# two-point bootstrap sample row. When omitted, the workflow keeps using the
+# summary-table reference and prints one warning at startup.
+two_point_fit_sample_coupled false
+
 # Integer momentum labels to analyze.
 pzlist 0
 
@@ -120,8 +125,9 @@ results_dir examples/outputs/tmdwf_fit_example
 #   tmin in [tmin - 2, tmin + 2] and tmax in [tmax - 4, tmax] around the
 #   requested fit window.
 # - A_i and E_i are loaded from the selected row of the two-point fit table as
-#   fixed central values.
-# - The code does not yet couple to two-point bootstrap-sample A_i/E_i.
+#   fixed central values by default.
+# - Set two_point_fit_sample_coupled true to use the matching two-point
+#   bootstrap-sample A_i/E_i for each TMDWF bootstrap sample.
 # - Bootstrap sample fits start from the same plain zero initial guess for each
 #   sample; there is no separate mean-fit warm start in this template.
 # - The reported chi2, chi2_dof, and pvalue are summarized from the successful

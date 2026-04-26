@@ -3,6 +3,7 @@
 # Data settings
 l64c64a076_m140_fit_pz* 64 64 0.076
 decay_constant_check false
+two_point_fit_sample_coupled false
 pzlist 0
 gmlist T5
 etalist eta0

@@ -39,6 +39,7 @@ class TMDWFNStateInput:
     nt: int
     lattice_spacing_fm: float
     decay_constant_check: bool
+    two_point_fit_sample_coupled: bool | None
     fit_target: str
     fit_component: str
     nstates: tuple[int, ...]
@@ -189,6 +190,11 @@ def parse_tmdwf_fit_input(path: str | Path, results_dir: str | Path | None = Non
         nt=int(first_tokens[2]),
         lattice_spacing_fm=float(first_tokens[3]),
         decay_constant_check=parse_bool(entries.get("decay_constant_check", ["false"])[0]),
+        two_point_fit_sample_coupled=(
+            parse_bool(entries["two_point_fit_sample_coupled"][0])
+            if "two_point_fit_sample_coupled" in entries
+            else None
+        ),
         fit_target=fit_target,
         fit_component=fit_component,
         nstates=nstates,
@@ -260,18 +266,44 @@ def fit_tmdwf_component(
     component: str,
 ) -> tuple[TMDWFFitResult, np.ndarray]:
     prepared = _prepare_fit_data(ratio_samples, tmin=tmin, tmax=tmax, component=component)
+    amplitudes = np.asarray(amplitudes, dtype=float)
+    energies = np.asarray(energies, dtype=float)
+    amplitudes_by_sample = amplitudes if amplitudes.ndim == 2 else None
+    energies_by_sample = energies if energies.ndim == 2 else None
+    nstates = amplitudes.shape[-1]
 
-    def residuals(params: np.ndarray, data: np.ndarray) -> np.ndarray:
-        model_values = evaluate_tmdwf_ratio(prepared.times, amplitudes, energies, params, nt, gm=gm, pz=pz, ns=ns)
+    def residuals(
+        params: np.ndarray,
+        data: np.ndarray,
+        fit_amplitudes: np.ndarray,
+        fit_energies: np.ndarray,
+    ) -> np.ndarray:
+        model_values = evaluate_tmdwf_ratio(
+            prepared.times,
+            fit_amplitudes,
+            fit_energies,
+            params,
+            nt,
+            gm=gm,
+            pz=pz,
+            ns=ns,
+        )
         return (model_values - data) / prepared.sigma
 
-    theta0 = np.zeros(len(amplitudes), dtype=float)
-    sample_params = np.full((ratio_samples.shape[0], len(amplitudes)), np.nan, dtype=float)
+    theta0 = np.zeros(nstates, dtype=float)
+    sample_params = np.full((ratio_samples.shape[0], nstates), np.nan, dtype=float)
     chi2_samples = np.full(ratio_samples.shape[0], np.nan, dtype=float)
     chi2_dof_samples = np.full(ratio_samples.shape[0], np.nan, dtype=float)
     pvalue_samples = np.full(ratio_samples.shape[0], np.nan, dtype=float)
     for sample_id, sample_data in enumerate(prepared.data_samples):
-        sample_result = least_squares(residuals, theta0, args=(sample_data,), max_nfev=5000)
+        fit_amplitudes = amplitudes_by_sample[sample_id] if amplitudes_by_sample is not None else amplitudes
+        fit_energies = energies_by_sample[sample_id] if energies_by_sample is not None else energies
+        sample_result = least_squares(
+            residuals,
+            theta0,
+            args=(sample_data, fit_amplitudes, fit_energies),
+            max_nfev=5000,
+        )
         if sample_result.success:
             params = np.asarray(sample_result.x, dtype=float)
             sample_params[sample_id] = params
@@ -290,7 +322,7 @@ def fit_tmdwf_component(
         success = True
         message = f"bootstrap-centered fit from {int(np.count_nonzero(success_mask))} successful samples"
     else:
-        params_mean = tuple(np.nan for _ in range(len(amplitudes)))
+        params_mean = tuple(np.nan for _ in range(nstates))
         chi2_mean = float("nan")
         chi2_dof_mean = float("nan")
         pvalue_mean = float("nan")
@@ -345,6 +377,48 @@ def _iter_decay_constant_scan_windows(tmin: int, tmax: int, *, max_t: int) -> tu
 
 def _iter_decay_constant_two_point_tmins(tmin: int, tmax: int) -> tuple[int, ...]:
     return tuple(candidate for candidate in range(tmin - 1, tmin + 2) if candidate <= tmax)
+
+
+def _two_point_sample_table_path(fit_table_path: Path) -> Path:
+    return fit_table_path.parent.parent / "samples" / fit_table_path.name.replace("_fits.txt", "_samples.txt")
+
+
+def _load_two_point_sample_parameters(
+    sample_table_path: Path,
+    *,
+    tmin: int,
+    nstates: int,
+    sample_count: int,
+    fallback_amplitudes: np.ndarray,
+    fallback_energies: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    rows = np.atleast_2d(np.loadtxt(sample_table_path, dtype=float))
+    matching_rows = rows[rows[:, 0] == float(tmin)]
+    if matching_rows.shape[0] == 0:
+        raise ValueError(f"could not find tmin={tmin} in two-point sample table {sample_table_path}")
+
+    amplitudes = np.tile(np.asarray(fallback_amplitudes, dtype=float), (sample_count, 1))
+    energies = np.tile(np.asarray(fallback_energies, dtype=float), (sample_count, 1))
+
+    for row in matching_rows:
+        sample_id = int(row[1])
+        if sample_id < 0 or sample_id >= sample_count:
+            raise ValueError(
+                f"sample_id {sample_id} in {sample_table_path} is outside the bootstrap range 0..{sample_count - 1}"
+            )
+        success = int(row[2])
+        param_start = 5
+        param_stop = param_start + 2 * nstates
+        if row.shape[0] < param_stop:
+            raise ValueError(
+                f"two-point sample table row at tmin={tmin}, sample_id={sample_id} has too few columns for nstates={nstates}"
+            )
+        sample_params = np.asarray(row[param_start:param_stop], dtype=float)
+        if success and np.all(np.isfinite(sample_params)):
+            amplitudes[sample_id] = sample_params[:nstates]
+            energies[sample_id] = sample_params[nstates: 2 * nstates]
+
+    return amplitudes, energies
 
 
 def _summarize_bootstrap_series(samples: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -515,34 +589,58 @@ def _write_component_outputs(
         handle.write("\t".join(["bz", "t", "in_fit_window", "fit_mean", "fit_p16", "fit_p84"]) + "\n")
         for record in records:
             times = np.arange(record.tsrange_start, record.tsrange_end + 1, dtype=int)
-            valid_samples = record.sample_params[np.all(np.isfinite(record.sample_params), axis=1)]
+            valid_mask = np.all(np.isfinite(record.sample_params), axis=1)
+            valid_samples = record.sample_params[valid_mask]
+            fit_amplitudes = np.asarray(record.amplitudes, dtype=float)
+            fit_energies = np.asarray(record.energies, dtype=float)
             if len(valid_samples) > 0:
-                component_curves = np.array(
-                    [
-                        _select_curve_component(
-                            evaluate_tmdwf_ratio(
-                                times,
-                                record.amplitudes,
-                                record.energies,
-                                params,
-                                nt,
-                                gm=record.gm,
-                                pz=record.pz,
-                                ns=record.ns,
-                            ),
-                            component,
-                        )
-                        for params in valid_samples
-                    ]
-                )
+                if fit_amplitudes.ndim == 2 and fit_energies.ndim == 2:
+                    valid_indices = np.flatnonzero(valid_mask)
+                    component_curves = np.array(
+                        [
+                            _select_curve_component(
+                                evaluate_tmdwf_ratio(
+                                    times,
+                                    fit_amplitudes[sample_index],
+                                    fit_energies[sample_index],
+                                    params,
+                                    nt,
+                                    gm=record.gm,
+                                    pz=record.pz,
+                                    ns=record.ns,
+                                ),
+                                component,
+                            )
+                            for sample_index, params in zip(valid_indices, valid_samples, strict=True)
+                        ]
+                    )
+                else:
+                    component_curves = np.array(
+                        [
+                            _select_curve_component(
+                                evaluate_tmdwf_ratio(
+                                    times,
+                                    fit_amplitudes,
+                                    fit_energies,
+                                    params,
+                                    nt,
+                                    gm=record.gm,
+                                    pz=record.pz,
+                                    ns=record.ns,
+                                ),
+                                component,
+                            )
+                            for params in valid_samples
+                        ]
+                    )
                 center, low, high = _summarize_bootstrap_series(component_curves)
             else:
                 params_mean, _ = summarize_parameter_samples(record.sample_params)
                 center = _select_curve_component(
                     evaluate_tmdwf_ratio(
                         times,
-                        record.amplitudes,
-                        record.energies,
+                        fit_amplitudes[0] if fit_amplitudes.ndim == 2 else fit_amplitudes,
+                        fit_energies[0] if fit_energies.ndim == 2 else fit_energies,
                         np.asarray(params_mean),
                         nt,
                         gm=record.gm,
@@ -583,34 +681,58 @@ def _write_component_outputs(
                 if component == "real"
                 else 0.5 * (ratio_imag_p84 - ratio_imag_p16)
             )
-            valid_samples = record.sample_params[np.all(np.isfinite(record.sample_params), axis=1)]
+            valid_mask = np.all(np.isfinite(record.sample_params), axis=1)
+            valid_samples = record.sample_params[valid_mask]
+            fit_amplitudes = np.asarray(record.amplitudes, dtype=float)
+            fit_energies = np.asarray(record.energies, dtype=float)
             if len(valid_samples) > 0:
-                component_curves = np.array(
-                    [
-                        _select_curve_component(
-                            evaluate_tmdwf_ratio(
-                                times,
-                                record.amplitudes,
-                                record.energies,
-                                params,
-                                nt,
-                                gm=record.gm,
-                                pz=record.pz,
-                                ns=record.ns,
-                            ),
-                            component,
-                        )
-                        for params in valid_samples
-                    ]
-                )
+                if fit_amplitudes.ndim == 2 and fit_energies.ndim == 2:
+                    valid_indices = np.flatnonzero(valid_mask)
+                    component_curves = np.array(
+                        [
+                            _select_curve_component(
+                                evaluate_tmdwf_ratio(
+                                    times,
+                                    fit_amplitudes[sample_index],
+                                    fit_energies[sample_index],
+                                    params,
+                                    nt,
+                                    gm=record.gm,
+                                    pz=record.pz,
+                                    ns=record.ns,
+                                ),
+                                component,
+                            )
+                            for sample_index, params in zip(valid_indices, valid_samples, strict=True)
+                        ]
+                    )
+                else:
+                    component_curves = np.array(
+                        [
+                            _select_curve_component(
+                                evaluate_tmdwf_ratio(
+                                    times,
+                                    fit_amplitudes,
+                                    fit_energies,
+                                    params,
+                                    nt,
+                                    gm=record.gm,
+                                    pz=record.pz,
+                                    ns=record.ns,
+                                ),
+                                component,
+                            )
+                            for params in valid_samples
+                        ]
+                    )
                 fit_mean, fit_p16, fit_p84 = _summarize_bootstrap_series(component_curves)
             else:
                 params_mean, _ = summarize_parameter_samples(record.sample_params)
                 fit_mean = _select_curve_component(
                     evaluate_tmdwf_ratio(
                         times,
-                        record.amplitudes,
-                        record.energies,
+                        fit_amplitudes[0] if fit_amplitudes.ndim == 2 else fit_amplitudes,
+                        fit_energies[0] if fit_energies.ndim == 2 else fit_energies,
                         np.asarray(params_mean),
                         nt,
                         gm=record.gm,
@@ -741,6 +863,10 @@ def run_tmdwf_nstate_fit(
     results_dir: str | Path | None = None,
 ) -> list[Path]:
     spec = parse_tmdwf_fit_input(input_file, results_dir=results_dir)
+    if spec.two_point_fit_sample_coupled is None:
+        print(
+            "[tmdwf-fit] WARNING: two_point_fit_sample_coupled is not set; using summary-table two-point references"
+        )
     outputs: list[Path] = []
     fit_windows = load_fit_window_table(spec.fit_window)
 
@@ -756,6 +882,30 @@ def run_tmdwf_nstate_fit(
         dataset_root.mkdir(parents=True, exist_ok=True)
 
         fit_reference_cache: dict[int, tuple[Path, int, int, np.ndarray, np.ndarray]] = {}
+        two_point_sample_cache: dict[tuple[Path, int], tuple[np.ndarray, np.ndarray]] = {}
+
+        def _select_two_point_fit_parameters(
+            fit_table_path: Path,
+            reference_tmin: int,
+            nstates: int,
+            amplitudes: np.ndarray,
+            energies: np.ndarray,
+        ) -> tuple[np.ndarray, np.ndarray]:
+            if not spec.two_point_fit_sample_coupled:
+                return amplitudes, energies
+            cache_key = (fit_table_path, reference_tmin)
+            if cache_key not in two_point_sample_cache:
+                sample_table_path = _two_point_sample_table_path(fit_table_path)
+                two_point_sample_cache[cache_key] = _load_two_point_sample_parameters(
+                    sample_table_path,
+                    tmin=reference_tmin,
+                    nstates=nstates,
+                    sample_count=ratio_samples.shape[0],
+                    fallback_amplitudes=amplitudes,
+                    fallback_energies=energies,
+                )
+            return two_point_sample_cache[cache_key]
+
         two_point_window = spec.two_point_fit_window_by_pz.get(pz)
         if two_point_window is None:
             raise ValueError(f"missing two_point_fit_window_by_pz entry for pz={pz}")
@@ -855,11 +1005,18 @@ def run_tmdwf_nstate_fit(
                                         fit_reference.energies,
                                     )
                                 fit_table_path, resolved_two_point_tmax, amplitudes, energies = decay_fit_reference_cache[cache_key]
+                                fit_amplitudes, fit_energies = _select_two_point_fit_parameters(
+                                    fit_table_path,
+                                    scan_two_point_tmin,
+                                    nstates,
+                                    amplitudes,
+                                    energies,
+                                )
                                 for scan_tmin, scan_tmax in scan_windows:
                                     fit_result, sample_params = fit_tmdwf_component(
                                         ratio_samples,
-                                        amplitudes,
-                                        energies,
+                                        fit_amplitudes,
+                                        fit_energies,
                                         spec.nt,
                                         pz,
                                         spec.ns,
@@ -876,8 +1033,8 @@ def run_tmdwf_nstate_fit(
                                         tmax=scan_tmax,
                                         fit_result=fit_result,
                                         sample_params=sample_params,
-                                        amplitudes=amplitudes,
-                                        energies=energies,
+                                        amplitudes=fit_amplitudes,
+                                        energies=fit_energies,
                                         pz=pz,
                                         ns=spec.ns,
                                         gm=gm,
@@ -995,6 +1152,13 @@ def run_tmdwf_nstate_fit(
                             fit_tmin, fit_tmax = fit_window
                             for nstates in spec.nstates:
                                 fit_table_path, two_point_tmin, two_point_tmax, amplitudes, energies = fit_reference_cache[nstates]
+                                fit_amplitudes, fit_energies = _select_two_point_fit_parameters(
+                                    fit_table_path,
+                                    two_point_tmin,
+                                    nstates,
+                                    amplitudes,
+                                    energies,
+                                )
                                 if nstates == primary_nstate:
                                     grouped_ratio_records.append(
                                         TMDWFRatioRecord(
@@ -1012,8 +1176,8 @@ def run_tmdwf_nstate_fit(
                                 for component in _component_list(spec.fit_component):
                                     fit_result, sample_params = fit_tmdwf_component(
                                         ratio_samples,
-                                        amplitudes,
-                                        energies,
+                                        fit_amplitudes,
+                                        fit_energies,
                                         spec.nt,
                                         pz,
                                         spec.ns,
@@ -1031,8 +1195,8 @@ def run_tmdwf_nstate_fit(
                                             tmax=fit_tmax,
                                             fit_result=fit_result,
                                             sample_params=sample_params,
-                                            amplitudes=amplitudes,
-                                            energies=energies,
+                                            amplitudes=fit_amplitudes,
+                                            energies=fit_energies,
                                         pz=pz,
                                         ns=spec.ns,
                                         gm=gm,

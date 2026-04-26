@@ -55,6 +55,9 @@ spline_kind linear
 # systematic variations. If a 1/bT^2 channel is enabled, the selected fit data
 # must not contain bT=0.
 #
+# Each enabled correction channel also has a zero-centered Gaussian prior on
+# its nuisance coefficients. The prior width is set per channel below.
+#
 # - fit_a2_correction:  lattice discretisation correction ~ a^2
 # - fit_fv_correction:  finite-volume correction ~ exp(-M_pi L) / sqrt(M_pi L)
 #                       times [beta_0 + beta_1 exp(M_pi bT)]
@@ -65,6 +68,10 @@ fit_a2_correction true
 # fit_fv_correction true
 fit_pz2_correction true
 # fit_apz2_correction true
+a2_correction_prior_width 1.0
+fv_correction_prior_width 1.0
+pz2_correction_prior_width 1.0
+apz2_correction_prior_width 1.0
 
 # Whether to write one gamma_MSbar vs x band plot for each bT knot.
 plot true

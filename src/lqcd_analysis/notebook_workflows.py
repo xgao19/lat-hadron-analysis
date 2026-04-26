@@ -98,6 +98,7 @@ TMDWF_INPUT_KEYS = {
     "nt",
     "lattice_spacing_fm",
     "decay_constant_check",
+    "two_point_fit_sample_coupled",
     "fit_target",
     "fit_component",
     "nstates",
@@ -217,6 +218,10 @@ TMDWF_CS_KERNEL_JOINT_KEYS = {
     "fit_fv_correction",
     "fit_pz2_correction",
     "fit_apz2_correction",
+    "a2_correction_prior_width",
+    "fv_correction_prior_width",
+    "pz2_correction_prior_width",
+    "apz2_correction_prior_width",
 }
 TMDWF_CS_KERNEL_JOINT_RUN_KEYS = {"results_dir"}
 TMDWF_NORMALIZE_KEYS = {
@@ -484,6 +489,7 @@ def render_tmdwf_fit_input_text(config: dict[str, Any]) -> str:
         "seed",
         "plot",
         "results_dir",
+        "two_point_fit_sample_coupled",
     ):
         if optional_key in config and config[optional_key] is not None:
             lines.append(f"{optional_key} {_as_scalar_string(config[optional_key])}")
@@ -728,6 +734,14 @@ def render_tmdwf_cs_kernel_joint_input_text(config: dict[str, Any]) -> str:
         lines.append(f"fit_pz2_correction {_as_scalar_string(config['fit_pz2_correction'])}")
     if "fit_apz2_correction" in config and config["fit_apz2_correction"] is not None:
         lines.append(f"fit_apz2_correction {_as_scalar_string(config['fit_apz2_correction'])}")
+    for key in (
+        "a2_correction_prior_width",
+        "fv_correction_prior_width",
+        "pz2_correction_prior_width",
+        "apz2_correction_prior_width",
+    ):
+        if key in config and config[key] is not None:
+            lines.append(f"{key} {_as_scalar_string(config[key])}")
     if "plot" in config and config["plot"] is not None:
         lines.append(f"plot {_as_scalar_string(config['plot'])}")
     if "progress" in config and config["progress"] is not None:
