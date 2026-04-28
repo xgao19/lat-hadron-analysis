@@ -9,6 +9,9 @@ from .tmdwf.cs_kernel_average import run_tmdwf_cs_kernel_average_workflow
 from .tmdwf.fourier import run_tmdwf_fourier_workflow
 from .tmdwf.fit_nstate import run_tmdwf_nstate_fit
 from .tmdwf.normalize import run_tmdwf_normalization
+from .tmdwf.ratio_fourier_t import run_tmdwf_ratio_fourier_t_workflow
+from .tmdwf.x_nstate_fit import run_tmdwf_x_nstate_fit_workflow
+from .tmdwf.xfit_normalize import run_tmdwf_xfit_normalization
 from .two_point.effective_mass import run_effective_mass_workflow
 from .two_point.fit_nstate import run_nstate_fit
 from .two_point.tgevp import run_ss_2pt_tgevp
@@ -117,6 +120,48 @@ def build_parser() -> argparse.ArgumentParser:
         help="Directory for TMDWF Fourier tables, sample outputs, and plots",
     )
 
+    tmdwf_ratio_fourier_t_parser = subparsers.add_parser(
+        "tmdwf-ratio-fourier-t",
+        help="Build TMDWF ratio Fourier data q(x,t) from raw ratio inputs.",
+    )
+    tmdwf_ratio_fourier_t_parser.add_argument(
+        "input_file",
+        help="Input control file for the TMDWF ratio-to-Fourier-per-t workflow.",
+    )
+    tmdwf_ratio_fourier_t_parser.add_argument(
+        "--results-dir",
+        default=None,
+        help="Directory for q(x,t) tables and bootstrap samples.",
+    )
+
+    tmdwf_x_nstate_fit_parser = subparsers.add_parser(
+        "tmdwf-x-nstate-fit",
+        help="Fit q(x,t) with the TMDWF N-state time model at each x.",
+    )
+    tmdwf_x_nstate_fit_parser.add_argument(
+        "input_file",
+        help="Input control file for the TMDWF x-space N-state fit workflow.",
+    )
+    tmdwf_x_nstate_fit_parser.add_argument(
+        "--results-dir",
+        default=None,
+        help="Directory for x-space fit tables and bootstrap samples.",
+    )
+
+    tmdwf_xfit_normalize_parser = subparsers.add_parser(
+        "tmdwf-xfit-normalize",
+        help="Normalize x-space TMDWF fit outputs using old bare matrix-element outputs.",
+    )
+    tmdwf_xfit_normalize_parser.add_argument(
+        "input_file",
+        help="Input control file for the TMDWF x-fit normalization workflow.",
+    )
+    tmdwf_xfit_normalize_parser.add_argument(
+        "--results-dir",
+        default=None,
+        help="Directory for normalized x-space fit tables and bootstrap samples.",
+    )
+
     tmdwf_cs_kernel_parser = subparsers.add_parser(
         "tmdwf-cs-kernel",
         help="Run downstream TMDWF Collins-Soper kernel extraction from a text input file.",
@@ -216,6 +261,33 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.command == "tmdwf-fourier":
         outputs = run_tmdwf_fourier_workflow(
+            args.input_file,
+            results_dir=args.results_dir,
+        )
+        for output in outputs:
+            print(output)
+        return
+
+    if args.command == "tmdwf-ratio-fourier-t":
+        outputs = run_tmdwf_ratio_fourier_t_workflow(
+            args.input_file,
+            results_dir=args.results_dir,
+        )
+        for output in outputs:
+            print(output)
+        return
+
+    if args.command == "tmdwf-x-nstate-fit":
+        outputs = run_tmdwf_x_nstate_fit_workflow(
+            args.input_file,
+            results_dir=args.results_dir,
+        )
+        for output in outputs:
+            print(output)
+        return
+
+    if args.command == "tmdwf-xfit-normalize":
+        outputs = run_tmdwf_xfit_normalization(
             args.input_file,
             results_dir=args.results_dir,
         )

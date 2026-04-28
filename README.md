@@ -374,6 +374,84 @@ A matching notebook template is also provided in:
 
 - `templates/tmdwf/tmdwf_fourier_template.ipynb`
 
+## TMDWF Ratio Fourier-per-t
+
+An alternate x-space chain starts by Fourier transforming the raw
+TMDWF/C2pt ratio at each time slice:
+
+```bash
+lqcd-analysis tmdwf-ratio-fourier-t input_tmdwf_ratio_fourier_t.txt
+```
+
+This workflow:
+
+- reads raw TMDWF numerator HDF5 data and the matching C2pt denominator
+- constructs bootstrap samples of the ratio for each `bz` and `t`
+- performs the cosine transform in `bz` separately at every `t`
+- writes `q(x,t)` tables and bootstrap samples for the x-space fit step
+
+Template inputs are provided in:
+
+- `templates/input_files/tmdwf/tmdwf_ratio_fourier_t_example.txt`
+- `templates/input_files/tmdwf/tmdwf_ratio_fourier_t_example_annotated.txt`
+
+A matching notebook template is also provided in:
+
+- `templates/tmdwf/tmdwf_ratio_fourier_t_template.ipynb`
+
+## TMDWF x-space N-State Fit
+
+The x-space fit workflow reads `q(x,t)` samples and fits the time dependence
+independently at each x:
+
+```bash
+lqcd-analysis tmdwf-x-nstate-fit input_tmdwf_x_nstate_fit.txt
+```
+
+This workflow:
+
+- reads `..._ratio_fourier_t_samples.txt` outputs from `tmdwf-ratio-fourier-t`
+- uses the same two-point fit amplitudes and energies as the ordinary TMDWF fit
+- fits the selected `fit_window` independently for every x value
+- writes `q0(x)` x-fit tables and bootstrap sample tables
+
+Template inputs are provided in:
+
+- `templates/input_files/tmdwf/tmdwf_x_nstate_fit_example.txt`
+- `templates/input_files/tmdwf/tmdwf_x_nstate_fit_example_annotated.txt`
+
+A matching notebook template is also provided in:
+
+- `templates/tmdwf/tmdwf_x_nstate_fit_template.ipynb`
+
+## TMDWF x-fit Normalize
+
+The x-fit normalization workflow normalizes the new `q0(x)` outputs using old
+bare matrix-element outputs from `tmdwf-nstate-fit`:
+
+```bash
+lqcd-analysis tmdwf-xfit-normalize input_tmdwf_xfit_normalize.txt
+```
+
+This workflow:
+
+- reads new `..._xfit_samples.txt` outputs from `tmdwf-x-nstate-fit`
+- reads old bare `m0(bz)` fit/sample outputs from `tmdwf-nstate-fit`
+- applies `mode1`, `mode2`, or `mode3` in the old bare matrix-element space
+- Fourier transforms the old bare and normalized `m0(bz)` samples on the new x grid
+- applies the resulting x-space normalization factor sample-by-sample to `q0(x)`
+
+It intentionally does not read old Fourier outputs.
+
+Template inputs are provided in:
+
+- `templates/input_files/tmdwf/tmdwf_xfit_normalize_example.txt`
+- `templates/input_files/tmdwf/tmdwf_xfit_normalize_example_annotated.txt`
+
+A matching notebook template is also provided in:
+
+- `templates/tmdwf/tmdwf_xfit_normalize_template.ipynb`
+
 ## TMDWF CS-Kernel Extraction
 
 The repository also provides a downstream Collins-Soper kernel extraction
@@ -805,6 +883,12 @@ This means the repository now supports these two common chains cleanly:
   `fit -> normalize(optional) -> fourier -> cs-kernel -> cs-kernel-average`
 - joint CS-kernel chain:
   `fit -> normalize(optional) -> fourier -> cs-kernel-joint`
+- x-space fit chain:
+  `ratio-fourier-t -> x-nstate-fit -> xfit-normalize`
+
+For the x-space fit chain, `tmdwf-xfit-normalize` reads old bare `m0(bz)`
+outputs from `tmdwf-nstate-fit` only to construct the normalization factor; it
+does not consume old `tmdwf-fourier` outputs.
 
 ## Workflows
 
@@ -823,6 +907,9 @@ Current notebook templates:
 - `templates/tmdwf/tmdwf_nstate_template.ipynb`
 - `templates/tmdwf/tmdwf_normalize_template.ipynb`
 - `templates/tmdwf/tmdwf_fourier_template.ipynb`
+- `templates/tmdwf/tmdwf_ratio_fourier_t_template.ipynb`
+- `templates/tmdwf/tmdwf_x_nstate_fit_template.ipynb`
+- `templates/tmdwf/tmdwf_xfit_normalize_template.ipynb`
 - `templates/tmdwf/tmdwf_cs_kernel_template.ipynb`
 - `templates/tmdwf/tmdwf_cs_kernel_joint_template.ipynb`
 - `templates/two_point/plot_2pt_template.ipynb`
@@ -850,6 +937,9 @@ and plain-text example inputs under:
 - `templates/input_files/tmdwf/tmdwf_nstate_example.txt`
 - `templates/input_files/tmdwf/tmdwf_normalize_example.txt`
 - `templates/input_files/tmdwf/tmdwf_fourier_example.txt`
+- `templates/input_files/tmdwf/tmdwf_ratio_fourier_t_example.txt`
+- `templates/input_files/tmdwf/tmdwf_x_nstate_fit_example.txt`
+- `templates/input_files/tmdwf/tmdwf_xfit_normalize_example.txt`
 - `templates/input_files/tmdwf/tmdwf_cs_kernel_example.txt`
 - `templates/input_files/tmdwf/tmdwf_cs_kernel_joint_example.txt`
 - `templates/input_files/two_point/plot_2pt_example_command.txt`
@@ -857,6 +947,9 @@ and plain-text example inputs under:
 - `templates/input_files/two_point/nstate_fit_1state_example_realdata_annotated.txt`
 - `templates/input_files/two_point/nstate_fit_2state_example_realdata_annotated.txt`
 - `templates/input_files/tmdwf/tmdwf_nstate_example_annotated.txt`
+- `templates/input_files/tmdwf/tmdwf_ratio_fourier_t_example_annotated.txt`
+- `templates/input_files/tmdwf/tmdwf_x_nstate_fit_example_annotated.txt`
+- `templates/input_files/tmdwf/tmdwf_xfit_normalize_example_annotated.txt`
 - `templates/input_files/tmdwf/tmdwf_cs_kernel_example_annotated.txt`
 - `templates/input_files/tmdwf/tmdwf_cs_kernel_joint_example_annotated.txt`
 - `templates/tmdwf/tmdwf_nstate_template.ipynb`

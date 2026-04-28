@@ -23,6 +23,18 @@ from .tmdwf.fourier import (
 )
 from .tmdwf.fit_nstate import parse_tmdwf_fit_input, run_tmdwf_nstate_fit
 from .tmdwf.normalize import parse_tmdwf_normalize_input, run_tmdwf_normalization
+from .tmdwf.ratio_fourier_t import (
+    parse_tmdwf_ratio_fourier_t_input,
+    run_tmdwf_ratio_fourier_t_workflow,
+)
+from .tmdwf.x_nstate_fit import (
+    parse_tmdwf_x_nstate_fit_input,
+    run_tmdwf_x_nstate_fit_workflow,
+)
+from .tmdwf.xfit_normalize import (
+    parse_tmdwf_xfit_normalize_input,
+    run_tmdwf_xfit_normalization,
+)
 from .two_point.effective_mass import parse_effective_mass_input, run_effective_mass_workflow
 from .two_point.fit_nstate import parse_nstate_fit_input, run_nstate_fit
 from .two_point.plotting import plot_nstate_outputs
@@ -148,6 +160,78 @@ TMDWF_FOURIER_KEYS = {
     "results_dir",
 }
 TMDWF_FOURIER_RUN_KEYS = {"results_dir"}
+TMDWF_RATIO_FOURIER_T_KEYS = {
+    "title_pattern",
+    "ns",
+    "nt",
+    "lattice_spacing_fm",
+    "pzlist",
+    "gmlist",
+    "etalist",
+    "Tdirlist",
+    "bTlist",
+    "bTrange",
+    "bzlist",
+    "bzrange",
+    "component",
+    "qtmdwf_h5",
+    "dataset_path_template",
+    "c2pt",
+    "fold_t",
+    "tsrange",
+    "binsize",
+    "bootstrap_samples",
+    "bootstrap_size",
+    "seed",
+    "x_values",
+    "x_range",
+    "x_count",
+    "zstep_fm",
+    "interpolation_kind",
+    "results_dir",
+}
+TMDWF_RATIO_FOURIER_T_RUN_KEYS = {"results_dir"}
+TMDWF_X_NSTATE_FIT_KEYS = {
+    "title_pattern",
+    "input_root",
+    "ns",
+    "nt",
+    "lattice_spacing_fm",
+    "pzlist",
+    "gmlist",
+    "etalist",
+    "bTlist",
+    "bTrange",
+    "component",
+    "nstates",
+    "fit_window",
+    "two_point_fit_root",
+    "two_point_fit_window_by_pz",
+    "two_point_fit_sample_coupled",
+    "results_dir",
+}
+TMDWF_X_NSTATE_FIT_RUN_KEYS = {"results_dir"}
+TMDWF_XFIT_NORMALIZE_KEYS = {
+    "title_pattern",
+    "input_root",
+    "bare_matrix_root",
+    "ns",
+    "lattice_spacing_fm",
+    "pzlist",
+    "gmlist",
+    "etalist",
+    "bTlist",
+    "bTrange",
+    "bzlist",
+    "bzrange",
+    "component",
+    "nstates",
+    "normalization_mode",
+    "zstep_fm",
+    "interpolation_kind",
+    "results_dir",
+}
+TMDWF_XFIT_NORMALIZE_RUN_KEYS = {"results_dir"}
 TMDWF_CS_KERNEL_KEYS = {
     "title_pattern",
     "input_root",
@@ -543,6 +627,191 @@ def render_tmdwf_fourier_input_text(config: dict[str, Any]) -> str:
         if "x_count" in config and config["x_count"] is not None:
             lines.append(f"x_count {_as_scalar_string(config['x_count'])}")
     for optional_key in ("zstep_fm", "interpolation_kind", "plot", "results_dir"):
+        if optional_key in config and config[optional_key] is not None:
+            lines.append(f"{optional_key} {_as_scalar_string(config[optional_key])}")
+    return "\n".join(lines) + "\n"
+
+
+def render_tmdwf_ratio_fourier_t_input_text(config: dict[str, Any]) -> str:
+    config = _subset_config(config, TMDWF_RATIO_FOURIER_T_KEYS)
+    required = [
+        "title_pattern",
+        "ns",
+        "nt",
+        "lattice_spacing_fm",
+        "pzlist",
+        "gmlist",
+        "etalist",
+        "Tdirlist",
+        "component",
+        "qtmdwf_h5",
+        "dataset_path_template",
+        "c2pt",
+        "fold_t",
+    ]
+    missing = [key for key in required if key not in config]
+    if missing:
+        raise ValueError(f"missing TMDWF ratio-Fourier-t notebook config keys: {missing}")
+    if "bTlist" not in config and "bTrange" not in config:
+        raise ValueError("missing TMDWF ratio-Fourier-t notebook config key: bTlist or bTrange")
+    if "bzlist" not in config and "bzrange" not in config:
+        raise ValueError("missing TMDWF ratio-Fourier-t notebook config key: bzlist or bzrange")
+
+    lines = [
+        f"{config['title_pattern']} {config['ns']} {config['nt']} {config['lattice_spacing_fm']}",
+        f"pzlist {_as_scalar_string(config['pzlist'])}",
+        f"gmlist {_as_scalar_string(config['gmlist'])}",
+        f"etalist {_as_scalar_string(config['etalist'])}",
+        f"Tdirlist {_as_scalar_string(config['Tdirlist'])}",
+    ]
+    if "bTlist" in config and config["bTlist"] is not None:
+        lines.append(f"bTlist {_as_scalar_string(config['bTlist'])}")
+    elif "bTrange" in config and config["bTrange"] is not None:
+        lines.append(f"bTrange {_as_scalar_string(config['bTrange'])}")
+    if "bzlist" in config and config["bzlist"] is not None:
+        lines.append(f"bzlist {_as_scalar_string(config['bzlist'])}")
+    elif "bzrange" in config and config["bzrange"] is not None:
+        lines.append(f"bzrange {_as_scalar_string(config['bzrange'])}")
+    lines.extend(
+        [
+            f"component {_as_scalar_string(config['component'])}",
+            f"qtmdwf_h5 {_as_scalar_string(config['qtmdwf_h5'])}",
+            f"dataset_path_template {_as_scalar_string(config['dataset_path_template'])}",
+            f"c2pt {_as_scalar_string(config['c2pt'])}",
+            f"fold_t {_as_scalar_string(config['fold_t'])}",
+        ]
+    )
+    if "tsrange" in config and config["tsrange"] is not None:
+        lines.append(f"tsrange {_as_scalar_string(config['tsrange'])}")
+    if "x_values" in config and config["x_values"] is not None:
+        lines.append(f"x_values {_as_scalar_string(config['x_values'])}")
+    elif "x_range" in config and config["x_range"] is not None:
+        lines.append(f"x_range {_as_scalar_string(config['x_range'])}")
+        if "x_count" in config and config["x_count"] is not None:
+            lines.append(f"x_count {_as_scalar_string(config['x_count'])}")
+    for optional_key in (
+        "binsize",
+        "bootstrap_samples",
+        "bootstrap_size",
+        "seed",
+        "zstep_fm",
+        "interpolation_kind",
+        "results_dir",
+    ):
+        if optional_key in config and config[optional_key] is not None:
+            lines.append(f"{optional_key} {_as_scalar_string(config[optional_key])}")
+    return "\n".join(lines) + "\n"
+
+
+def render_tmdwf_x_nstate_fit_input_text(config: dict[str, Any]) -> str:
+    if isinstance(config.get("fit_window"), dict):
+        config = dict(config)
+        config["fit_window"] = str(_materialize_tmdwf_fit_window_file(config["fit_window"]))
+    if isinstance(config.get("two_point_fit_window_by_pz"), dict):
+        config = dict(config)
+        config["two_point_fit_window_by_pz"] = str(
+            _materialize_tmdwf_two_point_fit_window_file(config["two_point_fit_window_by_pz"])
+        )
+    config = _subset_config(config, TMDWF_X_NSTATE_FIT_KEYS)
+    required = [
+        "title_pattern",
+        "input_root",
+        "ns",
+        "nt",
+        "lattice_spacing_fm",
+        "pzlist",
+        "gmlist",
+        "etalist",
+        "component",
+        "nstates",
+        "fit_window",
+        "two_point_fit_root",
+        "two_point_fit_window_by_pz",
+    ]
+    missing = [key for key in required if key not in config]
+    if missing:
+        raise ValueError(f"missing TMDWF x-space N-state notebook config keys: {missing}")
+    if "bTlist" not in config and "bTrange" not in config:
+        raise ValueError("missing TMDWF x-space N-state notebook config key: bTlist or bTrange")
+
+    lines = [
+        f"title_pattern {_as_scalar_string(config['title_pattern'])}",
+        f"input_root {_as_scalar_string(config['input_root'])}",
+        f"ns {_as_scalar_string(config['ns'])}",
+        f"nt {_as_scalar_string(config['nt'])}",
+        f"lattice_spacing_fm {_as_scalar_string(config['lattice_spacing_fm'])}",
+        f"pzlist {_as_scalar_string(config['pzlist'])}",
+        f"gmlist {_as_scalar_string(config['gmlist'])}",
+        f"etalist {_as_scalar_string(config['etalist'])}",
+    ]
+    if "bTlist" in config and config["bTlist"] is not None:
+        lines.append(f"bTlist {_as_scalar_string(config['bTlist'])}")
+    elif "bTrange" in config and config["bTrange"] is not None:
+        lines.append(f"bTrange {_as_scalar_string(config['bTrange'])}")
+    lines.extend(
+        [
+            f"component {_as_scalar_string(config['component'])}",
+            f"nstates {_as_scalar_string(config['nstates'])}",
+            f"fit_window {_as_scalar_string(config['fit_window'])}",
+            f"two_point_fit_root {_as_scalar_string(config['two_point_fit_root'])}",
+            f"two_point_fit_window_by_pz {_as_scalar_string(config['two_point_fit_window_by_pz'])}",
+        ]
+    )
+    for optional_key in ("two_point_fit_sample_coupled", "results_dir"):
+        if optional_key in config and config[optional_key] is not None:
+            lines.append(f"{optional_key} {_as_scalar_string(config[optional_key])}")
+    return "\n".join(lines) + "\n"
+
+
+def render_tmdwf_xfit_normalize_input_text(config: dict[str, Any]) -> str:
+    config = _subset_config(config, TMDWF_XFIT_NORMALIZE_KEYS)
+    required = [
+        "title_pattern",
+        "input_root",
+        "bare_matrix_root",
+        "ns",
+        "lattice_spacing_fm",
+        "pzlist",
+        "gmlist",
+        "etalist",
+        "component",
+        "nstates",
+        "normalization_mode",
+    ]
+    missing = [key for key in required if key not in config]
+    if missing:
+        raise ValueError(f"missing TMDWF x-fit normalization notebook config keys: {missing}")
+    if "bTlist" not in config and "bTrange" not in config:
+        raise ValueError("missing TMDWF x-fit normalization notebook config key: bTlist or bTrange")
+    if "bzlist" not in config and "bzrange" not in config:
+        raise ValueError("missing TMDWF x-fit normalization notebook config key: bzlist or bzrange")
+
+    lines = [
+        f"title_pattern {_as_scalar_string(config['title_pattern'])}",
+        f"input_root {_as_scalar_string(config['input_root'])}",
+        f"bare_matrix_root {_as_scalar_string(config['bare_matrix_root'])}",
+        f"ns {_as_scalar_string(config['ns'])}",
+        f"lattice_spacing_fm {_as_scalar_string(config['lattice_spacing_fm'])}",
+        f"pzlist {_as_scalar_string(config['pzlist'])}",
+        f"gmlist {_as_scalar_string(config['gmlist'])}",
+        f"etalist {_as_scalar_string(config['etalist'])}",
+    ]
+    if "bTlist" in config and config["bTlist"] is not None:
+        lines.append(f"bTlist {_as_scalar_string(config['bTlist'])}")
+    elif "bTrange" in config and config["bTrange"] is not None:
+        lines.append(f"bTrange {_as_scalar_string(config['bTrange'])}")
+    if "bzlist" in config and config["bzlist"] is not None:
+        lines.append(f"bzlist {_as_scalar_string(config['bzlist'])}")
+    elif "bzrange" in config and config["bzrange"] is not None:
+        lines.append(f"bzrange {_as_scalar_string(config['bzrange'])}")
+    lines.extend(
+        [
+            f"component {_as_scalar_string(config['component'])}",
+            f"nstates {_as_scalar_string(config['nstates'])}",
+            f"normalization_mode {_as_scalar_string(config['normalization_mode'])}",
+        ]
+    )
+    for optional_key in ("zstep_fm", "interpolation_kind", "results_dir"):
         if optional_key in config and config[optional_key] is not None:
             lines.append(f"{optional_key} {_as_scalar_string(config[optional_key])}")
     return "\n".join(lines) + "\n"
@@ -955,6 +1224,88 @@ def validate_tmdwf_fourier_notebook_config(config: dict[str, Any]) -> dict[str, 
     return validated
 
 
+def validate_tmdwf_ratio_fourier_t_notebook_config(config: dict[str, Any]) -> dict[str, Any]:
+    input_path = _materialize_input_text(
+        render_tmdwf_ratio_fourier_t_input_text(config),
+        "input_tmdwf_ratio_fourier_t.txt",
+    )
+    parsed = parse_tmdwf_ratio_fourier_t_input(input_path)
+    validated = {
+        "title_pattern": parsed.title_pattern,
+        "ns": parsed.ns,
+        "nt": parsed.nt,
+        "lattice_spacing_fm": parsed.lattice_spacing_fm,
+        "pzlist": parsed.pzlist,
+        "gmlist": parsed.gmlist,
+        "etalist": parsed.etalist,
+        "Tdirlist": parsed.tdirlist,
+        "bTlist": parsed.bTlist,
+        "bzlist": parsed.bzlist,
+        "component": parsed.component,
+        "x_values": parsed.x_values,
+        "zstep_fm": parsed.zstep_fm,
+        "interpolation_kind": parsed.interpolation_kind,
+    }
+    if "results_dir" in config and config["results_dir"] is not None:
+        validated["results_dir"] = Path(config["results_dir"])
+    return validated
+
+
+def validate_tmdwf_x_nstate_fit_notebook_config(config: dict[str, Any]) -> dict[str, Any]:
+    input_path = _materialize_input_text(
+        render_tmdwf_x_nstate_fit_input_text(config),
+        "input_tmdwf_x_nstate_fit.txt",
+    )
+    parsed = parse_tmdwf_x_nstate_fit_input(input_path)
+    validated = {
+        "title_pattern": parsed.title_pattern,
+        "input_root": parsed.input_root,
+        "ns": parsed.ns,
+        "nt": parsed.nt,
+        "lattice_spacing_fm": parsed.lattice_spacing_fm,
+        "pzlist": parsed.pzlist,
+        "gmlist": parsed.gmlist,
+        "etalist": parsed.etalist,
+        "bTlist": parsed.bTlist,
+        "component": parsed.component,
+        "nstates": parsed.nstates,
+        "fit_window": parsed.fit_window,
+        "two_point_fit_root": parsed.two_point_fit_root,
+        "two_point_fit_sample_coupled": parsed.two_point_fit_sample_coupled,
+    }
+    if "results_dir" in config and config["results_dir"] is not None:
+        validated["results_dir"] = Path(config["results_dir"])
+    return validated
+
+
+def validate_tmdwf_xfit_normalize_notebook_config(config: dict[str, Any]) -> dict[str, Any]:
+    input_path = _materialize_input_text(
+        render_tmdwf_xfit_normalize_input_text(config),
+        "input_tmdwf_xfit_normalize.txt",
+    )
+    parsed = parse_tmdwf_xfit_normalize_input(input_path)
+    validated = {
+        "title_pattern": parsed.title_pattern,
+        "input_root": parsed.input_root,
+        "bare_matrix_root": parsed.bare_matrix_root,
+        "ns": parsed.ns,
+        "lattice_spacing_fm": parsed.lattice_spacing_fm,
+        "pzlist": parsed.pzlist,
+        "gmlist": parsed.gmlist,
+        "etalist": parsed.etalist,
+        "bTlist": parsed.bTlist,
+        "bzlist": parsed.bzlist,
+        "component": parsed.component,
+        "nstates": parsed.nstates,
+        "normalization_mode": parsed.normalization_mode,
+        "zstep_fm": parsed.zstep_fm,
+        "interpolation_kind": parsed.interpolation_kind,
+    }
+    if "results_dir" in config and config["results_dir"] is not None:
+        validated["results_dir"] = Path(config["results_dir"])
+    return validated
+
+
 def validate_tmdwf_cs_kernel_notebook_config(config: dict[str, Any]) -> dict[str, Any]:
     input_path = _materialize_input_text(render_tmdwf_cs_kernel_input_text(config), "input_tmdwf_cs_kernel.txt")
     parsed = parse_tmdwf_cs_kernel_input(input_path)
@@ -1139,6 +1490,54 @@ def run_tmdwf_fourier_from_notebook(
         run_config["results_dir"] = _guess_notebook_dir()
     input_path = _materialize_input_text(render_tmdwf_fourier_input_text(config), "input_tmdwf_fourier.txt")
     return run_tmdwf_fourier_workflow(input_path, results_dir=run_config["results_dir"])
+
+
+def run_tmdwf_ratio_fourier_t_from_notebook(
+    config: dict[str, Any],
+    **overrides: Any,
+) -> list[Path]:
+    run_config = {"results_dir": None}
+    run_config.update(_subset_config(config, TMDWF_RATIO_FOURIER_T_RUN_KEYS))
+    run_config.update({key: value for key, value in overrides.items() if value is not None})
+    if run_config["results_dir"] is None:
+        run_config["results_dir"] = _guess_notebook_dir()
+    input_path = _materialize_input_text(
+        render_tmdwf_ratio_fourier_t_input_text(config),
+        "input_tmdwf_ratio_fourier_t.txt",
+    )
+    return run_tmdwf_ratio_fourier_t_workflow(input_path, results_dir=run_config["results_dir"])
+
+
+def run_tmdwf_x_nstate_fit_from_notebook(
+    config: dict[str, Any],
+    **overrides: Any,
+) -> list[Path]:
+    run_config = {"results_dir": None}
+    run_config.update(_subset_config(config, TMDWF_X_NSTATE_FIT_RUN_KEYS))
+    run_config.update({key: value for key, value in overrides.items() if value is not None})
+    if run_config["results_dir"] is None:
+        run_config["results_dir"] = _guess_notebook_dir()
+    input_path = _materialize_input_text(
+        render_tmdwf_x_nstate_fit_input_text(config),
+        "input_tmdwf_x_nstate_fit.txt",
+    )
+    return run_tmdwf_x_nstate_fit_workflow(input_path, results_dir=run_config["results_dir"])
+
+
+def run_tmdwf_xfit_normalize_from_notebook(
+    config: dict[str, Any],
+    **overrides: Any,
+) -> list[Path]:
+    run_config = {"results_dir": None}
+    run_config.update(_subset_config(config, TMDWF_XFIT_NORMALIZE_RUN_KEYS))
+    run_config.update({key: value for key, value in overrides.items() if value is not None})
+    if run_config["results_dir"] is None:
+        run_config["results_dir"] = _guess_notebook_dir()
+    input_path = _materialize_input_text(
+        render_tmdwf_xfit_normalize_input_text(config),
+        "input_tmdwf_xfit_normalize.txt",
+    )
+    return run_tmdwf_xfit_normalization(input_path, results_dir=run_config["results_dir"])
 
 
 def run_tmdwf_cs_kernel_from_notebook(

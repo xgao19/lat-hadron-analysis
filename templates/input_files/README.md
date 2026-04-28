@@ -84,6 +84,60 @@ Current grouped-output behavior:
 - grouped summaries contain one parseable block per `bz`
 - grouped fit / sample / curve files include an explicit leading `bz` column
 
+### TMDWF Ratio Fourier-per-t Example
+
+```bash
+lqcd-analysis tmdwf-ratio-fourier-t \
+  templates/input_files/tmdwf/tmdwf_ratio_fourier_t_example.txt
+```
+
+Annotated version:
+
+```text
+templates/input_files/tmdwf/tmdwf_ratio_fourier_t_example_annotated.txt
+```
+
+This template is the first stage of the alternate x-space chain. It consumes
+raw TMDWF numerator HDF5 data and C2pt denominator data, constructs the ratio,
+and Fourier transforms the bz dependence at every time slice. The output
+`q(x,t)` sample table is the input to `tmdwf-x-nstate-fit`.
+
+### TMDWF x-space N-State Fit Example
+
+```bash
+lqcd-analysis tmdwf-x-nstate-fit \
+  templates/input_files/tmdwf/tmdwf_x_nstate_fit_example.txt
+```
+
+Annotated version:
+
+```text
+templates/input_files/tmdwf/tmdwf_x_nstate_fit_example_annotated.txt
+```
+
+This template consumes `q(x,t)` outputs from `tmdwf-ratio-fourier-t` and fits
+the t dependence independently at each x. Keep this as a separate step when you
+want to adjust the x-space fit window without rerunning the Fourier-per-t
+stage.
+
+### TMDWF x-fit Normalize Example
+
+```bash
+lqcd-analysis tmdwf-xfit-normalize \
+  templates/input_files/tmdwf/tmdwf_xfit_normalize_example.txt
+```
+
+Annotated version:
+
+```text
+templates/input_files/tmdwf/tmdwf_xfit_normalize_example_annotated.txt
+```
+
+This template normalizes the new `q0(x)` x-fit outputs using old bare
+matrix-element `m0(bz)` outputs from `tmdwf-nstate-fit`. It does not consume
+old Fourier outputs; it constructs the normalization factor from the old bare
+matrix-element samples directly.
+
 ### TMDWF CS-Kernel Averaging Example
 
 ```bash

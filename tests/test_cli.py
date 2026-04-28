@@ -14,6 +14,9 @@ class CLITests(unittest.TestCase):
         self.assertIn("2pt-effective-mass", help_text)
         self.assertIn("tmdwf-normalize", help_text)
         self.assertIn("tmdwf-fourier", help_text)
+        self.assertIn("tmdwf-ratio-fourier-t", help_text)
+        self.assertIn("tmdwf-x-nstate-fit", help_text)
+        self.assertIn("tmdwf-xfit-normalize", help_text)
         self.assertIn("tmdwf-cs-kernel", help_text)
         self.assertIn("tmdwf-cs-kernel-average", help_text)
         self.assertIn("tmdwf-cs-kernel-joint", help_text)
@@ -55,6 +58,45 @@ class CLITests(unittest.TestCase):
         printed = output_buffer.getvalue()
         self.assertIn("/tmp/fourier.txt", printed)
         self.assertIn("/tmp/fourier.pdf", printed)
+
+    def test_tmdwf_ratio_fourier_t_cli_dispatches_to_workflow(self) -> None:
+        output_buffer = io.StringIO()
+        fake_outputs = [Path("/tmp/qxt.txt"), Path("/tmp/qxt_samples.txt")]
+        with patch("lqcd_analysis.cli.run_tmdwf_ratio_fourier_t_workflow", return_value=fake_outputs) as mock_run:
+            with redirect_stdout(output_buffer):
+                main(["tmdwf-ratio-fourier-t", "ratio_fourier_t_input.txt", "--results-dir", "/tmp/qxt_results"])
+
+        self.assertEqual(mock_run.call_args.args[0], "ratio_fourier_t_input.txt")
+        self.assertEqual(mock_run.call_args.kwargs["results_dir"], "/tmp/qxt_results")
+        printed = output_buffer.getvalue()
+        self.assertIn("/tmp/qxt.txt", printed)
+        self.assertIn("/tmp/qxt_samples.txt", printed)
+
+    def test_tmdwf_x_nstate_fit_cli_dispatches_to_workflow(self) -> None:
+        output_buffer = io.StringIO()
+        fake_outputs = [Path("/tmp/xfit.txt"), Path("/tmp/xfit_samples.txt")]
+        with patch("lqcd_analysis.cli.run_tmdwf_x_nstate_fit_workflow", return_value=fake_outputs) as mock_run:
+            with redirect_stdout(output_buffer):
+                main(["tmdwf-x-nstate-fit", "xfit_input.txt", "--results-dir", "/tmp/xfit_results"])
+
+        self.assertEqual(mock_run.call_args.args[0], "xfit_input.txt")
+        self.assertEqual(mock_run.call_args.kwargs["results_dir"], "/tmp/xfit_results")
+        printed = output_buffer.getvalue()
+        self.assertIn("/tmp/xfit.txt", printed)
+        self.assertIn("/tmp/xfit_samples.txt", printed)
+
+    def test_tmdwf_xfit_normalize_cli_dispatches_to_workflow(self) -> None:
+        output_buffer = io.StringIO()
+        fake_outputs = [Path("/tmp/xfit_norm.txt"), Path("/tmp/xfit_norm_samples.txt")]
+        with patch("lqcd_analysis.cli.run_tmdwf_xfit_normalization", return_value=fake_outputs) as mock_run:
+            with redirect_stdout(output_buffer):
+                main(["tmdwf-xfit-normalize", "xfit_norm_input.txt", "--results-dir", "/tmp/xfit_norm_results"])
+
+        self.assertEqual(mock_run.call_args.args[0], "xfit_norm_input.txt")
+        self.assertEqual(mock_run.call_args.kwargs["results_dir"], "/tmp/xfit_norm_results")
+        printed = output_buffer.getvalue()
+        self.assertIn("/tmp/xfit_norm.txt", printed)
+        self.assertIn("/tmp/xfit_norm_samples.txt", printed)
 
     def test_tmdwf_cs_kernel_cli_dispatches_to_workflow(self) -> None:
         output_buffer = io.StringIO()
