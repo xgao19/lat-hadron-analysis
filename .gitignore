@@ -47,3 +47,11 @@ notes/
 
 # Generated docs notes
 docs/**/*_note/
+
+# Analysis guide build artifacts
+docs/analysis_DA_agent/*
+!docs/analysis_DA_agent/*.tex
+!docs/analysis_DA_agent/*.pdf
+!docs/analysis_DA_agent/*.md
+!docs/analysis_DA_agent/*.bib
+!docs/analysis_DA_agent/*.bbl
