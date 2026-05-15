@@ -15,6 +15,7 @@ Canonical DA example set.
 
 ## Tracked Analysis
 
+- `examples/l64c64a076_m140/analysis/0-effective-mass/`
 - `examples/l64c64a076_m140/analysis/1-c2pt-fit/`
 - `examples/l64c64a076_m140/analysis/2-bm/`
 - `examples/l64c64a076_m140/analysis/3-normalize/`

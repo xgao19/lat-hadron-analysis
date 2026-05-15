@@ -53,7 +53,8 @@ def plot_effective_mass(
     ax.tick_params(direction="in", top=True, right=True)
     if title:
         ax.set_title(title)
-    ax.legend()
+    if reference_value is not None:
+        ax.legend()
     fig.tight_layout()
     fig.savefig(output_path)
     plt.close(fig)

@@ -186,7 +186,7 @@ Notes on the workflow:
 - `lambda_prior` only scales the prior residuals after the row has been selected.
 - If `matplotlib` is unavailable, the code writes a small text note instead of a plot file.
 - Plotting is now handled by a reusable module in `src/lqcd_analysis/two_point/plotting.py`.
-- A more detailed working guide lives in `docs/two_point_nstate_fit_guide.md`.
+- A more detailed combined workflow guide lives in `docs/analysis_DA_agent/lqcd_agent_month1_detailed_guide_CN.pdf`.
 
 - Plot outputs convert fitted energies and effective masses from lattice units `E*a` into physical units in GeV using the provided lattice spacing.
 - Effective-mass plots no longer draw a `tmax` guide line; both effective-mass and energy plots start their displayed data from `tmin = 2` by default.
@@ -278,9 +278,7 @@ A matching notebook template is also provided in:
 
 - `templates/da/da_nstate_template.ipynb`
 
-A more detailed workflow guide lives in:
-
-- `docs/da_nstate_fit_guide.md`
+The combined Month 1 guide also covers the DA ratio flow in detail, so there is no separate DA guide file anymore.
 
 Recommended default usage:
 

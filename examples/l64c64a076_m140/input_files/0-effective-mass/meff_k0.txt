@@ -1,0 +1,11 @@
+l64c64a076_m140_fit_k0_pz* 64 64 0.076
+c2pt /Users/xiang/Desktop/codes/lat-hadron-analysis-DA/examples/l64c64a076_m140/data/c2pt_csv/c2pt_5_5_k0_pz*_real.csv
+pzlist 0 1 2
+fold_t periodic
+tsrange 0 24
+model symmetric
+binsize 10
+bootstrap_samples 200
+bootstrap_size 200
+seed 2026
+results_dir /Users/xiang/Desktop/codes/lat-hadron-analysis-DA/examples/l64c64a076_m140/analysis/0-effective-mass/results_effective_mass_notebook

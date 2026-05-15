@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
+import warnings
 
 import numpy as np
 from scipy.optimize import brentq
@@ -162,8 +163,10 @@ def effective_mass_with_bootstrap(
     nt: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     samples = np.stack([effective_mass_single(sample, model, nt=nt) for sample in bootstrap_means], axis=0)
-    mean = np.nanmean(samples, axis=0)
-    err = np.nanstd(samples, axis=0, ddof=1)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        mean = np.nanmean(samples, axis=0)
+        err = np.nanstd(samples, axis=0, ddof=1)
     return mean, err
 
 
