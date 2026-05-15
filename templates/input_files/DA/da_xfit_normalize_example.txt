@@ -1,0 +1,18 @@
+# Example DA x-fit normalization input
+
+title_pattern l64c64a076_m140_da_pz*
+input_root examples/outputs/da_x_nstate_fit_example
+bare_matrix_root examples/outputs/da_fit_notebook
+ns 64
+lattice_spacing_fm 0.076
+pzlist 0
+gmlist T5
+etalist eta0
+bTlist 0
+bzlist 0 2 4 6 8 10 12
+component real
+nstates 1
+normalization_mode mode1
+zstep_fm 0.01
+interpolation_kind cubic
+results_dir examples/outputs/da_xfit_normalize_example

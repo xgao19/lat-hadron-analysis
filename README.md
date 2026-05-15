@@ -9,7 +9,7 @@ processed data.
 - Correlator IO helpers
 - Effective mass extraction
 - Jackknife and bootstrap analysis
-- Fit pipelines for two-point functions, TMDWF observables, and future TMDPDF workflows
+- Fit pipelines for two-point functions and DA observables
 - Reproducible analysis scripts and notebooks
 
 ## Project Layout
@@ -18,14 +18,13 @@ processed data.
 .
 ├── docs/                 Notes and methodology docs
 ├── examples/
-│   ├── data/             Tracked example correlator CSV files
-│   └── outputs/          Ignored example run products
+│   └── l64c64a076_m140/   Canonical DA example data, notebooks, and inputs
 ├── scripts/              Domain-organized command-line entry points
 ├── src/lqcd_analysis/    Python source package
 │   ├── common/           Shared reusable helpers and infrastructure
 │   ├── two_point/        Two-point analysis workflows
-│   └── tmdwf/            TMDWF analysis scaffolding
-├── templates/            Domain-organized notebook and input-file templates
+│   └── da/               DA analysis workflows
+├── templates/            Notebook and input-file templates
 └── tests/                Unit tests
 ```
 
@@ -42,8 +41,8 @@ python -m unittest discover
 
 1. Add project-specific analysis routines under the appropriate domain package in `src/lqcd_analysis/`.
 2. Add or extend templates under `templates/`.
-3. Add more tracked example datasets under `examples/data/` if useful.
-4. Keep run products under ignored output directories such as `examples/outputs/`.
+3. Add more tracked example datasets under `examples/l64c64a076_m140/data/` if useful.
+4. Keep run products under ignored output directories next to the example tree.
 
 ## SS 2pt TGEVP Driver
 
@@ -83,14 +82,14 @@ If you want the effective-mass tables without running the full N-state fit,
 use the standalone two-point effective-mass workflow:
 
 ```bash
-lqcd-analysis 2pt-effective-mass templates/input_files/two_point/effective_mass_example_realdata.txt
+lqcd-analysis 2pt-effective-mass templates/input_files/two_point/meff.txt
 ```
 
 or:
 
 ```bash
 python -m lqcd_analysis.cli 2pt-effective-mass \
-  templates/input_files/two_point/effective_mass_example_realdata.txt
+  templates/input_files/two_point/meff.txt
 ```
 
 This workflow:
@@ -102,12 +101,12 @@ This workflow:
 
 Template inputs are provided in:
 
-- `templates/input_files/two_point/effective_mass_example_realdata.txt`
-- `templates/input_files/two_point/effective_mass_example_realdata_annotated.txt`
+- `templates/input_files/two_point/meff.txt`
+- `templates/input_files/two_point/meff_annotated.txt`
 
 A matching notebook template is also provided in:
 
-- `templates/two_point/effective_mass_template.ipynb`
+- `templates/two_point/meff.ipynb`
 
 ## Bootstrap N-State 2pt Fit
 
@@ -115,7 +114,7 @@ Traditional multi-exponential fits are available as a separate workflow:
 
 ```bash
 python scripts/two_point/fit_2pt_nstate.py 2pt-nstate-fit \
-  templates/input_files/two_point/nstate_fit_2state_example_realdata.txt
+  templates/input_files/two_point/nstate_2.txt
 ```
 
 Expected extra input keys:
@@ -193,24 +192,24 @@ Notes on the workflow:
 - Effective-mass plots no longer draw a `tmax` guide line; both effective-mass and energy plots start their displayed data from `tmin = 2` by default.
 - After each 2pt fit run, an editable notebook is written under `results_dir/notebook_plots/`. The notebook calls the reusable plotting module so you can tweak paths, styles, and which state to draw.
 
-## TMDWF N-State Ratio Fit
+## DA N-State Ratio Fit
 
-The repository also includes a focused TMDWF ratio-fitting workflow for the
+The repository also includes a focused DA ratio-fitting workflow for the
 `gamma_t gamma_5` / `gamma_z gamma_5` insertion cases:
 
 ```bash
-lqcd-analysis tmdwf-nstate-fit input_tmdwf.txt
+lqcd-analysis da-nstate-fit input_da.txt
 ```
 
 or:
 
 ```bash
-python scripts/tmdwf/fit_tmdwf_nstate.py tmdwf-nstate-fit input_tmdwf.txt
+python scripts/da/fit_da_nstate.py da-nstate-fit input_da.txt
 ```
 
 This first implementation:
 
-- fits only the TMDWF ratio
+- fits only the DA ratio
 - supports `T5` (`gamma_t gamma_5`) and `Z5` (`gamma_z gamma_5`)
 - supports only `1-state` and `2-state` fits
 - fits real and imaginary parts separately
@@ -228,8 +227,8 @@ gmlist T5
 decay_constant_check false
 two_point_fit_sample_coupled false
 # notebook workflow_config: fit_window = {5: [6, 12], 6: [6, 12]}
-# plain-text input: fit_window /path/to/tmdwf_fit_windows.txt
-qtmdwf_h5 /path/to/file_or_pattern.h5
+# plain-text input: fit_window /path/to/da_fit_windows.txt
+qda_h5 /path/to/file_or_pattern.h5
 dataset_path_template {gm}/{eta}/pz{pz}/{Tdir}/bT{bT}/bz{bz}
 two_point_fit_window_table /path/to/2pt_fit_pz*_tmax#_fit_window.txt
 c2pt /path/to/c2pt_pz*_real.csv
@@ -237,7 +236,7 @@ fold_t periodic
 tsrange 0 20
 ```
 
-The TMDWF workflow:
+The DA workflow:
 
 - expands HDF5 dataset paths using `{gm}`, `{eta}`, `{pz}`, `{Tdir}`, `{bT}`, and `{bz}`
 - resolves `tmax` from the two-point fit-summary filename token `_tmax<digits>_fit_window.txt`
@@ -263,7 +262,7 @@ The TMDWF workflow:
 - the decay-constant check summary and console output report the decay constant in GeV together with its relative error and `chi2_dof`; the summary also records the fixed `bT = bz = 0`, the base `tfit`, a base-fit block selected from the sweep results using the same row format as the sweep table, and the associated two-point `tmin`
 
 For a fixed `(title, gm, eta, bT, component, nstates)` combination, the grouped
-TMDWF outputs now look like:
+DA outputs now look like:
 
 - `..._summary.txt`: one clearly separated block per `bz`
 - `..._fit.txt`: one row per `bz`
@@ -272,16 +271,16 @@ TMDWF outputs now look like:
 
 Template inputs are provided in:
 
-- `templates/input_files/tmdwf/tmdwf_nstate_example.txt`
-- `templates/input_files/tmdwf/tmdwf_nstate_example_annotated.txt`
+- `templates/input_files/da/da_nstate_example.txt`
+- `templates/input_files/da/da_nstate_example_annotated.txt`
 
 A matching notebook template is also provided in:
 
-- `templates/tmdwf/tmdwf_nstate_template.ipynb`
+- `templates/da/da_nstate_template.ipynb`
 
 A more detailed workflow guide lives in:
 
-- `docs/tmdwf_nstate_fit_guide.md`
+- `docs/da_nstate_fit_guide.md`
 
 Recommended default usage:
 
@@ -291,7 +290,7 @@ Recommended default usage:
 - treat this as the repository’s current production-style recommendation when
   you already have trusted `trange` choices from prior analysis or inspection
 
-Useful extra TMDWF fit controls:
+Useful extra DA fit controls:
 
 - `fit_window <path>`:
   preferred plain-text fit-window table. Supported row formats are
@@ -309,25 +308,25 @@ Useful extra TMDWF fit controls:
   `fit_window`. It also scans the two-point reference `tmin` around the value
   selected by `two_point_fit_window_by_pz`. For the initial `fit_window`,
   a practical starting point is a `tmin` equal to the chosen two-point `tmin`
-  or slightly larger, with `tmax` chosen to keep the TMDWF/2pt ratio smooth
+  or slightly larger, with `tmax` chosen to keep the DA/2pt ratio smooth
   and non-odd. The scan only keeps windows with `tmin + 1 < tmax`, so each
   candidate window has at least 3 points.
-These TMDWF templates are intentionally example workflow templates rather than
+These DA templates are intentionally example workflow templates rather than
 fully runnable tracked examples, because they depend on user-local HDF5 data.
 
-## TMDWF Normalize
+## DA Normalize
 
-The extracted TMDWF matrix elements can also be normalized in a separate
+The extracted DA matrix elements can also be normalized in a separate
 downstream step, using only the grouped fit/sample outputs produced by the
-TMDWF N-state fit:
+DA N-state fit:
 
 ```bash
-lqcd-analysis tmdwf-normalize input_tmdwf_normalize.txt
+lqcd-analysis da-normalize input_da_normalize.txt
 ```
 
 This normalization workflow:
 
-- reads grouped `..._fit.txt` and `..._samples.txt` outputs from the TMDWF fit workflow
+- reads grouped `..._fit.txt` and `..._samples.txt` outputs from the DA fit workflow
 - normalizes the matrix element sample-by-sample before summarizing
 - when both grouped `real` and `imag` sample tables are available, it first forms complex bootstrap samples, performs the normalization in the complex plane, and only then writes the requested component
 - writes grouped normalized outputs that keep the familiar `m0_mean`, `m0_err`, and `m0` columns
@@ -341,102 +340,102 @@ Supported normalization modes are:
 
 Template inputs are provided in:
 
-- `templates/input_files/tmdwf/tmdwf_normalize_example.txt`
-- `templates/input_files/tmdwf/tmdwf_normalize_example_annotated.txt`
+- `templates/input_files/da/da_normalize_example.txt`
+- `templates/input_files/da/da_normalize_example_annotated.txt`
 
 A matching notebook template is also provided in:
 
-- `templates/tmdwf/tmdwf_normalize_template.ipynb`
+- `templates/da/da_normalize_template.ipynb`
 
-## TMDWF Fourier
+## DA Fourier
 
 The repository also provides a separate downstream Fourier workflow that reads
-existing grouped TMDWF matrix-element outputs and performs the post-fit cosine
+existing grouped DA matrix-element outputs and performs the post-fit cosine
 transform:
 
 ```bash
-lqcd-analysis tmdwf-fourier input_tmdwf_fourier.txt
+lqcd-analysis da-fourier input_da_fourier.txt
 ```
 
 This Fourier workflow:
 
-- reads grouped TMDWF fit/sample outputs, including normalized outputs when desired
+- reads grouped DA fit/sample outputs, including normalized outputs when desired
 - treats the extracted `m0(bT, bz)` as the matrix element to transform in `bz`
 - performs the cosine transform on a refined `z` grid
 - writes downstream table, sample, and plot outputs without rerunning the nonlinear fit
 
 Template inputs are provided in:
 
-- `templates/input_files/tmdwf/tmdwf_fourier_example.txt`
-- `templates/input_files/tmdwf/tmdwf_fourier_example_annotated.txt`
+- `templates/input_files/da/da_fourier_example.txt`
+- `templates/input_files/da/da_fourier_example_annotated.txt`
 
 A matching notebook template is also provided in:
 
-- `templates/tmdwf/tmdwf_fourier_template.ipynb`
+- `templates/da/da_fourier_template.ipynb`
 
-## TMDWF Ratio Fourier-per-t
+## DA Ratio Fourier-per-t
 
 An alternate x-space chain starts by Fourier transforming the raw
-TMDWF/C2pt ratio at each time slice:
+DA/C2pt ratio at each time slice:
 
 ```bash
-lqcd-analysis tmdwf-ratio-fourier-t input_tmdwf_ratio_fourier_t.txt
+lqcd-analysis da-ratio-fourier-t input_da_ratio_fourier_t.txt
 ```
 
 This workflow:
 
-- reads raw TMDWF numerator HDF5 data and the matching C2pt denominator
+- reads raw DA numerator HDF5 data and the matching C2pt denominator
 - constructs bootstrap samples of the ratio for each `bz` and `t`
 - performs the cosine transform in `bz` separately at every `t`
 - writes `q(x,t)` tables and bootstrap samples for the x-space fit step
 
 Template inputs are provided in:
 
-- `templates/input_files/tmdwf/tmdwf_ratio_fourier_t_example.txt`
-- `templates/input_files/tmdwf/tmdwf_ratio_fourier_t_example_annotated.txt`
+- `templates/input_files/da/da_ratio_fourier_t_example.txt`
+- `templates/input_files/da/da_ratio_fourier_t_example_annotated.txt`
 
 A matching notebook template is also provided in:
 
-- `templates/tmdwf/tmdwf_ratio_fourier_t_template.ipynb`
+- `templates/da/da_ratio_fourier_t_template.ipynb`
 
-## TMDWF x-space N-State Fit
+## DA x-space N-State Fit
 
 The x-space fit workflow reads `q(x,t)` samples and fits the time dependence
 independently at each x:
 
 ```bash
-lqcd-analysis tmdwf-x-nstate-fit input_tmdwf_x_nstate_fit.txt
+lqcd-analysis da-x-nstate-fit input_da_x_nstate_fit.txt
 ```
 
 This workflow:
 
-- reads `..._ratio_fourier_t_samples.txt` outputs from `tmdwf-ratio-fourier-t`
-- uses the same two-point fit amplitudes and energies as the ordinary TMDWF fit
+- reads `..._ratio_fourier_t_samples.txt` outputs from `da-ratio-fourier-t`
+- uses the same two-point fit amplitudes and energies as the ordinary DA fit
 - fits the selected `fit_window` independently for every x value
 - writes `q0(x)` x-fit tables and bootstrap sample tables
 
 Template inputs are provided in:
 
-- `templates/input_files/tmdwf/tmdwf_x_nstate_fit_example.txt`
-- `templates/input_files/tmdwf/tmdwf_x_nstate_fit_example_annotated.txt`
+- `templates/input_files/da/da_x_nstate_fit_example.txt`
+- `templates/input_files/da/da_x_nstate_fit_example_annotated.txt`
 
 A matching notebook template is also provided in:
 
-- `templates/tmdwf/tmdwf_x_nstate_fit_template.ipynb`
+- `templates/da/da_x_nstate_fit_template.ipynb`
 
-## TMDWF x-fit Normalize
+## DA x-fit Normalize
 
 The x-fit normalization workflow normalizes the new `q0(x)` outputs using old
-bare matrix-element outputs from `tmdwf-nstate-fit`:
+bare matrix-element outputs from `da-nstate-fit`:
 
 ```bash
-lqcd-analysis tmdwf-xfit-normalize input_tmdwf_xfit_normalize.txt
+lqcd-analysis da-xfit-normalize input_da_xfit_normalize.txt
 ```
 
 This workflow:
 
-- reads new `..._xfit_samples.txt` outputs from `tmdwf-x-nstate-fit`
-- reads old bare `m0(bz)` fit/sample outputs from `tmdwf-nstate-fit`
+- reads new `..._xfit_samples.txt` outputs from `da-x-nstate-fit`
+- reads old bare `m0(bz)` fit/sample outputs from `da-nstate-fit`
 - applies `mode1`, `mode2`, or `mode3` in the old bare matrix-element space
 - Fourier transforms the old bare and normalized `m0(bz)` samples on the new x grid
 - applies the resulting x-space normalization factor sample-by-sample to `q0(x)`
@@ -445,450 +444,38 @@ It intentionally does not read old Fourier outputs.
 
 Template inputs are provided in:
 
-- `templates/input_files/tmdwf/tmdwf_xfit_normalize_example.txt`
-- `templates/input_files/tmdwf/tmdwf_xfit_normalize_example_annotated.txt`
+- `templates/input_files/da/da_xfit_normalize_example.txt`
+- `templates/input_files/da/da_xfit_normalize_example_annotated.txt`
 
 A matching notebook template is also provided in:
 
-- `templates/tmdwf/tmdwf_xfit_normalize_template.ipynb`
+- `templates/da/da_xfit_normalize_template.ipynb`
 
-## TMDWF CS-Kernel Extraction
+## Recommended DA Downstream Chain
 
-The repository also provides a downstream Collins-Soper kernel extraction
-workflow that reads already-generated TMDWF Fourier outputs:
+The intended downstream chain is: 1. `da-nstate-fit` 2. optional `da-normalize` 3. `da-fourier` (cosine Fourier transform in bz).
 
-```bash
-lqcd-analysis tmdwf-cs-kernel input_tmdwf_cs_kernel.txt
-```
-
-This CS-kernel workflow:
-
-- reads one Fourier bootstrap sample table for each requested `(gm, eta, bT, pz, component, nstates, normalization_mode)` combination
-- converts lattice momentum integers into physical momenta using the ensemble metadata
-- fits the legacy type-2 CS-kernel directly in the scalar `real` or `imag` component channel, using the second-formula relation between `P1`, `P2`, and `gamma^{\overline{MS}}`
-- by default uses the full requested `pzlist` in one extraction group, with the shared `P1` taken from the first requested momentum unless you set `reference_p1`
-- also supports `pair_mode adjacent` for neighboring pairs like `5-6`, `6-7`, `7-8`
-- writes bootstrap samples, 16/50/84 summary bands, and chi2/dof diagnostics
-- currently supports only the legacy `CG` matching scheme for type-2 extraction, with clean validation
-
-Expected key input fields include:
-
-```text
-title_pattern demo_tmdwf_cs_kernel
-input_root /path/to/tmdwf_fourier_outputs
-ns 64
-lattice_spacing_fm 0.076
-gmlist T5
-etalist eta0
-component real
-nstates 1
-normalization_mode raw
-mu 2.0
-scheme CG
-extraction_type type2
-pair_mode all
-reference_p1 auto
-kernel_labels LO NLO NLL
-bTrange 0 4
-pzrange 2 6
-x_window 0.2 0.8
-plot true
-```
-
-Option guide:
-
-- `title_pattern`:
-  same per-`pz` title pattern used upstream by the TMDWF fit/Fourier workflows, for example `l64c64a076_m140_tmdwf_pz*`.
-- `input_root`:
-  root directory containing existing TMDWF Fourier outputs. The CS workflow resolves the usual Fourier table/sample filenames automatically from the repository naming convention.
-- `ns`, `lattice_spacing_fm`:
-  ensemble metadata. `ns` and `lattice_spacing_fm` determine the physical momentum unit `2*pi/(Ns*a*fmGeV)`.
-- `gmlist`, `etalist`:
-  select which operator/insertion channels to read from the existing Fourier outputs.
-- `component`, `nstates`:
-  select which Fourier output family to consume.
-- `normalization_mode`:
-  one of `raw`, `mode1`, `mode2`, or `mode3`. This matches the upstream Fourier-output mode and is recorded explicitly in the CS-kernel outputs.
-- `mu`:
-  perturbative matching scale in GeV passed into the legacy `CS_Dgamma` correction object.
-- `scheme`:
-  matching-scheme selector. The current type-2 implementation supports only `CG`, and invalid choices raise a clear error.
-- `extraction_type`:
-  keep this as `type2` for the legacy qTMDWF CS-kernel method.
-- `pair_mode`:
-  controls which momentum combinations are fit.
-  `all` means a single extraction group per `bT` using a shared `P1` and all other requested momenta as `P2`.
-  `adjacent` means one extraction group per neighboring pair, e.g. `5-6`, `6-7`, `7-8`.
-  `fixed_p1` means one extraction group per `P2` using a shared `P1`; it only writes the pairwise breakdown plot, not the band plot.
-  `reference_p1` is optional and fixes that shared `P1` explicitly; when omitted, the workflow uses `pzlist[0]`.
-  `fixed_p1` output filenames include a `fixedp1_...` tag so they do not collide with the `all`-mode files.
-  The fit is done in the chosen scalar `component` channel; `real` and `imag` are both supported.
-- `kernel_labels`:
-  one or more perturbative labels to run in batch. The legacy order mapping is preserved exactly:
-  `LO -> 0`, `NLO/NLL -> 1`, `NNLO/NNLL -> 2`.
-- `bTlist` / `bTrange`:
-  which transverse separations to process.
-- `pzlist` / `pzrange`:
-  which lattice momentum integers to process. How they are grouped into `P1/P2` combinations is controlled explicitly by `pair_mode`.
-- `x_window`:
-  `x` range used in the extraction fit. The default `[0.2, 0.8]` reproduces the legacy script.
-- `plot`:
-  whether to also write a quick summary PDF band plot for each output group.
-  When `pair_mode adjacent`, the workflow also writes an automatic breakdown plot showing
-  the data log-ratio term, the matching correction, and the total estimator for all adjacent pairs.
-- `results_dir`:
-  output root for summaries, band tables, bootstrap samples, diagnostics, and optional plots.
-
-Expected input table format:
-
-- The workflow reads the repository-native Fourier sample table format:
-  one row per `(sample_id, x)` with a `q_sample` column.
-- Internally those long-form rows are regrouped into a bootstrap matrix with shape `(n_samples, n_x)` before the CS estimator and constant fit are applied.
-  Internally those long-form rows are regrouped into a bootstrap matrix with shape `(n_samples, n_x)` before the direct gamma fit is applied.
-
-For each `(kernel_label, bT, pair-group)` combination, the workflow writes:
-
-- `*_summary.txt`
-- `tables/*_band.txt`
-- `samples/*_samples.txt`
-- `diagnostics/*_diagnostics.txt`
-- `plots/*_band.pdf` when `plot true` and `pair_mode all`
-- `plots/*_pairwise_breakdown.pdf` when `plot true` and `pair_mode adjacent` or `pair_mode fixed_p1`
-- `fixed_p1` breakdown plots include a `fixedp1_refpz...` tag in the filename
-
-Template inputs are provided in:
-
-- `templates/input_files/tmdwf/tmdwf_cs_kernel_example.txt`
-- `templates/input_files/tmdwf/tmdwf_cs_kernel_example_annotated.txt`
-
-A matching notebook template is also provided in:
-
-- `templates/tmdwf/tmdwf_cs_kernel_template.ipynb`
-
-## TMDWF Joint CS-Kernel Fit
-
-For multi-ensemble studies, the repository also provides a joint downstream
-fit that reads Fourier bootstrap samples directly and fits the common
-CS kernel
-
-```text
-gamma_MSbar(x, bT)
-```
-
-at each specified x independently, parameterizing the bT dependence with a 1D
-piecewise-linear or cubic spline. The fit uses the direct type-2 evolution
-relation simultaneously across all ensembles, analytically eliminating one
-nuisance amplitude per `(ensemble, bT)` group. This path does not consume
-`tmdwf-cs-kernel` or `tmdwf-cs-kernel-average` outputs. It is intended as the
-clean first-stage joint fit before adding discretization, finite-volume, or
-large-momentum systematic terms.
-
-```bash
-lqcd-analysis tmdwf-cs-kernel-joint input_tmdwf_cs_kernel_joint.txt
-```
-
-This joint workflow:
-
-- reads repository-native Fourier bootstrap sample tables from each requested
-  ensemble
-- keeps each ensemble's own physical `Pz` and physical `bT = nT * a`
-- fits `gamma_MSbar(bT)` independently at each `x_knots` point using a 1D bT
-  spline, then writes the combined `gamma_MSbar(x,bT)` surface
-- uses the direct type-2 evolution relation in the scalar `real` or `imag`
-  component channel, with the matching correction evaluated at each x's actual
-  data-grid value (the nearest grid point to the requested x_knot)
-- analytically eliminates one nuisance amplitude for each
-  `(ensemble, bT)` group during each per-x nonlinear spline fit
-- writes the bootstrap surface, summary quantiles, chi2/dof diagnostics, and
-  spline coefficients for reconstructing `gamma_MSbar(bT)` at arbitrary bT values
-
-Expected key input fields include:
-
-```text
-gm T5
-eta eta0
-component real
-nstates 2
-normalization_mode mode3
-mu 2.0
-scheme CG
-kernel_label LO
-reference_p1_gev 1.0
-x_window 0.2 0.8
-x_knots 0.2 0.3 0.4 0.5 0.6 0.7 0.8
-bT_knots_fm 0.05 0.10 0.15 0.20 0.25 0.30
-spline_kind linear
-fit_a2_correction true
-fit_pz2_correction true
-a2_correction_prior_width 1.0
-fv_correction_prior_width 1.0
-pz2_correction_prior_width 1.0
-apz2_correction_prior_width 1.0
-plot true
-progress true
-progress_every 10
-ensemble l48a060 /path/l48 l48_pz* 48 0.060 pz=1:5 bT=1:20
-ensemble l64a050 /path/l64 l64_pz* 64 0.050 pz=3:8 bT=1:30
-results_dir results_tmdwf_cs_kernel_joint
-```
-
-Option guide:
-
-- `gm`, `eta`, `component`, `nstates`, `normalization_mode`:
-  select the Fourier output family to consume. These settings are shared by
-  all ensembles in the joint fit.
-- `mu`, `scheme`, `kernel_label`:
-  matching settings used in the same type-2 correction machinery as
-  `tmdwf-cs-kernel`. The first version supports one `kernel_label` per run.
-- `reference_p1_gev`:
-  physical reference momentum scale in GeV used in the direct evolution
-  formula. This is not a lattice momentum integer.
-- `x_window`:
-  x range. Observations whose actual data-grid x value falls outside this
-  window are excluded from the fit.
-- `x_knots`:
-  the x values at which `gamma_MSbar(x,bT)` is fitted independently. Each
-  `x_knot` is mapped to the nearest point on the data x-grid; the actual
-  x value is recorded in the output. If omitted, the workflow picks up to 6
-  evenly spaced points within `x_window`.
-- `bT_knots_fm`:
-  spline knots (in fm) for the bT-direction spline parameterizing
-  `gamma_MSbar(bT)` at each x. If omitted, the workflow uses the unique
-  physical bT values across all ensembles, capped at 8 knots.
-- `spline_kind`:
-  interpolation kind for the gamma bT spline. Use `linear` for the
-  piecewise-linear hat basis or `cubic` for a natural cubic spline basis.
-- `fit_a2_correction`, `fit_pz2_correction`:
-  recommended central multiplicative correction model. Each enabled channel
-  adds two analytic parameters rather than a bT spline. The a2 and pz2 terms
-  use short-distance-enhanced forms `c0 + c1 / bT^2`, so selected data must
-  exclude `bT=0` when either is enabled.
-- `fit_fv_correction`, `fit_apz2_correction`:
-  optional systematic variations. The finite-volume factor is
-  `exp(-M_pi L) / sqrt(M_pi L)` multiplying
-  `beta0 + beta1 exp(M_pi bT)`, with `M_pi bT` in the same units as
-  `M_pi L`; the apz2 term uses a single `lambda0` coefficient.
-- `a2_correction_prior_width`, `fv_correction_prior_width`,
-  `pz2_correction_prior_width`, `apz2_correction_prior_width`:
-  zero-centered Gaussian prior widths for the enabled correction parameters.
-  Each prior is applied only to its own channel's nuisance coefficients and
-  does not modify the main `gamma_MSbar` spline.
-- `plot`:
-  whether to write one `gamma_MSbar` vs x band plot for each `bT_knots_fm`
-  value, per-x pz-diagnostics plots showing data vs fit for each
-  `(ensemble, bT)` group, and a diagnostics notebook for redrawing
-  those plots from saved outputs.
-- `progress`, `progress_every`:
-  whether to print bootstrap-fit progress (per x and per sample) and how many
-  completed bootstrap samples to wait between progress reports. If
-  `progress_every` is omitted, the workflow reports roughly every 5% of the
-  bootstrap samples.
-- `ensemble`:
-  one line per ensemble, with
-  `label input_root title_pattern Ns lattice_spacing_fm pz=<list/range> bT=<list/range>`.
-  Lists are comma-separated; inclusive ranges use `start:stop`. The
-  `title_pattern` follows the existing convention where `*` is replaced by the
-  lattice momentum integer.
-- `results_dir`:
-  output root for the joint summary, surface table, bootstrap surface samples,
-  spline coefficients, and diagnostics.
-
-The workflow writes:
-
-- `joint_gamma_eff/*_summary.txt`
-- `joint_gamma_eff/tables/*_surface.txt`
-- `joint_gamma_eff/samples/*_samples.txt`
-- `joint_gamma_eff/samples/*_coefficients.txt`
-- `joint_gamma_eff/diagnostics/*_diagnostics.txt`
-- `joint_gamma_eff/plots/*_x_band.pdf`
-- `joint_gamma_eff/plots/diagnostics/*_x{X}_*_pz_diagnostics.pdf`
-- `joint_gamma_eff/plots/diagnostics/*_diagnostics_notebook.ipynb`
-
-The `*_coefficients.txt` file records the spline coefficients for every
-bootstrap sample at each x, so that `gamma_MSbar(bT)` can be reconstructed at
-any bT value using `_spline_basis(bT_values, bT_knots_fm, kind=spline_kind) @ coeffs`.
-The `bT_knots_fm`, `spline_kind`, correction model, and correction flags are
-recorded in `*_summary.txt`.
-
-The `*_pz_diagnostics.pdf` files show, for each fitted x, data points and the
-reconstructed fit band in `O vs pz` space organized per ensemble. The
-`*_diagnostics_notebook.ipynb` notebook redraws these plots from saved outputs
-and supports custom x/bT selection plus cross-ensemble comparison at matching
-physical bT values.
-
-Template inputs are provided in:
-
-- `templates/input_files/tmdwf/tmdwf_cs_kernel_joint_example.txt`
-- `templates/input_files/tmdwf/tmdwf_cs_kernel_joint_example_annotated.txt`
-
-A matching notebook template is also provided in:
-
-- `templates/tmdwf/tmdwf_cs_kernel_joint_template.ipynb`
-
-## TMDWF CS-Kernel Averaging
-
-The repository also provides a downstream averaging step that consumes existing
-CS-kernel outputs and averages the x-dependent results over the selected x
-region for each `bT`.
-
-Two interfaces are supported:
-
-- Notebook template: self-contained `workflow_config`, no separate input file
-- Plain-text batch input: `input_tmdwf_cs_kernel_average.txt`
-
-Notebook template:
-
-- `templates/tmdwf/tmdwf_cs_kernel_average_template.ipynb`
-
-Plain-text batch example:
-
-```bash
-lqcd-analysis tmdwf-cs-kernel-average input_tmdwf_cs_kernel_average.txt
-```
-
-This averaging workflow:
-
-- reads the repository-native CS-kernel band/sample tables produced by the
-  downstream CS-kernel extraction workflow
-- selects x values using either the explicit `x_range` or the physical cuts
-  `2*x*pz>1 GeV`, `2*(1-x)*pz>1 GeV`, `bT*pz*x>0.5`, and `bT*pz*(1-x)>0.5`
-- averages the selected x-dependent results for each bootstrap sample
-- reports the sample-mean statistical error and the within-sample systematic error
-- writes one averaged value per `bT` together with the selection summary and full bootstrap summary table
-- automatically writes a `bT` summary plot with statistical and total error bars
-
-Expected key input fields include:
-
-```text
-title_pattern demo_tmdwf_cs_kernel_average
-input_root /path/to/tmdwf_cs_kernel_outputs
-lattice_spacing_fm 0.076
-gm T5
-eta eta0
-component real
-nstates 1
-normalization_mode raw
-scheme CG
-extraction_type type2
-kernel_label LO
-pair_mode fixed_p1
-reference_p1 5
-bTrange 0 4
-x_range 0.25 0.75
-reference_pz_labels 5-6 6-7 7-8
-results_dir /path/to/tmdwf_cs_kernel_average
-```
-
-Option guide:
-
-- `title_pattern`:
-  same per-`pz` title pattern used upstream by the TMDWF fit/Fourier/CS-kernel workflows.
-- `input_root`:
-  root directory containing existing TMDWF CS-kernel outputs. The averaging workflow resolves the usual CS-kernel band/sample filenames automatically from the repository naming convention.
-- `lattice_spacing_fm`:
-  lattice spacing in fm. The averaging workflow uses it to add `bT_fm` to the values table and to plot the summary on a fm horizontal axis.
-- `gm`, `eta`:
-  operator and insertion-channel selectors used to identify the correct CS-kernel outputs.
-- `component`, `nstates`:
-  select which Fourier/CS-kernel family to consume.
-- `normalization_mode`:
-  one of `raw`, `mode1`, `mode2`, or `mode3`. This must match the upstream Fourier/CS-kernel output mode.
-- `scheme`:
-  matching-scheme selector. The current implementation supports only `CG` for the type-2 TMDWF workflow.
-- `extraction_type`:
-  keep this as `type2` for the legacy qTMDWF CS-kernel method.
-- `kernel_label`:
-  which perturbative CS-kernel label to average. The workflow currently expects one label at a time.
-- `pair_mode`:
-  optional source filter. Use `all`, `adjacent`, or `fixed_p1` to select which CS-kernel extraction runs to average. If omitted, all matching modes are used.
-- `reference_p1`:
-  optional fixed shared `P1` filter. When provided, or when set to `auto`, only CS-kernel outputs with that reference momentum are averaged. If omitted, no `P1` filter is applied.
-- `bTlist` / `bTrange`:
-  which transverse separations to process.
-- `x_range`:
-  optional explicit `x_min x_max` interval. When provided, the workflow uses that x window directly and skips the automatic physical x-selection cuts.
-- `reference_pz_labels`:
-  which CS-kernel pair-group labels to include in the averaging. These are matched against the CS-kernel output metadata, so `5-6` selects the source group whose reference momentum label is `5-6` and whose numeric reference momentum is `5`. If omitted, all matching labels are used.
-- `results_dir`:
-  output root for the averaged summary file, grouped tables, bootstrap samples, and selection metadata.
-
-Expected input data shape:
-
-- The workflow reads the repository-native CS-kernel summary bands and bootstrap sample tables.
-- It groups the CS-kernel x-dependent results by `bT`. If `x_range` is provided, it uses that interval directly; otherwise it applies the physical x-selection cuts. It also applies any requested source filters such as `pair_mode` or `reference_p1`, then averages across the selected x values for each bootstrap sample.
-- The output summary uses the mean of the sample means as the central value, a percentile-based statistical error from the sample means, and the mean within-sample standard deviation as the systematic error.
-
-For each requested `bT`, the workflow writes:
-
-- `*_summary.txt`
-- `tables/*_values.txt`
-- `tables/*_selection.txt`
-- `samples/*_samples.txt`
-- `plots/*_bT_average.pdf`
-
-## Recommended TMDWF Downstream Chain
-
-The intended downstream chain is now:
-
-1. `tmdwf-nstate-fit`
-2. optional `tmdwf-normalize`
-3. `tmdwf-fourier`
-4. `tmdwf-cs-kernel`
-5. optional `tmdwf-cs-kernel-average`
-
-For the joint CS-kernel path, replace steps 4 and 5 with:
-
-4. `tmdwf-cs-kernel-joint`
+For the x-space alternative: 1. `da-ratio-fourier-t` 2. `da-x-nstate-fit` 3. `da-xfit-normalize`.
 
 The data products passed between these steps are:
 
-- `tmdwf-nstate-fit`:
+- `da-nstate-fit`:
   writes grouped matrix-element outputs in `m0(bT, bz)`, including grouped fit tables and grouped bootstrap sample tables.
-- `tmdwf-normalize`:
+- `da-normalize`:
   reads those grouped `m0` outputs and writes normalized grouped `m0` outputs with the same general structure.
-- `tmdwf-fourier`:
+- `da-fourier`:
   reads either raw grouped `m0` outputs or normalized grouped `m0` outputs, then writes Fourier-space `q(x; pz, bT)` tables and bootstrap samples.
-- `tmdwf-cs-kernel`:
-  reads those Fourier-space bootstrap outputs and performs the legacy type-2 multi-`Pz` CS-kernel extraction.
-- `tmdwf-cs-kernel-average`:
-  reads those CS-kernel outputs and averages the x-dependent results over the selected x window for each `bT`.
-  It can also filter the source outputs by `pair_mode` and `reference_p1`
-  when you need to separate `all`, `adjacent`, or `fixed_p1` extraction runs.
-- `tmdwf-cs-kernel-joint`:
-  reads Fourier-space bootstrap outputs directly from one or more ensembles
-  and fits a shared continuous `gamma_MSbar(x,bT)` surface.
-
-Practical choices:
-
-- If you want the CS kernel from the unnormalized matrix element chain:
-  run `tmdwf-fourier` with `normalization_mode raw`, then run `tmdwf-cs-kernel` with `normalization_mode raw`.
-- If you want the CS kernel from one of the normalized matrix-element chains:
-  first run `tmdwf-normalize` with `mode1`, `mode2`, or `mode3`, then run `tmdwf-fourier` with the same mode, then run `tmdwf-cs-kernel` with that same mode.
 
 The key convention is:
 
 - `normalization_mode` must stay consistent across the downstream chain.
-- `raw` means:
-  read original TMDWF fit outputs.
-- `mode1` / `mode2` / `mode3` mean:
-  read the corresponding normalized outputs derived from the normalization workflow.
+- `raw` means: read original DA fit outputs.
+- `mode1` / `mode2` / `mode3` mean: read the corresponding normalized outputs.
 
-This means the repository now supports these two common chains cleanly:
-
-- raw chain:
-  `fit -> fourier(raw) -> cs-kernel(raw)`
-- normalized chain:
-  `fit -> normalize(modeX) -> fourier(modeX) -> cs-kernel(modeX)`
-- averaged CS-kernel chain:
-  `fit -> normalize(optional) -> fourier -> cs-kernel -> cs-kernel-average`
-- joint CS-kernel chain:
-  `fit -> normalize(optional) -> fourier -> cs-kernel-joint`
-- x-space fit chain:
-  `ratio-fourier-t -> x-nstate-fit -> xfit-normalize`
-
-For the x-space fit chain, `tmdwf-xfit-normalize` reads old bare `m0(bz)`
-outputs from `tmdwf-nstate-fit` only to construct the normalization factor; it
-does not consume old `tmdwf-fourier` outputs.
+Supported chains:
+- raw chain: `fit -> fourier(raw)`
+- normalized chain: `fit -> normalize(modeX) -> fourier(modeX)`
+- x-space fit chain: `ratio-fourier-t -> x-nstate-fit -> xfit-normalize`
 
 ## Workflows
 
@@ -901,24 +488,22 @@ Both workflows are supported:
 
 Current notebook templates:
 
-- `templates/two_point/tgevp_template.ipynb`
-- `templates/two_point/nstate_fit_1state_template.ipynb`
-- `templates/two_point/nstate_fit_2state_template.ipynb`
-- `templates/tmdwf/tmdwf_nstate_template.ipynb`
-- `templates/tmdwf/tmdwf_normalize_template.ipynb`
-- `templates/tmdwf/tmdwf_fourier_template.ipynb`
-- `templates/tmdwf/tmdwf_ratio_fourier_t_template.ipynb`
-- `templates/tmdwf/tmdwf_x_nstate_fit_template.ipynb`
-- `templates/tmdwf/tmdwf_xfit_normalize_template.ipynb`
-- `templates/tmdwf/tmdwf_cs_kernel_template.ipynb`
-- `templates/tmdwf/tmdwf_cs_kernel_joint_template.ipynb`
-- `templates/two_point/plot_2pt_template.ipynb`
+- `templates/two_point/tgevp.ipynb`
+- `templates/two_point/nstate_1.ipynb`
+- `templates/two_point/nstate_2.ipynb`
+- `templates/da/da_nstate_template.ipynb`
+- `templates/da/da_normalize_template.ipynb`
+- `templates/da/da_fourier_template.ipynb`
+- `templates/da/da_ratio_fourier_t_template.ipynb`
+- `templates/da/da_x_nstate_fit_template.ipynb`
+- `templates/da/da_xfit_normalize_template.ipynb`
+- `templates/two_point/plot_2pt.ipynb`
 
 Notebook templates are thin wrappers around the existing analysis code. They are intended for clarity and interactive use, while the plain-text input-file workflow remains the stable batch-style interface.
 Each template now uses the same notebook-facing pattern: edit a single `workflow_config` object, validate it, and then call one `run_*_from_notebook(...)` function.
 Each notebook template also includes an `Option Guide` markdown cell right after the user-input cell, describing the main options, their expected choices, and their practical effect.
 
-The helper bridge for notebooks lives in `src/lqcd_analysis/notebook_workflows.py`. Notebook workflows take their configuration directly from the notebook `workflow_config` object and call the same backend runners in the `two_point` and `tmdwf` packages; they do not require a separate input file.
+The helper bridge for notebooks lives in `src/lqcd_analysis/notebook_workflows.py`. Notebook workflows take their configuration directly from the notebook `workflow_config` object and call the same backend runners in the `two_point` and `da` packages; they do not require a separate input file.
 The two workflows use different default output locations by design: notebook workflows default to the current working directory, while plain-text input-file workflows default to a results directory next to the input file.
 For `nstatefit`, the user-facing `fit_mode` option supports both `uncorrelated` and `correlated` fits. In correlated mode the code builds one shared covariance matrix from the full bootstrap ensemble and reuses it across the mean fit and bootstrap fits; if a correlated sample/window fit fails, it falls back to a diagonal fit using only the covariance diagonal.
 The N-state fit outputs also track this fallback usage: fit tables include a `fallback_uncorrelated_successes` column for each `tmin` window, and summaries report the representative window's fallback count.
@@ -927,45 +512,44 @@ The N-state fit outputs also track this fallback usage: fit tables include a `fa
 
 The repository now includes tracked example correlator data under:
 
-- `examples/data/l64c64a076_m140/comb_c2pt_csv/`
+- `examples/l64c64a076_m140/data/c2pt_csv/`
+- `examples/l64c64a076_m140/data/qda/`
 
 and plain-text example inputs under:
 
-- `templates/input_files/two_point/tgevp_example_realdata.txt`
-- `templates/input_files/two_point/nstate_fit_1state_example_realdata.txt`
-- `templates/input_files/two_point/nstate_fit_2state_example_realdata.txt`
-- `templates/input_files/tmdwf/tmdwf_nstate_example.txt`
-- `templates/input_files/tmdwf/tmdwf_normalize_example.txt`
-- `templates/input_files/tmdwf/tmdwf_fourier_example.txt`
-- `templates/input_files/tmdwf/tmdwf_ratio_fourier_t_example.txt`
-- `templates/input_files/tmdwf/tmdwf_x_nstate_fit_example.txt`
-- `templates/input_files/tmdwf/tmdwf_xfit_normalize_example.txt`
-- `templates/input_files/tmdwf/tmdwf_cs_kernel_example.txt`
-- `templates/input_files/tmdwf/tmdwf_cs_kernel_joint_example.txt`
-- `templates/input_files/two_point/plot_2pt_example_command.txt`
-- `templates/input_files/two_point/tgevp_example_realdata_annotated.txt`
-- `templates/input_files/two_point/nstate_fit_1state_example_realdata_annotated.txt`
-- `templates/input_files/two_point/nstate_fit_2state_example_realdata_annotated.txt`
-- `templates/input_files/tmdwf/tmdwf_nstate_example_annotated.txt`
-- `templates/input_files/tmdwf/tmdwf_ratio_fourier_t_example_annotated.txt`
-- `templates/input_files/tmdwf/tmdwf_x_nstate_fit_example_annotated.txt`
-- `templates/input_files/tmdwf/tmdwf_xfit_normalize_example_annotated.txt`
-- `templates/input_files/tmdwf/tmdwf_cs_kernel_example_annotated.txt`
-- `templates/input_files/tmdwf/tmdwf_cs_kernel_joint_example_annotated.txt`
-- `templates/tmdwf/tmdwf_nstate_template.ipynb`
+- `templates/input_files/two_point/tgevp.txt`
+- `templates/input_files/two_point/nstate_1.txt`
+- `templates/input_files/two_point/nstate_2.txt`
+- `templates/input_files/two_point/meff.txt`
+- `templates/input_files/two_point/plot_2pt.txt`
+- `templates/input_files/da/da_nstate_example.txt`
+- `templates/input_files/da/da_normalize_example.txt`
+- `templates/input_files/da/da_fourier_example.txt`
+- `templates/input_files/da/da_ratio_fourier_t_example.txt`
+- `templates/input_files/da/da_x_nstate_fit_example.txt`
+- `templates/input_files/da/da_xfit_normalize_example.txt`
+- `templates/input_files/two_point/plot_2pt.txt`
+- `templates/input_files/two_point/tgevp_annotated.txt`
+- `templates/input_files/two_point/nstate_1_annotated.txt`
+- `templates/input_files/two_point/nstate_2_annotated.txt`
+- `templates/input_files/da/da_nstate_example_annotated.txt`
+- `templates/input_files/da/da_ratio_fourier_t_example_annotated.txt`
+- `templates/input_files/da/da_x_nstate_fit_example_annotated.txt`
+- `templates/input_files/da/da_xfit_normalize_example_annotated.txt`
+- `templates/da/da_nstate_template.ipynb`
 
 These examples use repository-relative paths, so they can be run directly from the repository root.
 The `_annotated.txt` variants include inline comments describing each option and are meant to mirror the notebook `Option Guide` cells in plain-text form.
-The TMDWF templates are the exception: they are structurally complete templates, but you should point them at your own local HDF5 datasets and two-point fit-summary tables before running.
+The DA templates are the exception: they are structurally complete templates, but you should point them at your own local HDF5 datasets and two-point fit-summary tables before running.
 
-Example outputs are intentionally ignored by git and should go under:
+Example notebook outputs live under the tracked per-example analysis tree, for example:
 
-- `examples/outputs/`
+- `examples/l64c64a076_m140/analysis/`
 
-This lets the repository keep realistic data and templates tracked, while avoiding noisy result folders, plots, logs, and notebooks in version control.
+This keeps the canonical data, templates, and generated notebooks together without introducing a separate outputs tree.
 
 ## Package Organization
 
 - `lqcd_analysis.common` contains genuinely shared infrastructure such as bootstrap helpers, folding utilities, generic correlator helpers, and fit-table schema parsing.
 - `lqcd_analysis.two_point` submodules contain the current two-point analysis implementations, including N-state fitting, effective-mass extraction, plotting, TGEVP, and two-point-specific CSV loading. Import from the submodules directly.
-- `lqcd_analysis.tmdwf` submodules contain the current TMDWF ratio-fitting workflow and TMDWF-specific HDF5/data-model helpers. Import from the submodules directly.
+- `lqcd_analysis.da` submodules contain the current DA ratio-fitting workflow and DA-specific HDF5/data-model helpers. Import from the submodules directly.

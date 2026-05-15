@@ -1,0 +1,23 @@
+# Example DA Fourier-transform input
+
+# Data settings
+title_pattern l64c64a076_m140_fit_pz*
+input_root examples/outputs/da_fit_notebook
+ns 64
+lattice_spacing_fm 0.076
+pzlist 0
+gmlist T5
+etalist eta0
+bTlist 0
+component real
+nstates 1
+
+# Fourier-transform parameter settings
+x_range -0.5 1.5
+x_count 201
+zstep_fm 0.01
+interpolation_kind cubic
+
+# Output settings
+plot true
+results_dir examples/outputs/da_fourier_example

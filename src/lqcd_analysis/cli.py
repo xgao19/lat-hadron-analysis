@@ -3,15 +3,12 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from .tmdwf.cs_kernel_extract import run_tmdwf_cs_kernel_workflow
-from .tmdwf.cs_kernel_joint import run_tmdwf_cs_kernel_joint_workflow
-from .tmdwf.cs_kernel_average import run_tmdwf_cs_kernel_average_workflow
-from .tmdwf.fourier import run_tmdwf_fourier_workflow
-from .tmdwf.fit_nstate import run_tmdwf_nstate_fit
-from .tmdwf.normalize import run_tmdwf_normalization
-from .tmdwf.ratio_fourier_t import run_tmdwf_ratio_fourier_t_workflow
-from .tmdwf.x_nstate_fit import run_tmdwf_x_nstate_fit_workflow
-from .tmdwf.xfit_normalize import run_tmdwf_xfit_normalization
+from .DA.fourier import run_da_fourier_workflow
+from .DA.fit_nstate import run_da_nstate_fit
+from .DA.normalize import run_da_normalization
+from .DA.ratio_fourier_t import run_da_ratio_fourier_t_workflow
+from .DA.x_nstate_fit import run_da_x_nstate_fit_workflow
+from .DA.xfit_normalize import run_da_xfit_normalization
 from .two_point.effective_mass import run_effective_mass_workflow
 from .two_point.fit_nstate import run_nstate_fit
 from .two_point.tgevp import run_ss_2pt_tgevp
@@ -81,128 +78,87 @@ def build_parser() -> argparse.ArgumentParser:
         help="Directory for effective-mass tables and outputs",
     )
 
-    tmdwf_parser = subparsers.add_parser(
-        "tmdwf-nstate-fit",
-        help="Run bootstrap-based TMDWF N-state fits from a text input file.",
+    da_parser = subparsers.add_parser(
+        "da-nstate-fit",
+        help="Run bootstrap-based DA N-state fits from a text input file.",
     )
-    tmdwf_parser.add_argument("input_file", help="Input control file for the TMDWF fit workflow")
-    tmdwf_parser.add_argument(
+    da_parser.add_argument("input_file", help="Input control file for the DA fit workflow")
+    da_parser.add_argument(
         "--results-dir",
         default=None,
-        help="Directory for TMDWF fit tables, sample outputs, and summaries",
+        help="Directory for DA fit tables, sample outputs, and summaries",
     )
 
-    tmdwf_normalize_parser = subparsers.add_parser(
-        "tmdwf-normalize",
-        help="Run downstream TMDWF matrix-element normalization from a text input file.",
+    da_normalize_parser = subparsers.add_parser(
+        "da-normalize",
+        help="Run downstream DA matrix-element normalization from a text input file.",
     )
-    tmdwf_normalize_parser.add_argument(
+    da_normalize_parser.add_argument(
         "input_file",
-        help="Input control file for the TMDWF normalization workflow",
+        help="Input control file for the DA normalization workflow",
     )
-    tmdwf_normalize_parser.add_argument(
+    da_normalize_parser.add_argument(
         "--results-dir",
         default=None,
-        help="Directory for normalized TMDWF tables, sample outputs, and summaries",
+        help="Directory for normalized DA tables, sample outputs, and summaries",
     )
 
-    tmdwf_fourier_parser = subparsers.add_parser(
-        "tmdwf-fourier",
-        help="Run downstream TMDWF Fourier postprocessing from a text input file.",
+    da_fourier_parser = subparsers.add_parser(
+        "da-fourier",
+        help="Run downstream DA Fourier postprocessing from a text input file.",
     )
-    tmdwf_fourier_parser.add_argument(
+    da_fourier_parser.add_argument(
         "input_file",
-        help="Input control file for the TMDWF Fourier workflow",
+        help="Input control file for the DA Fourier workflow",
     )
-    tmdwf_fourier_parser.add_argument(
+    da_fourier_parser.add_argument(
         "--results-dir",
         default=None,
-        help="Directory for TMDWF Fourier tables, sample outputs, and plots",
+        help="Directory for DA Fourier tables, sample outputs, and plots",
     )
 
-    tmdwf_ratio_fourier_t_parser = subparsers.add_parser(
-        "tmdwf-ratio-fourier-t",
-        help="Build TMDWF ratio Fourier data q(x,t) from raw ratio inputs.",
+    da_ratio_fourier_t_parser = subparsers.add_parser(
+        "da-ratio-fourier-t",
+        help="Build DA ratio Fourier data q(x,t) from raw ratio inputs.",
     )
-    tmdwf_ratio_fourier_t_parser.add_argument(
+    da_ratio_fourier_t_parser.add_argument(
         "input_file",
-        help="Input control file for the TMDWF ratio-to-Fourier-per-t workflow.",
+        help="Input control file for the DA ratio-to-Fourier-per-t workflow.",
     )
-    tmdwf_ratio_fourier_t_parser.add_argument(
+    da_ratio_fourier_t_parser.add_argument(
         "--results-dir",
         default=None,
         help="Directory for q(x,t) tables and bootstrap samples.",
     )
 
-    tmdwf_x_nstate_fit_parser = subparsers.add_parser(
-        "tmdwf-x-nstate-fit",
-        help="Fit q(x,t) with the TMDWF N-state time model at each x.",
+    da_x_nstate_fit_parser = subparsers.add_parser(
+        "da-x-nstate-fit",
+        help="Fit q(x,t) with the DA N-state time model at each x.",
     )
-    tmdwf_x_nstate_fit_parser.add_argument(
+    da_x_nstate_fit_parser.add_argument(
         "input_file",
-        help="Input control file for the TMDWF x-space N-state fit workflow.",
+        help="Input control file for the DA x-space N-state fit workflow.",
     )
-    tmdwf_x_nstate_fit_parser.add_argument(
+    da_x_nstate_fit_parser.add_argument(
         "--results-dir",
         default=None,
         help="Directory for x-space fit tables and bootstrap samples.",
     )
 
-    tmdwf_xfit_normalize_parser = subparsers.add_parser(
-        "tmdwf-xfit-normalize",
-        help="Normalize x-space TMDWF fit outputs using old bare matrix-element outputs.",
+    da_xfit_normalize_parser = subparsers.add_parser(
+        "da-xfit-normalize",
+        help="Normalize x-space DA fit outputs using old bare matrix-element outputs.",
     )
-    tmdwf_xfit_normalize_parser.add_argument(
+    da_xfit_normalize_parser.add_argument(
         "input_file",
-        help="Input control file for the TMDWF x-fit normalization workflow.",
+        help="Input control file for the DA x-fit normalization workflow.",
     )
-    tmdwf_xfit_normalize_parser.add_argument(
+    da_xfit_normalize_parser.add_argument(
         "--results-dir",
         default=None,
         help="Directory for normalized x-space fit tables and bootstrap samples.",
     )
 
-    tmdwf_cs_kernel_parser = subparsers.add_parser(
-        "tmdwf-cs-kernel",
-        help="Run downstream TMDWF Collins-Soper kernel extraction from a text input file.",
-    )
-    tmdwf_cs_kernel_parser.add_argument(
-        "input_file",
-        help="Input control file for the TMDWF CS-kernel extraction workflow",
-    )
-    tmdwf_cs_kernel_parser.add_argument(
-        "--results-dir",
-        default=None,
-        help="Directory for TMDWF CS-kernel tables, bootstrap samples, diagnostics, and plots",
-    )
-
-    tmdwf_cs_kernel_average_parser = subparsers.add_parser(
-        "tmdwf-cs-kernel-average",
-        help="Average CS-kernel results over selected x-ranges and reference momenta.",
-    )
-    tmdwf_cs_kernel_average_parser.add_argument(
-        "input_file",
-        help="Input control file for the TMDWF CS-kernel averaging workflow",
-    )
-    tmdwf_cs_kernel_average_parser.add_argument(
-        "--results-dir",
-        default=None,
-        help="Directory for averaged CS-kernel tables and samples",
-    )
-
-    tmdwf_cs_kernel_joint_parser = subparsers.add_parser(
-        "tmdwf-cs-kernel-joint",
-        help="Fit a joint continuous gamma_eff(x,bT) surface from TMDWF Fourier samples.",
-    )
-    tmdwf_cs_kernel_joint_parser.add_argument(
-        "input_file",
-        help="Input control file for the joint TMDWF CS-kernel gamma_eff workflow",
-    )
-    tmdwf_cs_kernel_joint_parser.add_argument(
-        "--results-dir",
-        default=None,
-        help="Directory for joint CS-kernel surface tables, samples, and diagnostics",
-    )
     return parser
 
 
@@ -241,8 +197,8 @@ def main(argv: list[str] | None = None) -> None:
             print(output)
         return
 
-    if args.command == "tmdwf-nstate-fit":
-        outputs = run_tmdwf_nstate_fit(
+    if args.command == "da-nstate-fit":
+        outputs = run_da_nstate_fit(
             args.input_file,
             results_dir=args.results_dir,
         )
@@ -250,8 +206,8 @@ def main(argv: list[str] | None = None) -> None:
             print(output)
         return
 
-    if args.command == "tmdwf-normalize":
-        outputs = run_tmdwf_normalization(
+    if args.command == "da-normalize":
+        outputs = run_da_normalization(
             args.input_file,
             results_dir=args.results_dir,
         )
@@ -259,8 +215,8 @@ def main(argv: list[str] | None = None) -> None:
             print(output)
         return
 
-    if args.command == "tmdwf-fourier":
-        outputs = run_tmdwf_fourier_workflow(
+    if args.command == "da-fourier":
+        outputs = run_da_fourier_workflow(
             args.input_file,
             results_dir=args.results_dir,
         )
@@ -268,8 +224,8 @@ def main(argv: list[str] | None = None) -> None:
             print(output)
         return
 
-    if args.command == "tmdwf-ratio-fourier-t":
-        outputs = run_tmdwf_ratio_fourier_t_workflow(
+    if args.command == "da-ratio-fourier-t":
+        outputs = run_da_ratio_fourier_t_workflow(
             args.input_file,
             results_dir=args.results_dir,
         )
@@ -277,8 +233,8 @@ def main(argv: list[str] | None = None) -> None:
             print(output)
         return
 
-    if args.command == "tmdwf-x-nstate-fit":
-        outputs = run_tmdwf_x_nstate_fit_workflow(
+    if args.command == "da-x-nstate-fit":
+        outputs = run_da_x_nstate_fit_workflow(
             args.input_file,
             results_dir=args.results_dir,
         )
@@ -286,35 +242,8 @@ def main(argv: list[str] | None = None) -> None:
             print(output)
         return
 
-    if args.command == "tmdwf-xfit-normalize":
-        outputs = run_tmdwf_xfit_normalization(
-            args.input_file,
-            results_dir=args.results_dir,
-        )
-        for output in outputs:
-            print(output)
-        return
-
-    if args.command == "tmdwf-cs-kernel":
-        outputs = run_tmdwf_cs_kernel_workflow(
-            args.input_file,
-            results_dir=args.results_dir,
-        )
-        for output in outputs:
-            print(output)
-        return
-
-    if args.command == "tmdwf-cs-kernel-average":
-        outputs = run_tmdwf_cs_kernel_average_workflow(
-            args.input_file,
-            results_dir=args.results_dir,
-        )
-        for output in outputs:
-            print(output)
-        return
-
-    if args.command == "tmdwf-cs-kernel-joint":
-        outputs = run_tmdwf_cs_kernel_joint_workflow(
+    if args.command == "da-xfit-normalize":
+        outputs = run_da_xfit_normalization(
             args.input_file,
             results_dir=args.results_dir,
         )

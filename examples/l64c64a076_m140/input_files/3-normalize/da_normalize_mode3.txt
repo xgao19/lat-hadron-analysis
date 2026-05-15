@@ -1,0 +1,15 @@
+# DA normalization example
+title_pattern l64c64a076_m140_fit_pz*
+input_root examples/l64c64a076_m140/analysis/2-bm/results_fit_nst2
+ns 64
+lattice_spacing_fm 0.076
+pzlist 0 1 5 6 7 8
+gmlist T5
+etalist eta0
+bTlist 0
+bzlist 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20
+component real
+nstates 2
+normalization_mode mode3
+plot true
+results_dir examples/l64c64a076_m140/analysis/3-normalize

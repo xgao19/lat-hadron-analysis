@@ -1,0 +1,35 @@
+# Example SS 2pt TGEVP input file
+# Edit the values below, then run:
+#   python scripts/two_point/ss_2pt_tgevp_extract.py ss-2pt-tgevp templates/input_files/two_point/tgevp_annotated.txt
+#
+# First line format:
+#   title_pattern Ns Nt lattice_spacing_fm
+# Use * in title_pattern where pz should be inserted.
+l64c64a076_m140_SS_k0_pz* 64 64 0.076
+
+# Path or wildcard pattern for the correlator CSV files.
+c2pt examples/l64c64a076_m140/data/c2pt_csv/c2pt_5_5_k0_pz*_real.csv
+
+# Momentum indices to analyze.
+pzlist 0
+
+# Time-folding mode to exploit temporal boundary conditions.
+# Choices:
+#   none / false       -> no folding
+#   periodic / true    -> symmetric average of t and Nt-t
+#   antiperiodic       -> antisymmetric fold
+fold_t periodic
+
+# Time window [t_start, t_end] used for the TGEVP analysis.
+tsrange 0 20
+
+# Bootstrap / runtime options. These now match the notebook workflow fields.
+# Use bootstrap_samples auto or bootstrap_size auto if you want backend defaults.
+binsize 1
+bootstrap_samples 64
+bootstrap_size 64
+seed 2026
+
+# Output directory.
+# If omitted, outputs go to a `results/` directory next to this input file.
+results_dir examples/outputs/tgevp_realdata

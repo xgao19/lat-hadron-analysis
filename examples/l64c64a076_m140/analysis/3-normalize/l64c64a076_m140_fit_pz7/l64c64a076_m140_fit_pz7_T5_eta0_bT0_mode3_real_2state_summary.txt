@@ -1,0 +1,77 @@
+normalization_mode mode3
+title l64c64a076_m140_fit_pz7
+gm T5
+eta eta0
+pz 7
+bT 0
+component real
+nstates 2
+normalization_sample_domain complex
+input_fit_table /Users/xiang/Desktop/codes/lat-hadron-analysis-DA/examples/l64c64a076_m140/analysis/2-bm/results_fit_nst2/l64c64a076_m140_fit_pz7/tables/l64c64a076_m140_fit_pz7_T5_eta0_bT0_real_2state_fit.txt
+input_sample_table /Users/xiang/Desktop/codes/lat-hadron-analysis-DA/examples/l64c64a076_m140/analysis/2-bm/results_fit_nst2/l64c64a076_m140_fit_pz7/samples/l64c64a076_m140_fit_pz7_T5_eta0_bT0_real_2state_samples.txt
+reference_same_pz_bT0_bz0 l64c64a076_m140_fit_pz7 T5 eta0 pz=7 bT=0 bz=0
+reference_pz0_same_bT_bz0 l64c64a076_m140_fit_pz0 T5 eta0 pz=0 bT=0 bz=0
+reference_pz0_bT0_bz0 l64c64a076_m140_fit_pz0 T5 eta0 pz=0 bT=0 bz=0
+begin_bz 0
+m0 1.0000000000e+00 0.0000000000e+00
+end_bz 0
+begin_bz 1
+m0 9.2548170014e-01 3.9000889469e-04
+end_bz 1
+begin_bz 2
+m0 7.8056989959e-01 1.1448840128e-03
+end_bz 2
+begin_bz 3
+m0 6.2036666085e-01 1.8120853370e-03
+end_bz 3
+begin_bz 4
+m0 4.6459522269e-01 2.3236347270e-03
+end_bz 4
+begin_bz 5
+m0 3.2568519549e-01 2.6718259301e-03
+end_bz 5
+begin_bz 6
+m0 2.1024434481e-01 2.8037478299e-03
+end_bz 6
+begin_bz 7
+m0 1.2009643439e-01 2.9340526682e-03
+end_bz 7
+begin_bz 8
+m0 5.4440206278e-02 2.8754683011e-03
+end_bz 8
+begin_bz 9
+m0 1.0713005203e-02 2.7293042156e-03
+end_bz 9
+begin_bz 10
+m0 -1.4791000075e-02 2.4083014706e-03
+end_bz 10
+begin_bz 11
+m0 -2.6686091116e-02 2.3751116809e-03
+end_bz 11
+begin_bz 12
+m0 -2.9793134469e-02 2.5137583154e-03
+end_bz 12
+begin_bz 13
+m0 -2.7205458639e-02 2.6207153425e-03
+end_bz 13
+begin_bz 14
+m0 -2.1863820118e-02 2.8736219605e-03
+end_bz 14
+begin_bz 15
+m0 -1.5725215374e-02 2.7855934782e-03
+end_bz 15
+begin_bz 16
+m0 -1.0317680418e-02 2.4341914795e-03
+end_bz 16
+begin_bz 17
+m0 -6.3573342256e-03 2.2910778607e-03
+end_bz 17
+begin_bz 18
+m0 -3.6374984307e-03 2.3222206321e-03
+end_bz 18
+begin_bz 19
+m0 -2.1332341070e-03 2.5418861956e-03
+end_bz 19
+begin_bz 20
+m0 -1.8089923324e-03 2.5169445505e-03
+end_bz 20

@@ -1,0 +1,66 @@
+# Example DA ratio Fourier-per-t input file
+# Edit the values below, then run:
+#   lqcd-analysis da-ratio-fourier-t templates/input_files/da/da_ratio_fourier_t_example_annotated.txt
+#
+# This workflow starts from raw DA numerator data and C2pt denominator data,
+# constructs the DA/C2pt ratio, and Fourier transforms the bz dependence at
+# each time slice. Its output is q(x,t), which is consumed by
+# da-x-nstate-fit.
+
+# First line: title_pattern Ns Nt lattice_spacing_fm
+# Use * where the pz value should be inserted into the title.
+l64c64a076_m140_da_pz* 64 64 0.076
+
+# Batch selectors.
+pzlist 0
+gmlist T5
+etalist eta0
+Tdirlist plus minus
+
+# Choose either:
+#   bTlist ...
+# or:
+#   bTrange bTmin bTmax
+bTlist 0
+
+# Choose either:
+#   bzlist ...
+# or:
+#   bzrange bzmin bzmax
+bzlist 0 2 4 6 8 10 12
+
+# Component to keep after constructing the complex ratio.
+component real
+
+# Raw input data.
+# qda_h5 may use {pz}/{gm} placeholders or the legacy * pz wildcard.
+qda_h5 /path/to/qda_pz*.h5
+dataset_path_template {gm}/{eta}/pz{pz}/{Tdir}/bT{bT}/bz{bz}
+c2pt /path/to/c2pt_pz*_real.csv
+fold_t none
+tsrange 0 20
+
+# x grid for q(x,t).
+# Choose either:
+#   x_values x0 x1 x2 ...
+# or:
+#   x_range xmin xmax
+#   x_count N
+x_range -0.5 1.5
+x_count 201
+
+# Refined z-grid and interpolation controls used by the cosine transform.
+zstep_fm 0.01
+interpolation_kind cubic
+
+# Bootstrap settings. auto uses the number of binned configurations.
+binsize 1
+bootstrap_samples auto
+bootstrap_size auto
+seed 2026
+
+# Output settings.
+# Writes:
+#   <results_dir>/<title>/tables/*_ratio_fourier_t.txt
+#   <results_dir>/<title>/samples/*_ratio_fourier_t_samples.txt
+results_dir examples/outputs/da_ratio_fourier_t_example

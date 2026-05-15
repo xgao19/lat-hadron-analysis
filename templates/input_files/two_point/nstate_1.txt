@@ -1,0 +1,17 @@
+l64c64a076_m140_fit_k0_pz* 64 64 0.076
+c2pt examples/l64c64a076_m140/data/c2pt_csv/c2pt_5_5_k0_pz*_real.csv
+pzlist 0
+fold_t none
+tmax 12
+model normal
+fit_mode uncorrelated
+pz0_ground_energy 0.42
+fix_ground_energy_from_dispersion true
+nstates 1
+tmin_window /path/to/2pt_tmin_windows.txt
+binsize 1
+bootstrap_samples 16
+bootstrap_size 16
+seed 2026
+plot true
+results_dir examples/outputs/nstate_fit_realdata_1state

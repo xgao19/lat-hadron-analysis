@@ -5,35 +5,23 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from .tmdwf.cs_kernel_extract import (
-    parse_tmdwf_cs_kernel_input,
-    run_tmdwf_cs_kernel_workflow,
+from .DA.fourier import (
+    parse_da_fourier_input,
+    run_da_fourier_workflow,
 )
-from .tmdwf.cs_kernel_average import (
-    parse_tmdwf_cs_kernel_average_input,
-    run_tmdwf_cs_kernel_average_workflow,
+from .DA.fit_nstate import parse_da_fit_input, run_da_nstate_fit
+from .DA.normalize import parse_da_normalize_input, run_da_normalization
+from .DA.ratio_fourier_t import (
+    parse_da_ratio_fourier_t_input,
+    run_da_ratio_fourier_t_workflow,
 )
-from .tmdwf.cs_kernel_joint import (
-    parse_tmdwf_cs_kernel_joint_input,
-    run_tmdwf_cs_kernel_joint_workflow,
+from .DA.x_nstate_fit import (
+    parse_da_x_nstate_fit_input,
+    run_da_x_nstate_fit_workflow,
 )
-from .tmdwf.fourier import (
-    parse_tmdwf_fourier_input,
-    run_tmdwf_fourier_workflow,
-)
-from .tmdwf.fit_nstate import parse_tmdwf_fit_input, run_tmdwf_nstate_fit
-from .tmdwf.normalize import parse_tmdwf_normalize_input, run_tmdwf_normalization
-from .tmdwf.ratio_fourier_t import (
-    parse_tmdwf_ratio_fourier_t_input,
-    run_tmdwf_ratio_fourier_t_workflow,
-)
-from .tmdwf.x_nstate_fit import (
-    parse_tmdwf_x_nstate_fit_input,
-    run_tmdwf_x_nstate_fit_workflow,
-)
-from .tmdwf.xfit_normalize import (
-    parse_tmdwf_xfit_normalize_input,
-    run_tmdwf_xfit_normalization,
+from .DA.xfit_normalize import (
+    parse_da_xfit_normalize_input,
+    run_da_xfit_normalization,
 )
 from .two_point.effective_mass import parse_effective_mass_input, run_effective_mass_workflow
 from .two_point.fit_nstate import parse_nstate_fit_input, run_nstate_fit
@@ -104,7 +92,7 @@ EFFECTIVE_MASS_INPUT_KEYS = {
     "results_dir",
 }
 EFFECTIVE_MASS_RUN_KEYS = {"results_dir"}
-TMDWF_INPUT_KEYS = {
+DA_INPUT_KEYS = {
     "title_pattern",
     "ns",
     "nt",
@@ -127,7 +115,7 @@ TMDWF_INPUT_KEYS = {
     "bootstrap_size",
     "seed",
     "fit_window",
-    "qtmdwf_h5",
+    "qda_h5",
     "dataset_path_template",
     "two_point_fit_root",
     "two_point_fit_window_by_pz",
@@ -137,8 +125,8 @@ TMDWF_INPUT_KEYS = {
     "plot",
     "results_dir",
 }
-TMDWF_RUN_KEYS = {"results_dir"}
-TMDWF_FOURIER_KEYS = {
+DA_RUN_KEYS = {"results_dir"}
+DA_FOURIER_KEYS = {
     "title_pattern",
     "input_root",
     "ns",
@@ -159,8 +147,8 @@ TMDWF_FOURIER_KEYS = {
     "plot",
     "results_dir",
 }
-TMDWF_FOURIER_RUN_KEYS = {"results_dir"}
-TMDWF_RATIO_FOURIER_T_KEYS = {
+DA_FOURIER_RUN_KEYS = {"results_dir"}
+DA_RATIO_FOURIER_T_KEYS = {
     "title_pattern",
     "ns",
     "nt",
@@ -174,7 +162,7 @@ TMDWF_RATIO_FOURIER_T_KEYS = {
     "bzlist",
     "bzrange",
     "component",
-    "qtmdwf_h5",
+    "qda_h5",
     "dataset_path_template",
     "c2pt",
     "fold_t",
@@ -190,8 +178,8 @@ TMDWF_RATIO_FOURIER_T_KEYS = {
     "interpolation_kind",
     "results_dir",
 }
-TMDWF_RATIO_FOURIER_T_RUN_KEYS = {"results_dir"}
-TMDWF_X_NSTATE_FIT_KEYS = {
+DA_RATIO_FOURIER_T_RUN_KEYS = {"results_dir"}
+DA_X_NSTATE_FIT_KEYS = {
     "title_pattern",
     "input_root",
     "ns",
@@ -210,8 +198,8 @@ TMDWF_X_NSTATE_FIT_KEYS = {
     "two_point_fit_sample_coupled",
     "results_dir",
 }
-TMDWF_X_NSTATE_FIT_RUN_KEYS = {"results_dir"}
-TMDWF_XFIT_NORMALIZE_KEYS = {
+DA_X_NSTATE_FIT_RUN_KEYS = {"results_dir"}
+DA_XFIT_NORMALIZE_KEYS = {
     "title_pattern",
     "input_root",
     "bare_matrix_root",
@@ -231,84 +219,8 @@ TMDWF_XFIT_NORMALIZE_KEYS = {
     "interpolation_kind",
     "results_dir",
 }
-TMDWF_XFIT_NORMALIZE_RUN_KEYS = {"results_dir"}
-TMDWF_CS_KERNEL_KEYS = {
-    "title_pattern",
-    "input_root",
-    "ns",
-    "lattice_spacing_fm",
-    "gmlist",
-    "etalist",
-    "component",
-    "nstates",
-    "normalization_mode",
-    "mu",
-    "scheme",
-    "extraction_type",
-    "pair_mode",
-    "reference_p1",
-    "kernel_labels",
-    "kernel",
-    "bTlist",
-    "bTrange",
-    "pzlist",
-    "pzrange",
-    "x_window",
-    "plot",
-    "results_dir",
-}
-TMDWF_CS_KERNEL_RUN_KEYS = {"results_dir"}
-TMDWF_CS_KERNEL_AVERAGE_KEYS = {
-    "title_pattern",
-    "input_root",
-    "lattice_spacing_fm",
-    "gm",
-    "eta",
-    "component",
-    "nstates",
-    "normalization_mode",
-    "scheme",
-    "extraction_type",
-    "kernel_label",
-    "pair_mode",
-    "reference_p1",
-    "bTlist",
-    "bTrange",
-    "x_range",
-    "reference_pz_labels",
-    "results_dir",
-}
-TMDWF_CS_KERNEL_AVERAGE_RUN_KEYS = {"results_dir"}
-TMDWF_CS_KERNEL_JOINT_KEYS = {
-    "ensembles",
-    "gm",
-    "eta",
-    "component",
-    "nstates",
-    "normalization_mode",
-    "mu",
-    "scheme",
-    "kernel_label",
-    "reference_p1_gev",
-    "x_window",
-    "x_knots",
-    "bT_knots_fm",
-    "spline_kind",
-    "plot",
-    "progress",
-    "progress_every",
-    "results_dir",
-    "fit_a2_correction",
-    "fit_fv_correction",
-    "fit_pz2_correction",
-    "fit_apz2_correction",
-    "a2_correction_prior_width",
-    "fv_correction_prior_width",
-    "pz2_correction_prior_width",
-    "apz2_correction_prior_width",
-}
-TMDWF_CS_KERNEL_JOINT_RUN_KEYS = {"results_dir"}
-TMDWF_NORMALIZE_KEYS = {
+DA_XFIT_NORMALIZE_RUN_KEYS = {"results_dir"}
+DA_NORMALIZE_KEYS = {
     "title_pattern",
     "input_root",
     "ns",
@@ -326,7 +238,7 @@ TMDWF_NORMALIZE_KEYS = {
     "plot",
     "results_dir",
 }
-TMDWF_NORMALIZE_RUN_KEYS = {"results_dir"}
+DA_NORMALIZE_RUN_KEYS = {"results_dir"}
 PLOT_REQUIRED_KEYS = {
     "output_dir",
     "correlator_table",
@@ -353,8 +265,8 @@ def _subset_config(config: dict[str, Any], allowed_keys: set[str]) -> dict[str, 
     return {key: value for key, value in config.items() if key in allowed_keys and value is not None}
 
 
-def _materialize_tmdwf_two_point_fit_window_file(window_by_pz: dict[Any, Any]) -> Path:
-    tmpdir = Path(tempfile.mkdtemp(prefix="lqcd_tmdwf_two_point_fit_window_"))
+def _materialize_da_two_point_fit_window_file(window_by_pz: dict[Any, Any]) -> Path:
+    tmpdir = Path(tempfile.mkdtemp(prefix="lqcd_da_two_point_fit_window_"))
     path = tmpdir / "two_point_fit_window_by_pz.txt"
     lines: list[str] = []
     for pz, window in window_by_pz.items():
@@ -491,18 +403,18 @@ def render_effective_mass_input_text(config: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def render_tmdwf_fit_input_text(config: dict[str, Any]) -> str:
+def render_da_fit_input_text(config: dict[str, Any]) -> str:
     if isinstance(config.get("fit_window"), dict):
         config = dict(config)
         config["fit_window"] = str(
-            _materialize_tmdwf_fit_window_file(config["fit_window"])
+            _materialize_da_fit_window_file(config["fit_window"])
         )
     if isinstance(config.get("two_point_fit_window_by_pz"), dict):
         config = dict(config)
         config["two_point_fit_window_by_pz"] = str(
-            _materialize_tmdwf_two_point_fit_window_file(config["two_point_fit_window_by_pz"])
+            _materialize_da_two_point_fit_window_file(config["two_point_fit_window_by_pz"])
         )
-    config = _subset_config(config, TMDWF_INPUT_KEYS)
+    config = _subset_config(config, DA_INPUT_KEYS)
     required = [
         "title_pattern",
         "ns",
@@ -516,7 +428,7 @@ def render_tmdwf_fit_input_text(config: dict[str, Any]) -> str:
         "etalist",
         "Tdirlist",
         "fit_window",
-        "qtmdwf_h5",
+        "qda_h5",
         "dataset_path_template",
         "two_point_fit_root",
         "two_point_fit_window_by_pz",
@@ -525,11 +437,11 @@ def render_tmdwf_fit_input_text(config: dict[str, Any]) -> str:
     ]
     missing = [key for key in required if key not in config]
     if missing:
-        raise ValueError(f"missing TMDWF notebook config keys: {missing}")
+        raise ValueError(f"missing DA notebook config keys: {missing}")
     if "bTlist" not in config and "bTrange" not in config:
-        raise ValueError("missing TMDWF notebook config key: bTlist or bTrange")
+        raise ValueError("missing DA notebook config key: bTlist or bTrange")
     if "bzlist" not in config and "bzrange" not in config:
-        raise ValueError("missing TMDWF notebook config key: bzlist or bzrange")
+        raise ValueError("missing DA notebook config key: bzlist or bzrange")
 
     lines = [
         f"{config['title_pattern']} {config['ns']} {config['nt']} {config['lattice_spacing_fm']}",
@@ -554,9 +466,9 @@ def render_tmdwf_fit_input_text(config: dict[str, Any]) -> str:
     lines.extend(
         [
             f"fit_window {_as_scalar_string(config['fit_window'])}",
-            # qtmdwf_h5 is passed through unchanged so notebook configs may use
+            # qda_h5 is passed through unchanged so notebook configs may use
             # either {pz}/{gm} placeholders or the legacy * pz wildcard.
-            f"qtmdwf_h5 {_as_scalar_string(config['qtmdwf_h5'])}",
+            f"qda_h5 {_as_scalar_string(config['qda_h5'])}",
             f"dataset_path_template {_as_scalar_string(config['dataset_path_template'])}",
             f"two_point_fit_root {_as_scalar_string(config['two_point_fit_root'])}",
             f"two_point_fit_window_by_pz {_as_scalar_string(config['two_point_fit_window_by_pz'])}",
@@ -580,8 +492,8 @@ def render_tmdwf_fit_input_text(config: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def render_tmdwf_fourier_input_text(config: dict[str, Any]) -> str:
-    config = _subset_config(config, TMDWF_FOURIER_KEYS)
+def render_da_fourier_input_text(config: dict[str, Any]) -> str:
+    config = _subset_config(config, DA_FOURIER_KEYS)
     required = [
         "title_pattern",
         "input_root",
@@ -596,9 +508,9 @@ def render_tmdwf_fourier_input_text(config: dict[str, Any]) -> str:
     ]
     missing = [key for key in required if key not in config]
     if missing:
-        raise ValueError(f"missing TMDWF Fourier notebook config keys: {missing}")
+        raise ValueError(f"missing DA Fourier notebook config keys: {missing}")
     if "bTlist" not in config and "bTrange" not in config:
-        raise ValueError("missing TMDWF Fourier notebook config key: bTlist or bTrange")
+        raise ValueError("missing DA Fourier notebook config key: bTlist or bTrange")
 
     lines = [
         f"title_pattern {_as_scalar_string(config['title_pattern'])}",
@@ -632,8 +544,8 @@ def render_tmdwf_fourier_input_text(config: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def render_tmdwf_ratio_fourier_t_input_text(config: dict[str, Any]) -> str:
-    config = _subset_config(config, TMDWF_RATIO_FOURIER_T_KEYS)
+def render_da_ratio_fourier_t_input_text(config: dict[str, Any]) -> str:
+    config = _subset_config(config, DA_RATIO_FOURIER_T_KEYS)
     required = [
         "title_pattern",
         "ns",
@@ -644,18 +556,18 @@ def render_tmdwf_ratio_fourier_t_input_text(config: dict[str, Any]) -> str:
         "etalist",
         "Tdirlist",
         "component",
-        "qtmdwf_h5",
+        "qda_h5",
         "dataset_path_template",
         "c2pt",
         "fold_t",
     ]
     missing = [key for key in required if key not in config]
     if missing:
-        raise ValueError(f"missing TMDWF ratio-Fourier-t notebook config keys: {missing}")
+        raise ValueError(f"missing DA ratio-Fourier-t notebook config keys: {missing}")
     if "bTlist" not in config and "bTrange" not in config:
-        raise ValueError("missing TMDWF ratio-Fourier-t notebook config key: bTlist or bTrange")
+        raise ValueError("missing DA ratio-Fourier-t notebook config key: bTlist or bTrange")
     if "bzlist" not in config and "bzrange" not in config:
-        raise ValueError("missing TMDWF ratio-Fourier-t notebook config key: bzlist or bzrange")
+        raise ValueError("missing DA ratio-Fourier-t notebook config key: bzlist or bzrange")
 
     lines = [
         f"{config['title_pattern']} {config['ns']} {config['nt']} {config['lattice_spacing_fm']}",
@@ -675,7 +587,7 @@ def render_tmdwf_ratio_fourier_t_input_text(config: dict[str, Any]) -> str:
     lines.extend(
         [
             f"component {_as_scalar_string(config['component'])}",
-            f"qtmdwf_h5 {_as_scalar_string(config['qtmdwf_h5'])}",
+            f"qda_h5 {_as_scalar_string(config['qda_h5'])}",
             f"dataset_path_template {_as_scalar_string(config['dataset_path_template'])}",
             f"c2pt {_as_scalar_string(config['c2pt'])}",
             f"fold_t {_as_scalar_string(config['fold_t'])}",
@@ -703,16 +615,16 @@ def render_tmdwf_ratio_fourier_t_input_text(config: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def render_tmdwf_x_nstate_fit_input_text(config: dict[str, Any]) -> str:
+def render_da_x_nstate_fit_input_text(config: dict[str, Any]) -> str:
     if isinstance(config.get("fit_window"), dict):
         config = dict(config)
-        config["fit_window"] = str(_materialize_tmdwf_fit_window_file(config["fit_window"]))
+        config["fit_window"] = str(_materialize_da_fit_window_file(config["fit_window"]))
     if isinstance(config.get("two_point_fit_window_by_pz"), dict):
         config = dict(config)
         config["two_point_fit_window_by_pz"] = str(
-            _materialize_tmdwf_two_point_fit_window_file(config["two_point_fit_window_by_pz"])
+            _materialize_da_two_point_fit_window_file(config["two_point_fit_window_by_pz"])
         )
-    config = _subset_config(config, TMDWF_X_NSTATE_FIT_KEYS)
+    config = _subset_config(config, DA_X_NSTATE_FIT_KEYS)
     required = [
         "title_pattern",
         "input_root",
@@ -730,9 +642,9 @@ def render_tmdwf_x_nstate_fit_input_text(config: dict[str, Any]) -> str:
     ]
     missing = [key for key in required if key not in config]
     if missing:
-        raise ValueError(f"missing TMDWF x-space N-state notebook config keys: {missing}")
+        raise ValueError(f"missing DA x-space N-state notebook config keys: {missing}")
     if "bTlist" not in config and "bTrange" not in config:
-        raise ValueError("missing TMDWF x-space N-state notebook config key: bTlist or bTrange")
+        raise ValueError("missing DA x-space N-state notebook config key: bTlist or bTrange")
 
     lines = [
         f"title_pattern {_as_scalar_string(config['title_pattern'])}",
@@ -763,8 +675,8 @@ def render_tmdwf_x_nstate_fit_input_text(config: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def render_tmdwf_xfit_normalize_input_text(config: dict[str, Any]) -> str:
-    config = _subset_config(config, TMDWF_XFIT_NORMALIZE_KEYS)
+def render_da_xfit_normalize_input_text(config: dict[str, Any]) -> str:
+    config = _subset_config(config, DA_XFIT_NORMALIZE_KEYS)
     required = [
         "title_pattern",
         "input_root",
@@ -780,11 +692,11 @@ def render_tmdwf_xfit_normalize_input_text(config: dict[str, Any]) -> str:
     ]
     missing = [key for key in required if key not in config]
     if missing:
-        raise ValueError(f"missing TMDWF x-fit normalization notebook config keys: {missing}")
+        raise ValueError(f"missing DA x-fit normalization notebook config keys: {missing}")
     if "bTlist" not in config and "bTrange" not in config:
-        raise ValueError("missing TMDWF x-fit normalization notebook config key: bTlist or bTrange")
+        raise ValueError("missing DA x-fit normalization notebook config key: bTlist or bTrange")
     if "bzlist" not in config and "bzrange" not in config:
-        raise ValueError("missing TMDWF x-fit normalization notebook config key: bzlist or bzrange")
+        raise ValueError("missing DA x-fit normalization notebook config key: bzlist or bzrange")
 
     lines = [
         f"title_pattern {_as_scalar_string(config['title_pattern'])}",
@@ -817,215 +729,8 @@ def render_tmdwf_xfit_normalize_input_text(config: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def render_tmdwf_cs_kernel_input_text(config: dict[str, Any]) -> str:
-    config = _subset_config(config, TMDWF_CS_KERNEL_KEYS)
-    required = [
-        "title_pattern",
-        "input_root",
-        "ns",
-        "lattice_spacing_fm",
-        "gmlist",
-        "etalist",
-        "component",
-        "nstates",
-        "normalization_mode",
-        "mu",
-    ]
-    missing = [key for key in required if key not in config]
-    if missing:
-        raise ValueError(f"missing TMDWF CS-kernel notebook config keys: {missing}")
-    if "bTlist" not in config and "bTrange" not in config:
-        raise ValueError("missing TMDWF CS-kernel notebook config key: bTlist or bTrange")
-    if "pzlist" not in config and "pzrange" not in config:
-        raise ValueError("missing TMDWF CS-kernel notebook config key: pzlist or pzrange")
-    if "kernel_labels" not in config and "kernel" not in config:
-        raise ValueError("missing TMDWF CS-kernel notebook config key: kernel_labels")
-
-    lines = [
-        f"title_pattern {_as_scalar_string(config['title_pattern'])}",
-        f"input_root {_as_scalar_string(config['input_root'])}",
-        f"ns {_as_scalar_string(config['ns'])}",
-        f"lattice_spacing_fm {_as_scalar_string(config['lattice_spacing_fm'])}",
-        f"gmlist {_as_scalar_string(config['gmlist'])}",
-        f"etalist {_as_scalar_string(config['etalist'])}",
-        f"component {_as_scalar_string(config['component'])}",
-        f"nstates {_as_scalar_string(config['nstates'])}",
-        f"normalization_mode {_as_scalar_string(config['normalization_mode'])}",
-        f"mu {_as_scalar_string(config['mu'])}",
-        f"scheme {_as_scalar_string(config.get('scheme', 'CG'))}",
-        f"extraction_type {_as_scalar_string(config.get('extraction_type', 'type2'))}",
-        f"pair_mode {_as_scalar_string(config.get('pair_mode', 'all'))}",
-        f"kernel_labels {_as_scalar_string(config.get('kernel_labels', config.get('kernel')))}",
-    ]
-    if "bTlist" in config and config["bTlist"] is not None:
-        lines.append(f"bTlist {_as_scalar_string(config['bTlist'])}")
-    elif "bTrange" in config and config["bTrange"] is not None:
-        lines.append(f"bTrange {_as_scalar_string(config['bTrange'])}")
-    if "pzlist" in config and config["pzlist"] is not None:
-        lines.append(f"pzlist {_as_scalar_string(config['pzlist'])}")
-    elif "pzrange" in config and config["pzrange"] is not None:
-        lines.append(f"pzrange {_as_scalar_string(config['pzrange'])}")
-    if "x_window" in config and config["x_window"] is not None:
-        lines.append(f"x_window {_as_scalar_string(config['x_window'])}")
-    if "reference_p1" in config and config["reference_p1"] is not None:
-        lines.append(f"reference_p1 {_as_scalar_string(config['reference_p1'])}")
-    for optional_key in ("plot", "results_dir"):
-        if optional_key in config and config[optional_key] is not None:
-            lines.append(f"{optional_key} {_as_scalar_string(config[optional_key])}")
-    return "\n".join(lines) + "\n"
-
-
-def render_tmdwf_cs_kernel_average_input_text(config: dict[str, Any]) -> str:
-    config = _subset_config(config, TMDWF_CS_KERNEL_AVERAGE_KEYS)
-    required = [
-        "title_pattern",
-        "input_root",
-        "lattice_spacing_fm",
-        "gm",
-        "eta",
-        "component",
-        "nstates",
-        "normalization_mode",
-        "scheme",
-        "extraction_type",
-        "kernel_label",
-    ]
-    missing = [key for key in required if key not in config]
-    if missing:
-        raise ValueError(f"missing TMDWF CS-kernel average notebook config keys: {missing}")
-    if "bTlist" not in config and "bTrange" not in config:
-        raise ValueError("missing TMDWF CS-kernel average notebook config key: bTlist or bTrange")
-
-    lines = [
-        f"title_pattern {_as_scalar_string(config['title_pattern'])}",
-        f"input_root {_as_scalar_string(config['input_root'])}",
-        f"lattice_spacing_fm {_as_scalar_string(config['lattice_spacing_fm'])}",
-        f"gm {_as_scalar_string(config['gm'])}",
-        f"eta {_as_scalar_string(config['eta'])}",
-        f"component {_as_scalar_string(config['component'])}",
-        f"nstates {_as_scalar_string(config['nstates'])}",
-        f"normalization_mode {_as_scalar_string(config['normalization_mode'])}",
-        f"scheme {_as_scalar_string(config['scheme'])}",
-        f"extraction_type {_as_scalar_string(config['extraction_type'])}",
-        f"kernel_label {_as_scalar_string(config['kernel_label'])}",
-    ]
-    if "pair_mode" in config and config["pair_mode"] is not None:
-        lines.append(f"pair_mode {_as_scalar_string(config['pair_mode'])}")
-    if "reference_p1" in config and config["reference_p1"] is not None:
-        lines.append(f"reference_p1 {_as_scalar_string(config['reference_p1'])}")
-    if "bTlist" in config and config["bTlist"] is not None:
-        lines.append(f"bTlist {_as_scalar_string(config['bTlist'])}")
-    elif "bTrange" in config and config["bTrange"] is not None:
-        lines.append(f"bTrange {_as_scalar_string(config['bTrange'])}")
-    if "reference_pz_labels" in config and config["reference_pz_labels"] is not None:
-        lines.append(f"reference_pz_labels {_as_scalar_string(config['reference_pz_labels'])}")
-    if "x_range" in config and config["x_range"] is not None:
-        lines.append(f"x_range {_as_scalar_string(config['x_range'])}")
-    for optional_key in ("results_dir",):
-        if optional_key in config and config[optional_key] is not None:
-            lines.append(f"{optional_key} {_as_scalar_string(config[optional_key])}")
-    return "\n".join(lines) + "\n"
-
-
-def _format_joint_ensemble_line(ensemble: dict[str, Any]) -> str:
-    required = ["label", "input_root", "title_pattern", "ns", "lattice_spacing_fm"]
-    missing = [key for key in required if key not in ensemble]
-    if missing:
-        raise ValueError(f"missing TMDWF CS-kernel joint ensemble keys: {missing}")
-    if "pzlist" in ensemble and ensemble["pzlist"] is not None:
-        pz_text = ",".join(str(value) for value in ensemble["pzlist"])
-    elif "pzrange" in ensemble and ensemble["pzrange"] is not None:
-        pz_text = ":".join(str(value) for value in ensemble["pzrange"])
-    else:
-        raise ValueError("missing TMDWF CS-kernel joint ensemble key: pzlist or pzrange")
-    if "bTlist" in ensemble and ensemble["bTlist"] is not None:
-        bT_text = ",".join(str(value) for value in ensemble["bTlist"])
-    elif "bTrange" in ensemble and ensemble["bTrange"] is not None:
-        bT_text = ":".join(str(value) for value in ensemble["bTrange"])
-    else:
-        raise ValueError("missing TMDWF CS-kernel joint ensemble key: bTlist or bTrange")
-    m_pi_token = ""
-    if "m_pi_mev" in ensemble and ensemble["m_pi_mev"] is not None:
-        m_pi_token = f" m_pi={_as_scalar_string(ensemble['m_pi_mev'])}"
-    return (
-        f"ensemble {_as_scalar_string(ensemble['label'])} "
-        f"{_as_scalar_string(ensemble['input_root'])} "
-        f"{_as_scalar_string(ensemble['title_pattern'])} "
-        f"{_as_scalar_string(ensemble['ns'])} "
-        f"{_as_scalar_string(ensemble['lattice_spacing_fm'])} "
-        f"pz={pz_text} bT={bT_text}{m_pi_token}"
-    )
-
-
-def render_tmdwf_cs_kernel_joint_input_text(config: dict[str, Any]) -> str:
-    config = _subset_config(config, TMDWF_CS_KERNEL_JOINT_KEYS)
-    required = [
-        "ensembles",
-        "gm",
-        "eta",
-        "component",
-        "nstates",
-        "normalization_mode",
-        "mu",
-        "kernel_label",
-        "reference_p1_gev",
-    ]
-    missing = [key for key in required if key not in config]
-    if missing:
-        raise ValueError(f"missing TMDWF CS-kernel joint notebook config keys: {missing}")
-    if not config["ensembles"]:
-        raise ValueError("TMDWF CS-kernel joint notebook config requires at least one ensemble")
-
-    lines = [
-        f"gm {_as_scalar_string(config['gm'])}",
-        f"eta {_as_scalar_string(config['eta'])}",
-        f"component {_as_scalar_string(config['component'])}",
-        f"nstates {_as_scalar_string(config['nstates'])}",
-        f"normalization_mode {_as_scalar_string(config['normalization_mode'])}",
-        f"mu {_as_scalar_string(config['mu'])}",
-        f"scheme {_as_scalar_string(config.get('scheme', 'CG'))}",
-        f"kernel_label {_as_scalar_string(config['kernel_label'])}",
-        f"reference_p1_gev {_as_scalar_string(config['reference_p1_gev'])}",
-    ]
-    if "x_window" in config and config["x_window"] is not None:
-        lines.append(f"x_window {_as_scalar_string(config['x_window'])}")
-    if "x_knots" in config and config["x_knots"] is not None:
-        lines.append(f"x_knots {_as_scalar_string(config['x_knots'])}")
-    if "bT_knots_fm" in config and config["bT_knots_fm"] is not None:
-        lines.append(f"bT_knots_fm {_as_scalar_string(config['bT_knots_fm'])}")
-    if "spline_kind" in config and config["spline_kind"] is not None:
-        lines.append(f"spline_kind {_as_scalar_string(config['spline_kind'])}")
-    if "fit_a2_correction" in config and config["fit_a2_correction"] is not None:
-        lines.append(f"fit_a2_correction {_as_scalar_string(config['fit_a2_correction'])}")
-    if "fit_fv_correction" in config and config["fit_fv_correction"] is not None:
-        lines.append(f"fit_fv_correction {_as_scalar_string(config['fit_fv_correction'])}")
-    if "fit_pz2_correction" in config and config["fit_pz2_correction"] is not None:
-        lines.append(f"fit_pz2_correction {_as_scalar_string(config['fit_pz2_correction'])}")
-    if "fit_apz2_correction" in config and config["fit_apz2_correction"] is not None:
-        lines.append(f"fit_apz2_correction {_as_scalar_string(config['fit_apz2_correction'])}")
-    for key in (
-        "a2_correction_prior_width",
-        "fv_correction_prior_width",
-        "pz2_correction_prior_width",
-        "apz2_correction_prior_width",
-    ):
-        if key in config and config[key] is not None:
-            lines.append(f"{key} {_as_scalar_string(config[key])}")
-    if "plot" in config and config["plot"] is not None:
-        lines.append(f"plot {_as_scalar_string(config['plot'])}")
-    if "progress" in config and config["progress"] is not None:
-        lines.append(f"progress {_as_scalar_string(config['progress'])}")
-    if "progress_every" in config and config["progress_every"] is not None:
-        lines.append(f"progress_every {_as_scalar_string(config['progress_every'])}")
-    for ensemble in config["ensembles"]:
-        lines.append(_format_joint_ensemble_line(ensemble))
-    if "results_dir" in config and config["results_dir"] is not None:
-        lines.append(f"results_dir {_as_scalar_string(config['results_dir'])}")
-    return "\n".join(lines) + "\n"
-
-
-def render_tmdwf_normalize_input_text(config: dict[str, Any]) -> str:
-    config = _subset_config(config, TMDWF_NORMALIZE_KEYS)
+def render_da_normalize_input_text(config: dict[str, Any]) -> str:
+    config = _subset_config(config, DA_NORMALIZE_KEYS)
     required = [
         "title_pattern",
         "input_root",
@@ -1040,11 +745,11 @@ def render_tmdwf_normalize_input_text(config: dict[str, Any]) -> str:
     ]
     missing = [key for key in required if key not in config]
     if missing:
-        raise ValueError(f"missing TMDWF normalization notebook config keys: {missing}")
+        raise ValueError(f"missing DA normalization notebook config keys: {missing}")
     if "bTlist" not in config and "bTrange" not in config:
-        raise ValueError("missing TMDWF normalization notebook config key: bTlist or bTrange")
+        raise ValueError("missing DA normalization notebook config key: bTlist or bTrange")
     if "bzlist" not in config and "bzrange" not in config:
-        raise ValueError("missing TMDWF normalization notebook config key: bzlist or bzrange")
+        raise ValueError("missing DA normalization notebook config key: bzlist or bzrange")
 
     lines = [
         f"title_pattern {_as_scalar_string(config['title_pattern'])}",
@@ -1083,9 +788,9 @@ def _materialize_input_text(text: str, suffix: str) -> Path:
     return path
 
 
-def _materialize_tmdwf_fit_window_file(fit_window: dict[Any, Any]) -> Path:
-    tmpdir = Path(tempfile.mkdtemp(prefix="lqcd_tmdwf_fit_windows_"))
-    path = tmpdir / "tmdwf_fit_window.txt"
+def _materialize_da_fit_window_file(fit_window: dict[Any, Any]) -> Path:
+    tmpdir = Path(tempfile.mkdtemp(prefix="lqcd_da_fit_windows_"))
+    path = tmpdir / "da_fit_window.txt"
     lines: list[str] = []
 
     def _parse_window(window: Any, label: str) -> tuple[int, int]:
@@ -1194,14 +899,14 @@ def validate_effective_mass_notebook_config(config: dict[str, Any]):
     return parse_effective_mass_input(input_path)
 
 
-def validate_tmdwf_notebook_config(config: dict[str, Any]):
-    input_path = _materialize_input_text(render_tmdwf_fit_input_text(config), "input_tmdwf.txt")
-    return parse_tmdwf_fit_input(input_path)
+def validate_da_notebook_config(config: dict[str, Any]):
+    input_path = _materialize_input_text(render_da_fit_input_text(config), "input_da.txt")
+    return parse_da_fit_input(input_path)
 
 
-def validate_tmdwf_fourier_notebook_config(config: dict[str, Any]) -> dict[str, Any]:
-    input_path = _materialize_input_text(render_tmdwf_fourier_input_text(config), "input_tmdwf_fourier.txt")
-    parsed = parse_tmdwf_fourier_input(input_path)
+def validate_da_fourier_notebook_config(config: dict[str, Any]) -> dict[str, Any]:
+    input_path = _materialize_input_text(render_da_fourier_input_text(config), "input_da_fourier.txt")
+    parsed = parse_da_fourier_input(input_path)
     validated = {
         "title_pattern": parsed.title_pattern,
         "input_root": parsed.input_root,
@@ -1224,12 +929,12 @@ def validate_tmdwf_fourier_notebook_config(config: dict[str, Any]) -> dict[str, 
     return validated
 
 
-def validate_tmdwf_ratio_fourier_t_notebook_config(config: dict[str, Any]) -> dict[str, Any]:
+def validate_da_ratio_fourier_t_notebook_config(config: dict[str, Any]) -> dict[str, Any]:
     input_path = _materialize_input_text(
-        render_tmdwf_ratio_fourier_t_input_text(config),
-        "input_tmdwf_ratio_fourier_t.txt",
+        render_da_ratio_fourier_t_input_text(config),
+        "input_da_ratio_fourier_t.txt",
     )
-    parsed = parse_tmdwf_ratio_fourier_t_input(input_path)
+    parsed = parse_da_ratio_fourier_t_input(input_path)
     validated = {
         "title_pattern": parsed.title_pattern,
         "ns": parsed.ns,
@@ -1251,12 +956,12 @@ def validate_tmdwf_ratio_fourier_t_notebook_config(config: dict[str, Any]) -> di
     return validated
 
 
-def validate_tmdwf_x_nstate_fit_notebook_config(config: dict[str, Any]) -> dict[str, Any]:
+def validate_da_x_nstate_fit_notebook_config(config: dict[str, Any]) -> dict[str, Any]:
     input_path = _materialize_input_text(
-        render_tmdwf_x_nstate_fit_input_text(config),
-        "input_tmdwf_x_nstate_fit.txt",
+        render_da_x_nstate_fit_input_text(config),
+        "input_da_x_nstate_fit.txt",
     )
-    parsed = parse_tmdwf_x_nstate_fit_input(input_path)
+    parsed = parse_da_x_nstate_fit_input(input_path)
     validated = {
         "title_pattern": parsed.title_pattern,
         "input_root": parsed.input_root,
@@ -1278,12 +983,12 @@ def validate_tmdwf_x_nstate_fit_notebook_config(config: dict[str, Any]) -> dict[
     return validated
 
 
-def validate_tmdwf_xfit_normalize_notebook_config(config: dict[str, Any]) -> dict[str, Any]:
+def validate_da_xfit_normalize_notebook_config(config: dict[str, Any]) -> dict[str, Any]:
     input_path = _materialize_input_text(
-        render_tmdwf_xfit_normalize_input_text(config),
-        "input_tmdwf_xfit_normalize.txt",
+        render_da_xfit_normalize_input_text(config),
+        "input_da_xfit_normalize.txt",
     )
-    parsed = parse_tmdwf_xfit_normalize_input(input_path)
+    parsed = parse_da_xfit_normalize_input(input_path)
     validated = {
         "title_pattern": parsed.title_pattern,
         "input_root": parsed.input_root,
@@ -1306,94 +1011,9 @@ def validate_tmdwf_xfit_normalize_notebook_config(config: dict[str, Any]) -> dic
     return validated
 
 
-def validate_tmdwf_cs_kernel_notebook_config(config: dict[str, Any]) -> dict[str, Any]:
-    input_path = _materialize_input_text(render_tmdwf_cs_kernel_input_text(config), "input_tmdwf_cs_kernel.txt")
-    parsed = parse_tmdwf_cs_kernel_input(input_path)
-    validated = {
-        "title_pattern": parsed.title_pattern,
-        "input_root": parsed.input_root,
-        "ns": parsed.ns,
-        "lattice_spacing_fm": parsed.lattice_spacing_fm,
-        "gmlist": parsed.gmlist,
-        "etalist": parsed.etalist,
-        "component": parsed.component,
-        "nstates": parsed.nstates,
-        "normalization_mode": parsed.normalization_mode,
-        "mu": parsed.mu,
-        "scheme": parsed.scheme,
-        "extraction_type": parsed.extraction_type,
-        "pair_mode": parsed.pair_mode,
-        "reference_p1": parsed.reference_p1,
-        "kernel_labels": parsed.kernel_labels,
-        "bTlist": parsed.bTlist,
-        "pzlist": parsed.pzlist,
-        "x_window": parsed.x_window,
-        "plot": parsed.make_plots,
-    }
-    if "results_dir" in config and config["results_dir"] is not None:
-        validated["results_dir"] = Path(config["results_dir"])
-    return validated
-
-
-def validate_tmdwf_cs_kernel_average_notebook_config(config: dict[str, Any]) -> dict[str, Any]:
-    input_path = _materialize_input_text(render_tmdwf_cs_kernel_average_input_text(config), "input_tmdwf_cs_kernel_average.txt")
-    parsed = parse_tmdwf_cs_kernel_average_input(input_path)
-    validated = {
-        "title_pattern": parsed.title_pattern,
-        "input_root": parsed.input_root,
-        "lattice_spacing_fm": parsed.lattice_spacing_fm,
-        "gm": parsed.gm,
-        "eta": parsed.eta,
-        "component": parsed.component,
-        "nstates": parsed.nstates,
-        "normalization_mode": parsed.normalization_mode,
-        "scheme": parsed.scheme,
-        "extraction_type": parsed.extraction_type,
-        "kernel_label": parsed.kernel_label,
-        "pair_mode": parsed.pair_mode,
-        "reference_p1": parsed.reference_p1,
-        "bTlist": parsed.bTlist,
-        "x_range": parsed.x_range,
-        "reference_pz_labels": parsed.reference_pz_labels,
-    }
-    if "results_dir" in config and config["results_dir"] is not None:
-        validated["results_dir"] = Path(config["results_dir"])
-    return validated
-
-
-def validate_tmdwf_cs_kernel_joint_notebook_config(config: dict[str, Any]) -> dict[str, Any]:
-    input_path = _materialize_input_text(
-        render_tmdwf_cs_kernel_joint_input_text(config),
-        "input_tmdwf_cs_kernel_joint.txt",
-    )
-    parsed = parse_tmdwf_cs_kernel_joint_input(input_path)
-    validated = {
-        "ensembles": parsed.ensembles,
-        "gm": parsed.gm,
-        "eta": parsed.eta,
-        "component": parsed.component,
-        "nstates": parsed.nstates,
-        "normalization_mode": parsed.normalization_mode,
-        "mu": parsed.mu,
-        "scheme": parsed.scheme,
-        "kernel_label": parsed.kernel_label,
-        "reference_p1_gev": parsed.reference_p1_gev,
-        "x_window": parsed.x_window,
-        "x_knots": parsed.x_knots,
-        "bT_knots_fm": parsed.bT_knots_fm,
-        "spline_kind": parsed.spline_kind,
-        "plot": parsed.make_plots,
-        "progress": parsed.show_progress,
-        "progress_every": parsed.progress_every,
-    }
-    if "results_dir" in config and config["results_dir"] is not None:
-        validated["results_dir"] = Path(config["results_dir"])
-    return validated
-
-
-def validate_tmdwf_normalize_notebook_config(config: dict[str, Any]) -> dict[str, Any]:
-    input_path = _materialize_input_text(render_tmdwf_normalize_input_text(config), "input_tmdwf_normalize.txt")
-    parsed = parse_tmdwf_normalize_input(input_path)
+def validate_da_normalize_notebook_config(config: dict[str, Any]) -> dict[str, Any]:
+    input_path = _materialize_input_text(render_da_normalize_input_text(config), "input_da_normalize.txt")
+    parsed = parse_da_normalize_input(input_path)
     validated = {
         "title_pattern": parsed.title_pattern,
         "input_root": parsed.input_root,
@@ -1466,133 +1086,91 @@ def run_effective_mass_from_notebook(
     return run_effective_mass_workflow(input_path, results_dir=run_config["results_dir"])
 
 
-def run_tmdwf_fit_from_notebook(
+def run_da_fit_from_notebook(
     config: dict[str, Any],
     **overrides: Any,
 ) -> list[Path]:
-    input_path = _materialize_input_text(render_tmdwf_fit_input_text(config), "input_tmdwf.txt")
+    input_path = _materialize_input_text(render_da_fit_input_text(config), "input_da.txt")
     run_config = {"results_dir": None}
-    run_config.update(_subset_config(config, TMDWF_RUN_KEYS))
+    run_config.update(_subset_config(config, DA_RUN_KEYS))
     run_config.update({key: value for key, value in overrides.items() if value is not None})
     if run_config["results_dir"] is None:
         run_config["results_dir"] = _guess_notebook_dir()
-    return run_tmdwf_nstate_fit(input_path, results_dir=run_config["results_dir"])
+    return run_da_nstate_fit(input_path, results_dir=run_config["results_dir"])
 
 
-def run_tmdwf_fourier_from_notebook(
+def run_da_fourier_from_notebook(
     config: dict[str, Any],
     **overrides: Any,
 ) -> list[Path]:
     run_config = {"results_dir": None}
-    run_config.update(_subset_config(config, TMDWF_FOURIER_RUN_KEYS))
+    run_config.update(_subset_config(config, DA_FOURIER_RUN_KEYS))
     run_config.update({key: value for key, value in overrides.items() if value is not None})
     if run_config["results_dir"] is None:
         run_config["results_dir"] = _guess_notebook_dir()
-    input_path = _materialize_input_text(render_tmdwf_fourier_input_text(config), "input_tmdwf_fourier.txt")
-    return run_tmdwf_fourier_workflow(input_path, results_dir=run_config["results_dir"])
+    input_path = _materialize_input_text(render_da_fourier_input_text(config), "input_da_fourier.txt")
+    return run_da_fourier_workflow(input_path, results_dir=run_config["results_dir"])
 
 
-def run_tmdwf_ratio_fourier_t_from_notebook(
+def run_da_ratio_fourier_t_from_notebook(
     config: dict[str, Any],
     **overrides: Any,
 ) -> list[Path]:
     run_config = {"results_dir": None}
-    run_config.update(_subset_config(config, TMDWF_RATIO_FOURIER_T_RUN_KEYS))
-    run_config.update({key: value for key, value in overrides.items() if value is not None})
-    if run_config["results_dir"] is None:
-        run_config["results_dir"] = _guess_notebook_dir()
-    input_path = _materialize_input_text(
-        render_tmdwf_ratio_fourier_t_input_text(config),
-        "input_tmdwf_ratio_fourier_t.txt",
-    )
-    return run_tmdwf_ratio_fourier_t_workflow(input_path, results_dir=run_config["results_dir"])
-
-
-def run_tmdwf_x_nstate_fit_from_notebook(
-    config: dict[str, Any],
-    **overrides: Any,
-) -> list[Path]:
-    run_config = {"results_dir": None}
-    run_config.update(_subset_config(config, TMDWF_X_NSTATE_FIT_RUN_KEYS))
+    run_config.update(_subset_config(config, DA_RATIO_FOURIER_T_RUN_KEYS))
     run_config.update({key: value for key, value in overrides.items() if value is not None})
     if run_config["results_dir"] is None:
         run_config["results_dir"] = _guess_notebook_dir()
     input_path = _materialize_input_text(
-        render_tmdwf_x_nstate_fit_input_text(config),
-        "input_tmdwf_x_nstate_fit.txt",
+        render_da_ratio_fourier_t_input_text(config),
+        "input_da_ratio_fourier_t.txt",
     )
-    return run_tmdwf_x_nstate_fit_workflow(input_path, results_dir=run_config["results_dir"])
+    return run_da_ratio_fourier_t_workflow(input_path, results_dir=run_config["results_dir"])
 
 
-def run_tmdwf_xfit_normalize_from_notebook(
+def run_da_x_nstate_fit_from_notebook(
     config: dict[str, Any],
     **overrides: Any,
 ) -> list[Path]:
     run_config = {"results_dir": None}
-    run_config.update(_subset_config(config, TMDWF_XFIT_NORMALIZE_RUN_KEYS))
+    run_config.update(_subset_config(config, DA_X_NSTATE_FIT_RUN_KEYS))
     run_config.update({key: value for key, value in overrides.items() if value is not None})
     if run_config["results_dir"] is None:
         run_config["results_dir"] = _guess_notebook_dir()
     input_path = _materialize_input_text(
-        render_tmdwf_xfit_normalize_input_text(config),
-        "input_tmdwf_xfit_normalize.txt",
+        render_da_x_nstate_fit_input_text(config),
+        "input_da_x_nstate_fit.txt",
     )
-    return run_tmdwf_xfit_normalization(input_path, results_dir=run_config["results_dir"])
+    return run_da_x_nstate_fit_workflow(input_path, results_dir=run_config["results_dir"])
 
 
-def run_tmdwf_cs_kernel_from_notebook(
+def run_da_xfit_normalize_from_notebook(
     config: dict[str, Any],
     **overrides: Any,
 ) -> list[Path]:
     run_config = {"results_dir": None}
-    run_config.update(_subset_config(config, TMDWF_CS_KERNEL_RUN_KEYS))
-    run_config.update({key: value for key, value in overrides.items() if value is not None})
-    if run_config["results_dir"] is None:
-        run_config["results_dir"] = _guess_notebook_dir()
-    input_path = _materialize_input_text(render_tmdwf_cs_kernel_input_text(config), "input_tmdwf_cs_kernel.txt")
-    return run_tmdwf_cs_kernel_workflow(input_path, results_dir=run_config["results_dir"])
-
-
-def run_tmdwf_cs_kernel_average_from_notebook(
-    config: dict[str, Any],
-    **overrides: Any,
-) -> list[Path]:
-    run_config = {"results_dir": None}
-    run_config.update(_subset_config(config, TMDWF_CS_KERNEL_AVERAGE_RUN_KEYS))
-    run_config.update({key: value for key, value in overrides.items() if value is not None})
-    if run_config["results_dir"] is None:
-        run_config["results_dir"] = _guess_notebook_dir()
-    input_path = _materialize_input_text(render_tmdwf_cs_kernel_average_input_text(config), "input_tmdwf_cs_kernel_average.txt")
-    return run_tmdwf_cs_kernel_average_workflow(input_path, results_dir=run_config["results_dir"])
-
-
-def run_tmdwf_cs_kernel_joint_from_notebook(
-    config: dict[str, Any],
-    **overrides: Any,
-) -> list[Path]:
-    run_config = {"results_dir": None}
-    run_config.update(_subset_config(config, TMDWF_CS_KERNEL_JOINT_RUN_KEYS))
+    run_config.update(_subset_config(config, DA_XFIT_NORMALIZE_RUN_KEYS))
     run_config.update({key: value for key, value in overrides.items() if value is not None})
     if run_config["results_dir"] is None:
         run_config["results_dir"] = _guess_notebook_dir()
     input_path = _materialize_input_text(
-        render_tmdwf_cs_kernel_joint_input_text(config),
-        "input_tmdwf_cs_kernel_joint.txt",
+        render_da_xfit_normalize_input_text(config),
+        "input_da_xfit_normalize.txt",
     )
-    return run_tmdwf_cs_kernel_joint_workflow(input_path, results_dir=run_config["results_dir"])
+    return run_da_xfit_normalization(input_path, results_dir=run_config["results_dir"])
 
 
-def run_tmdwf_normalize_from_notebook(
+def run_da_normalize_from_notebook(
     config: dict[str, Any],
     **overrides: Any,
 ) -> list[Path]:
     run_config = {"results_dir": None}
-    run_config.update(_subset_config(config, TMDWF_NORMALIZE_RUN_KEYS))
+    run_config.update(_subset_config(config, DA_NORMALIZE_RUN_KEYS))
     run_config.update({key: value for key, value in overrides.items() if value is not None})
     if run_config["results_dir"] is None:
         run_config["results_dir"] = _guess_notebook_dir()
-    input_path = _materialize_input_text(render_tmdwf_normalize_input_text(config), "input_tmdwf_normalize.txt")
-    return run_tmdwf_normalization(input_path, results_dir=run_config["results_dir"])
+    input_path = _materialize_input_text(render_da_normalize_input_text(config), "input_da_normalize.txt")
+    return run_da_normalization(input_path, results_dir=run_config["results_dir"])
 
 
 def validate_plot_2pt_notebook_config(config: dict[str, Any]) -> dict[str, Any]:

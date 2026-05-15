@@ -11,10 +11,10 @@ The goal is practical use:
 
 Relevant templates:
 
-- `templates/two_point/nstate_fit_1state_template.ipynb`
-- `templates/two_point/nstate_fit_2state_template.ipynb`
-- `templates/input_files/two_point/nstate_fit_1state_example_realdata.txt`
-- `templates/input_files/two_point/nstate_fit_2state_example_realdata.txt`
+- `templates/two_point/nstate_1.ipynb`
+- `templates/two_point/nstate_2.ipynb`
+- `templates/input_files/two_point/nstate_1.txt`
+- `templates/input_files/two_point/nstate_2.txt`
 
 ## Recommended Workflow
 

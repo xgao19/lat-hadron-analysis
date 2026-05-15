@@ -1,0 +1,22 @@
+# Example DA x-space N-state fit input
+
+title_pattern l64c64a076_m140_da_pz*
+input_root examples/outputs/da_ratio_fourier_t_example
+ns 64
+nt 64
+lattice_spacing_fm 0.076
+pzlist 0
+gmlist T5
+etalist eta0
+bTlist 0
+component real
+nstates 1 2
+
+# Fit settings
+fit_window /path/to/da_x_fit_windows.txt
+two_point_fit_root /path/to/two_point_fit_outputs
+two_point_fit_window_by_pz /path/to/da_two_point_fit_window_by_pz.txt
+two_point_fit_sample_coupled false
+
+# Output settings
+results_dir examples/outputs/da_x_nstate_fit_example

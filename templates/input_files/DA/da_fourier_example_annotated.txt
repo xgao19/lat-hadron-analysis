@@ -1,0 +1,53 @@
+# Example DA Fourier-transform input file
+# Edit the values below, then run the downstream Fourier workflow on grouped
+# DA fit/sample outputs that already exist.
+#
+# Suggested intent:
+#   first run the DA N-state fit workflow, or the normalization workflow
+#   then point this file at the directory containing those grouped outputs
+
+# Data settings
+# These fields identify which grouped matrix-element outputs should be transformed.
+title_pattern l64c64a076_m140_fit_pz*
+input_root examples/outputs/da_fit_notebook
+ns 64
+lattice_spacing_fm 0.076
+pzlist 0
+gmlist T5
+etalist eta0
+
+# Choose either:
+#   bTlist ...
+# or:
+#   bTrange bTmin bTmax
+bTlist 0
+
+# Fourier-transform parameter settings
+# Select which grouped matrix-element outputs to transform.
+component real
+nstates 1
+
+# Fourier-transform parameter block
+# Choose either:
+#   x_values x0 x1 x2 ...
+# or:
+#   x_range xmin xmax
+#   x_count N
+x_range -0.5 1.5
+x_count 201
+
+# Refined z-grid and interpolation controls.
+zstep_fm 0.01
+interpolation_kind cubic
+
+# Output settings
+# Output controls.
+plot true
+results_dir examples/outputs/da_fourier_example
+
+# Notes:
+# - This workflow consumes grouped fit/sample outputs from the DA fit or normalization step.
+# - It does not rerun the nonlinear fit.
+# - The Fourier workflow resolves the grouped fit/sample paths automatically from:
+#     input_root, title_pattern, pzlist, gmlist, etalist, bTlist, component, nstates
+# - The transform uses the extracted matrix element m0(bT, bz) as h(z, bT).

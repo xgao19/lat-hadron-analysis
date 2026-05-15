@@ -1,0 +1,33 @@
+# Example DA ratio Fourier-per-t input
+
+# Data settings
+l64c64a076_m140_da_pz* 64 64 0.076
+pzlist 0
+gmlist T5
+etalist eta0
+Tdirlist plus minus
+bTlist 0
+bzlist 0 2 4 6 8 10 12
+component real
+
+# Raw ratio inputs
+qda_h5 /path/to/qda_pz*.h5
+dataset_path_template {gm}/{eta}/pz{pz}/{Tdir}/bT{bT}/bz{bz}
+c2pt /path/to/c2pt_pz*_real.csv
+fold_t none
+tsrange 0 20
+
+# Fourier-per-t settings
+x_range -0.5 1.5
+x_count 201
+zstep_fm 0.01
+interpolation_kind cubic
+
+# Bootstrap settings
+binsize 1
+bootstrap_samples auto
+bootstrap_size auto
+seed 2026
+
+# Output settings
+results_dir examples/outputs/da_ratio_fourier_t_example
