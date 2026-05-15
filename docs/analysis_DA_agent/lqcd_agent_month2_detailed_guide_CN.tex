@@ -1,0 +1,1245 @@
+\documentclass[11pt,a4paper,fontset=none]{ctexart}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage{tcolorbox}
+\usepackage{array}
+\usepackage{float}
+
+\setCJKmainfont{Heiti SC}
+\setCJKsansfont{Heiti SC}
+\setCJKmonofont{Heiti SC}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!60!black,
+  urlcolor=blue!60!black,
+  citecolor=blue!60!black
+}
+
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{Month 2 Detailed Guide}
+\rhead{AI-first LQCD Meson DA Analysis Agent}
+\cfoot{\thepage}
+
+\lstdefinestyle{codestyle}{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=single,
+  columns=fullflexible,
+  backgroundcolor=\color{gray!5},
+  rulecolor=\color{gray!40},
+  keywordstyle=\color{blue!70!black},
+  commentstyle=\color{green!40!black},
+  stringstyle=\color{red!60!black}
+}
+\lstset{style=codestyle}
+
+\title{第二个月详细指导书\\
+AI-first LQCD Meson DA Analysis Agent\\
+从可复现 CLI 到 Workflow + Supervisor 原型}
+\author{For Graduate Student Training}
+\date{ }
+
+\begin{document}
+\maketitle
+
+\begin{tcolorbox}[colback=blue!4,colframe=blue!45!black,title=第二个月核心目标]
+第二个月的目标不是继续写零散脚本，而是把第一个月已经能跑通的 golden example CLI，升级成一个\textbf{尽可能自动执行、可复现、可追踪、可增量重跑、可初步判断 fit 质量}的科研 AI-agent 原型。学生需要真正动手实现 Snakemake workflow、Worker wrapper、Fit Analyst、Skeptic Reviewer、rule-based Supervisor 和 decision log，并让这些环节尽量由 AI 负责完成，而不是只理解概念。
+\end{tcolorbox}
+
+\tableofcontents
+\newpage
+
+\section{第二个月在整个项目中的位置}
+
+第一个月的重点是把已有分析流程变成可运行、可配置、可测试的 Python CLI，并建立 schema、pytest、Data Auditor 和最小 Worker wrapper。第二个月的重点是把这些模块组织成更接近真实科研系统的 workflow 和 agent pipeline，并尽量把重复、机械、可检查的工作交给 AI 自动完成，只把少数关键判断留给人类。
+
+本月的关键词是：
+
+\begin{itemize}[leftmargin=2em]
+  \item \textbf{Snakemake workflow}: 用于管理真实分析流程中的文件依赖、增量重跑和批量任务。
+  \item \textbf{Worker Agent}: 负责执行 workflow、检查输入输出、记录运行日志和错误。
+  \item \textbf{Fit Analyst}: 读取 fit scan 结果，提取稳定性、模型依赖和统计质量指标。
+  \item \textbf{Skeptic Reviewer}: 专门寻找问题，而不是直接接受结果。
+  \item \textbf{Rule-based Supervisor}: 根据结构化指标和 reviewer 意见给出 fit recommendation、risk level 和 human approval 标记。
+  \item \textbf{decision\_log.json}: 记录为什么推荐某个 fit，为什么拒绝某些结果，以及是否需要人工审批。
+\end{itemize}
+
+本月完成后，系统应该可以做到：
+
+\begin{lstlisting}[language=bash]
+# 1. 用 Snakemake 跑完整 golden example workflow
+snakemake -s workflow/Snakefile --configfile configs/l64c64a076_m140.yaml --cores 1
+
+# 2. 用 Worker 包装运行过程并生成 structured task output
+python -m lqcd_agent.worker.run --task configs/tasks/run_l64c64a076_worker.yaml
+
+# 3. 用 Supervisor 检查 fit scan / ratio scan 结果并生成 decision log
+python -m lqcd_agent.supervisor.run --case outputs/l64c64a076_m140/case_manifest.json
+\end{lstlisting}
+
+\section{本月最终交付物}
+
+第二个月结束时，学生至少应提交以下内容：
+
+\begin{longtable}{p{0.28\textwidth}p{0.62\textwidth}}
+\toprule
+\textbf{交付物} & \textbf{说明} \\
+\midrule
+\texttt{workflow/Snakefile} & 能复现 golden example 的最小 Snakemake workflow。 \\
+\texttt{workflow/rules/*.smk} & 按模块拆分的 workflow rules，例如 audit、fit、summary、supervisor。 \\
+\texttt{configs/l64c64a076\_m140.yaml} & golden example 的主配置文件。 \\
+\texttt{src/lqcd\_agent/worker/} & Worker wrapper，包括 task schema、safe execution、output validation。 \\
+\texttt{src/lqcd\_agent/analysis/fit\_analyst.py} & 读取 summary/fit scan 并计算稳定性指标。 \\
+\texttt{src/lqcd\_agent/reviewer/skeptic.py} & 查找 fit 不稳定、model dependence、异常点等问题。 \\
+\texttt{src/lqcd\_agent/supervisor/} & rule-based Supervisor，输出 recommendation 和 risk level。 \\
+\texttt{outputs/.../decision\_log.json} & 结构化决策日志。 \\
+\texttt{outputs/.../supervisor\_report.md} & 给导师看的简短人类可读报告。 \\
+\texttt{tests/test\_snakemake\_smoke.py} & workflow smoke test。 \\
+\texttt{tests/test\_worker.py} & Worker 的安全和输出测试。 \\
+\texttt{tests/test\_supervisor.py} & Supervisor 规则测试。 \\
+\texttt{docs/month2\_demo.md} & 第二个月 demo 的运行说明。 \\
+\bottomrule
+\end{longtable}
+
+\section{推荐目录结构}
+
+第二个月结束时，repo 建议扩展为下面结构。学生不一定一次性全部创建，而是按每周任务逐步增加。
+
+\begin{lstlisting}
+lqcd-meson-da-agent/
+  configs/
+    l64c64a076_m140.yaml
+    tasks/
+      run_l64c64a076_worker.yaml
+  workflow/
+    Snakefile
+    config.yaml
+    rules/
+      audit.smk
+      run_analysis.smk
+      collect_summary.smk
+      supervisor.smk
+  src/lqcd_agent/
+    analysis/
+      fit_analyst.py
+      metrics.py
+      summary_io.py
+    reviewer/
+      skeptic.py
+      checks.py
+    supervisor/
+      schema.py
+      rules.py
+      run.py
+      report.py
+    worker/
+      schema.py
+      run.py
+      safety.py
+      validate_outputs.py
+  tests/
+    test_snakemake_smoke.py
+    test_worker.py
+    test_fit_analyst.py
+    test_skeptic.py
+    test_supervisor.py
+  docs/
+    month2_demo.md
+    decision_log_spec.md
+  outputs/
+    l64c64a076_m140/
+      case_manifest.json
+      summary.csv
+      fit_diagnostics.json
+      skeptic_review.json
+      decision_log.json
+      supervisor_report.md
+\end{lstlisting}
+
+\section{每周安排总览}
+
+\begin{longtable}{p{0.12\textwidth}p{0.35\textwidth}p{0.43\textwidth}}
+\toprule
+\textbf{周次} & \textbf{主题} & \textbf{核心产出} \\
+\midrule
+Week 5 & Snakemake workflow & 把 Month 1 CLI 包装成可复现 workflow，支持增量重跑。 \\
+Week 6 & Worker Agent 强化 & task schema、safe run、output validation、error handling。 \\
+Week 7 & Fit Analyst + Skeptic Reviewer & 从 fit scan/summary 中提取稳定性指标，并系统性寻找风险。 \\
+Week 8 & Rule-based Supervisor + Decision Log & 生成 recommendation、risk level、human approval flag 和 supervisor report。 \\
+\bottomrule
+\end{longtable}
+
+\newpage
+
+\section{Week 5：把 Month 1 CLI 升级为 Snakemake Workflow}
+
+\subsection{本周目标}
+
+本周目标是把第一个月已经能手动运行的 CLI 流程，组织成 Snakemake workflow。学生要理解：Snakemake 不是 agent，也不是替代 Python 分析代码；它负责把可运行的命令变成可复现的依赖图。
+
+本周结束时，学生应该能运行：
+
+\begin{lstlisting}[language=bash]
+snakemake -s workflow/Snakefile --configfile configs/l64c64a076_m140.yaml --cores 1
+\end{lstlisting}
+
+并自动生成：
+
+\begin{lstlisting}
+outputs/l64c64a076_m140/
+  audit_report.json
+  result.json
+  summary.csv
+  plots/
+  case_manifest.json
+\end{lstlisting}
+
+\subsection{本周学习内容}
+
+学生需要学习到能完成任务即可，不需要深入所有高级功能。
+
+\begin{enumerate}[leftmargin=2em]
+  \item Snakemake 的基本概念：rule、input、output、shell、params、config。
+  \item 文件依赖关系：为什么 output 存在且比 input 新时不需要重跑。
+  \item workflow 和 CLI 的关系：rule 只调用已有 CLI，不在 Snakefile 中写复杂分析逻辑。
+  \item 如何用 \texttt{--dry-run} 检查计划。
+  \item 如何用 \texttt{--rerun-incomplete} 处理失败任务。
+\end{enumerate}
+
+\subsection{Day 1：整理 Month 1 的命令流}
+
+第一天不要急着写 Snakemake。先把 Month 1 手动命令整理清楚。
+
+学生需要写一个文件：
+
+\begin{lstlisting}
+docs/month1_manual_pipeline.md
+\end{lstlisting}
+
+内容包括：
+
+\begin{lstlisting}[language=bash]
+# Step 1: audit input data
+python -m lqcd_agent.audit.run --config configs/l64c64a076_m140.yaml
+
+# Step 2: run analysis CLI
+python -m lqcd_agent.analysis.run --config configs/l64c64a076_m140.yaml
+
+# Step 3: collect summary
+python -m lqcd_agent.analysis.collect_summary --case outputs/l64c64a076_m140/case_manifest.json
+\end{lstlisting}
+
+如果实际命令名与上面不同，以当前 repo 已有命令为准。关键是：\textbf{每一步的输入、输出、命令必须写清楚}。
+
+\subsection{Day 2：创建最小 Snakefile}
+
+创建：
+
+\begin{lstlisting}
+workflow/Snakefile
+\end{lstlisting}
+
+最小版本可以先写成：
+
+\begin{lstlisting}[language=Python]
+configfile: "configs/l64c64a076_m140.yaml"
+
+CASE = config["case_id"]
+OUTDIR = config["output_dir"]
+
+rule all:
+    input:
+        f"{OUTDIR}/case_manifest.json",
+        f"{OUTDIR}/summary.csv"
+
+rule audit_data:
+    input:
+        config="configs/l64c64a076_m140.yaml"
+    output:
+        f"{OUTDIR}/audit_report.json"
+    shell:
+        "python -m lqcd_agent.audit.run --config {input.config} --output {output}"
+
+rule run_analysis:
+    input:
+        config="configs/l64c64a076_m140.yaml",
+        audit=f"{OUTDIR}/audit_report.json"
+    output:
+        result=f"{OUTDIR}/result.json",
+        summary=f"{OUTDIR}/summary.csv"
+    shell:
+        "python -m lqcd_agent.analysis.run --config {input.config}"
+
+rule make_case_manifest:
+    input:
+        audit=f"{OUTDIR}/audit_report.json",
+        result=f"{OUTDIR}/result.json",
+        summary=f"{OUTDIR}/summary.csv"
+    output:
+        f"{OUTDIR}/case_manifest.json"
+    shell:
+        "python -m lqcd_agent.analysis.make_manifest --config configs/l64c64a076_m140.yaml --output {output}"
+\end{lstlisting}
+
+如果当前项目还没有这些 CLI，学生需要用 Codex 补齐最小版本，但不能把复杂逻辑写进 Snakefile。
+
+\subsection{Day 3：测试 dry-run 和真实运行}
+
+先运行 dry-run：
+
+\begin{lstlisting}[language=bash]
+snakemake -s workflow/Snakefile --configfile configs/l64c64a076_m140.yaml --cores 1 --dry-run
+\end{lstlisting}
+
+检查输出是否显示预期 rules。
+
+然后真实运行：
+
+\begin{lstlisting}[language=bash]
+snakemake -s workflow/Snakefile --configfile configs/l64c64a076_m140.yaml --cores 1 --rerun-incomplete
+\end{lstlisting}
+
+运行后检查：
+
+\begin{lstlisting}[language=bash]
+ls -lh outputs/l64c64a076_m140/
+cat outputs/l64c64a076_m140/case_manifest.json
+head outputs/l64c64a076_m140/summary.csv
+\end{lstlisting}
+
+\subsection{Day 4：拆分 rules 文件}
+
+如果 Snakefile 开始变长，就拆成：
+
+\begin{lstlisting}
+workflow/Snakefile
+workflow/rules/audit.smk
+workflow/rules/run_analysis.smk
+workflow/rules/collect_summary.smk
+\end{lstlisting}
+
+主 Snakefile：
+
+\begin{lstlisting}[language=Python]
+configfile: "configs/l64c64a076_m140.yaml"
+
+CASE = config["case_id"]
+OUTDIR = config["output_dir"]
+
+include: "workflow/rules/audit.smk"
+include: "workflow/rules/run_analysis.smk"
+include: "workflow/rules/collect_summary.smk"
+
+rule all:
+    input:
+        f"{OUTDIR}/case_manifest.json",
+        f"{OUTDIR}/summary.csv"
+\end{lstlisting}
+
+\subsection{Day 5：加 Snakemake smoke test}
+
+创建：
+
+\begin{lstlisting}
+tests/test_snakemake_smoke.py
+\end{lstlisting}
+
+测试目标不是完整大规模运行，而是用一个 tiny config 跑通 workflow。
+
+建议让 Codex 写一个最小 smoke test：
+
+\begin{lstlisting}[language=Python]
+def test_snakemake_dry_run():
+    # run snakemake --dry-run on a tiny test config
+    # assert return code == 0
+    pass
+\end{lstlisting}
+
+\subsection{Week 5 Codex Prompt}
+
+\begin{lstlisting}
+We are in Month 2 of an AI-first LQCD meson DA analysis-agent project.
+Month 1 produced a config-driven Python CLI for the golden example.
+Now we need to wrap the existing CLI commands into a minimal Snakemake workflow.
+
+Task:
+Create `workflow/Snakefile` and, if useful, `workflow/rules/*.smk`.
+
+Requirements:
+- The workflow should use `configs/l64c64a076_m140.yaml` as the main config.
+- It should call existing Python CLI commands; do not put analysis logic inside the Snakefile.
+- It should produce at least:
+  - audit_report.json
+  - result.json
+  - summary.csv
+  - case_manifest.json
+- Add a dry-run instruction to `docs/month2_demo.md`.
+- Add a pytest smoke test that runs Snakemake in dry-run mode on a tiny config.
+
+Constraints:
+- Do not change the analysis algorithms.
+- Do not hard-code absolute machine-specific paths.
+- Do not overwrite raw data.
+- Keep the first workflow simple and readable.
+
+After implementation, explain:
+- how to run the workflow;
+- which files are inputs and outputs;
+- how to test it.
+\end{lstlisting}
+
+\subsection{Week 5 验收标准}
+
+导师验收时检查：
+
+\begin{itemize}[leftmargin=2em]
+  \item \texttt{snakemake --dry-run} 可以成功。
+  \item 正常运行可以生成 expected outputs。
+  \item Snakefile 中没有复杂分析逻辑，只调用 CLI。
+  \item 输出目录结构清楚。
+  \item 学生能解释每个 rule 的 input/output。
+  \item Git 至少有 3 个小 commit。
+\end{itemize}
+
+\newpage
+
+\section{Week 6：强化 Worker Agent Wrapper}
+
+\subsection{本周目标}
+
+本周目标是把 workflow 的执行封装成 Worker Agent。Worker 不负责决定物理结果，而负责安全、可复现、可追踪地执行任务。
+
+本周结束时，学生应该能运行：
+
+\begin{lstlisting}[language=bash]
+python -m lqcd_agent.worker.run --task configs/tasks/run_l64c64a076_worker.yaml
+\end{lstlisting}
+
+并生成：
+
+\begin{lstlisting}
+outputs/l64c64a076_m140/worker_output.json
+outputs/l64c64a076_m140/worker_run.log
+\end{lstlisting}
+
+\subsection{Worker 的职责边界}
+
+Worker 可以做：
+
+\begin{itemize}[leftmargin=2em]
+  \item 读取 task config。
+  \item 检查输入文件是否存在。
+  \item 调用 Snakemake 或 Python CLI。
+  \item 检查输出文件是否生成。
+  \item 记录命令、返回码、运行时间和错误。
+  \item 生成 structured output。
+\end{itemize}
+
+Worker 不可以做：
+
+\begin{itemize}[leftmargin=2em]
+  \item 选择 central fit。
+  \item 判断 systematic uncertainty。
+  \item 覆盖 accepted result。
+  \item 修改 raw data。
+  \item 运行不可追踪的大范围 shell 命令。
+\end{itemize}
+
+\subsection{Day 1：定义 Worker task schema}
+
+创建：
+
+\begin{lstlisting}
+src/lqcd_agent/worker/schema.py
+configs/tasks/run_l64c64a076_worker.yaml
+\end{lstlisting}
+
+YAML 示例：
+
+\begin{lstlisting}
+task_id: run_l64c64a076_m140_v1
+task_type: run_snakemake_workflow
+case_id: l64c64a076_m140
+config_path: configs/l64c64a076_m140.yaml
+snakefile: workflow/Snakefile
+output_dir: outputs/l64c64a076_m140
+cores: 1
+allow_overwrite: false
+expected_outputs:
+  - outputs/l64c64a076_m140/audit_report.json
+  - outputs/l64c64a076_m140/result.json
+  - outputs/l64c64a076_m140/summary.csv
+  - outputs/l64c64a076_m140/case_manifest.json
+\end{lstlisting}
+
+Pydantic schema 示例：
+
+\begin{lstlisting}[language=Python]
+from pydantic import BaseModel, Field
+from typing import Literal
+
+class WorkerTask(BaseModel):
+    task_id: str
+    task_type: Literal["run_snakemake_workflow", "run_python_cli"]
+    case_id: str
+    config_path: str
+    output_dir: str
+    allow_overwrite: bool = False
+    expected_outputs: list[str] = Field(default_factory=list)
+    snakefile: str | None = None
+    cores: int = 1
+\end{lstlisting}
+
+\subsection{Day 2：实现 Worker run}
+
+创建：
+
+\begin{lstlisting}
+src/lqcd_agent/worker/run.py
+\end{lstlisting}
+
+核心逻辑：
+
+\begin{enumerate}[leftmargin=2em]
+  \item 读取 task YAML。
+  \item 用 Pydantic validate。
+  \item 检查 config 是否存在。
+  \item 如果 output 已存在且 \texttt{allow\_overwrite=false}，拒绝覆盖或要求使用新的 output dir。
+  \item 组装 Snakemake 命令。
+  \item 用 \texttt{subprocess.run} 执行。
+  \item 捕获 stdout/stderr/return code。
+  \item 检查 expected outputs 是否存在。
+  \item 写 \texttt{worker\_output.json}。
+\end{enumerate}
+
+Worker output 示例：
+
+\begin{lstlisting}
+{
+  "task_id": "run_l64c64a076_m140_v1",
+  "case_id": "l64c64a076_m140",
+  "status": "success",
+  "command": "snakemake -s workflow/Snakefile --configfile configs/l64c64a076_m140.yaml --cores 1",
+  "return_code": 0,
+  "outputs": {
+    "summary_csv": "outputs/l64c64a076_m140/summary.csv",
+    "case_manifest": "outputs/l64c64a076_m140/case_manifest.json"
+  },
+  "missing_outputs": [],
+  "warnings": [],
+  "errors": []
+}
+\end{lstlisting}
+
+\subsection{Day 3：加入安全规则}
+
+创建：
+
+\begin{lstlisting}
+src/lqcd_agent/worker/safety.py
+\end{lstlisting}
+
+至少实现以下规则：
+
+\begin{itemize}[leftmargin=2em]
+  \item 禁止 task config 中出现 raw data output path。
+  \item 禁止在 Worker 中执行 \texttt{rm -rf}。
+  \item 默认不覆盖已有 output directory。
+  \item 命令必须来自白名单，例如 \texttt{snakemake} 或 \texttt{python -m lqcd\_agent.*}。
+  \item 所有 command 必须写入 log。
+\end{itemize}
+
+\subsection{Day 4：加入 output validation}
+
+创建：
+
+\begin{lstlisting}
+src/lqcd_agent/worker/validate_outputs.py
+\end{lstlisting}
+
+检查：
+
+\begin{itemize}[leftmargin=2em]
+  \item expected outputs 是否存在。
+  \item \texttt{summary.csv} 是否非空。
+  \item \texttt{result.json} 是否能被 JSON 读取。
+  \item \texttt{case\_manifest.json} 是否包含 case id、config path、output paths。
+\end{itemize}
+
+\subsection{Day 5：Worker tests}
+
+测试文件：
+
+\begin{lstlisting}
+tests/test_worker.py
+\end{lstlisting}
+
+至少测试：
+
+\begin{itemize}[leftmargin=2em]
+  \item valid task 可以通过 schema validation。
+  \item missing config 会失败且错误清楚。
+  \item expected output 缺失会进入 \texttt{missing\_outputs}。
+  \item \texttt{allow\_overwrite=false} 时不覆盖已有 output。
+  \item unsafe command 被拒绝。
+\end{itemize}
+
+\subsection{Week 6 Codex Prompt}
+
+\begin{lstlisting}
+We are building the Worker Agent for an AI-first LQCD meson DA analysis system.
+The Worker should execute an existing Snakemake workflow safely and produce structured output.
+
+Task:
+Implement Worker task schema, runner, safety checks, and output validation.
+
+Files to create or edit:
+- src/lqcd_agent/worker/schema.py
+- src/lqcd_agent/worker/run.py
+- src/lqcd_agent/worker/safety.py
+- src/lqcd_agent/worker/validate_outputs.py
+- configs/tasks/run_l64c64a076_worker.yaml
+- tests/test_worker.py
+
+Requirements:
+- Use Pydantic for WorkerTask and WorkerOutput schemas.
+- Read a YAML task file from CLI argument `--task`.
+- Support task_type = run_snakemake_workflow.
+- Construct a Snakemake command from the task fields.
+- Capture return code, stdout, stderr, and runtime.
+- Check expected output files after execution.
+- Write worker_output.json to the output directory.
+- Refuse unsafe operations and avoid overwriting by default.
+
+Constraints:
+- Worker must not decide central physics results.
+- Worker must not modify raw data.
+- Do not use broad shell commands.
+- Keep implementation simple and testable.
+
+Tests:
+- valid task schema;
+- missing config path;
+- missing expected output detection;
+- unsafe command rejection;
+- overwrite protection.
+\end{lstlisting}
+
+\subsection{Week 6 验收标准}
+
+\begin{itemize}[leftmargin=2em]
+  \item Worker 可以调用 Snakemake workflow。
+  \item Worker 生成 \texttt{worker\_output.json}。
+  \item 失败时不会 silent fail。
+  \item 安全规则有测试覆盖。
+  \item 学生能解释 Worker 为什么不能决定 central fit。
+\end{itemize}
+
+\newpage
+
+\section{Week 7：Fit Analyst 与 Skeptic Reviewer}
+
+\subsection{本周目标}
+
+本周开始进入“分析判断”的前半部分：先不让 Supervisor 直接做最终推荐，而是先建立两个中间角色。
+
+\begin{itemize}[leftmargin=2em]
+  \item \textbf{Fit Analyst}: 从 summary.csv / fit scan 中提取稳定性和质量指标。
+  \item \textbf{Skeptic Reviewer}: 专门寻找潜在问题，提出 warnings 和 failure modes。
+\end{itemize}
+
+这种设计借鉴了 advanced multi-agent practice 中的 specialized role 和 critic/reviewer 思路。一个 agent 不应该既生成结果又完全相信自己。科研分析尤其需要一个“挑错者”。
+
+\subsection{Fit Analyst 应该输出什么}
+
+输入：
+
+\begin{lstlisting}
+outputs/l64c64a076_m140/summary.csv
+outputs/l64c64a076_m140/result.json
+\end{lstlisting}
+
+输出：
+
+\begin{lstlisting}
+outputs/l64c64a076_m140/fit_diagnostics.json
+\end{lstlisting}
+
+建议结构：
+
+\begin{lstlisting}
+{
+  "case_id": "l64c64a076_m140",
+  "n_candidate_fits": 24,
+  "models": ["1state", "2state"],
+  "best_chi2_candidates": [...],
+  "stability_metrics": {
+    "E0_tmin_slope": 0.003,
+    "E0_tmin_max_shift_sigma": 0.8,
+    "model_difference_sigma": 1.2
+  },
+  "recommended_candidates_for_review": [
+    "2state_tmin4_tmax15",
+    "2state_tmin5_tmax15"
+  ]
+}
+\end{lstlisting}
+
+\subsection{Day 1：统一 summary.csv 字段}
+
+Fit Analyst 能否工作，首先取决于 summary.csv 是否标准化。
+
+建议字段：
+
+\begin{lstlisting}
+case_id,observable,model,tmin,tmax,param,value,error,chi2_dof,p_value,status,notes
+\end{lstlisting}
+
+如果现有 summary.csv 字段不同，学生应先写 adapter，而不是到处改已有代码。
+
+创建：
+
+\begin{lstlisting}
+src/lqcd_agent/analysis/summary_io.py
+\end{lstlisting}
+
+功能：
+
+\begin{itemize}[leftmargin=2em]
+  \item 读取 summary.csv。
+  \item 检查 required columns。
+  \item 返回 pandas DataFrame。
+  \item 对缺失列给出清楚错误。
+\end{itemize}
+
+\subsection{Day 2：实现 fit diagnostics metrics}
+
+创建：
+
+\begin{lstlisting}
+src/lqcd_agent/analysis/metrics.py
+\end{lstlisting}
+
+至少实现：
+
+\begin{itemize}[leftmargin=2em]
+  \item \textbf{chi2 quality}: 是否 \(\chi^2/\mathrm{dof}\) 过大。
+  \item \textbf{tmin stability}: 相邻 tmin 的结果是否在误差内稳定。
+  \item \textbf{model dependence}: 1-state 与 2-state 是否显著不一致。
+  \item \textbf{fit failure rate}: fit scan 中失败比例。
+\end{itemize}
+
+简单 sigma difference：
+
+\begin{equation}
+\Delta_\sigma = \frac{|x_1-x_2|}{\sqrt{\sigma_1^2+\sigma_2^2}}.
+\end{equation}
+
+学生需要理解：这个指标不是最终物理判断，只是 reviewer 和 supervisor 的输入。
+
+\subsection{Day 3：实现 Fit Analyst}
+
+创建：
+
+\begin{lstlisting}
+src/lqcd_agent/analysis/fit_analyst.py
+\end{lstlisting}
+
+CLI 示例：
+
+\begin{lstlisting}[language=bash]
+python -m lqcd_agent.analysis.fit_analyst \
+  --summary outputs/l64c64a076_m140/summary.csv \
+  --output outputs/l64c64a076_m140/fit_diagnostics.json
+\end{lstlisting}
+
+Fit Analyst 不做最终选择，只做结构化诊断。
+
+\subsection{Day 4：实现 Skeptic Reviewer}
+
+创建：
+
+\begin{lstlisting}
+src/lqcd_agent/reviewer/skeptic.py
+\end{lstlisting}
+
+输入：
+
+\begin{lstlisting}
+fit_diagnostics.json
+summary.csv
+\end{lstlisting}
+
+输出：
+
+\begin{lstlisting}
+skeptic_review.json
+\end{lstlisting}
+
+输出示例：
+
+\begin{lstlisting}
+{
+  "case_id": "l64c64a076_m140",
+  "risk_flags": [
+    {
+      "flag": "model_dependence",
+      "severity": "medium",
+      "reason": "1-state and 2-state E0 differ by 1.8 sigma"
+    },
+    {
+      "flag": "tmin_instability",
+      "severity": "low",
+      "reason": "neighboring tmin shifts are below 1 sigma for selected 2-state candidates"
+    }
+  ],
+  "questions_for_supervisor": [
+    "Should 1-state results be used only as a diagnostic?",
+    "Is the 2-state tmin=4 candidate stable enough for provisional recommendation?"
+  ],
+  "human_attention_required": false
+}
+\end{lstlisting}
+
+\subsection{Day 5：测试 Analyst 和 Reviewer}
+
+测试：
+
+\begin{lstlisting}
+tests/test_fit_analyst.py
+tests/test_skeptic.py
+\end{lstlisting}
+
+至少构造 3 个 fake summary：
+
+\begin{enumerate}[leftmargin=2em]
+  \item good stable case。
+  \item large chi2 case。
+  \item strong model dependence case。
+\end{enumerate}
+
+\subsection{Week 7 Codex Prompt}
+
+\begin{lstlisting}
+We are adding Fit Analyst and Skeptic Reviewer modules to the LQCD meson DA analysis-agent project.
+These modules should inspect fit scan results but should not make the final central-fit decision.
+
+Task:
+Implement standardized summary reading, fit diagnostics metrics, Fit Analyst CLI, and Skeptic Reviewer CLI.
+
+Files:
+- src/lqcd_agent/analysis/summary_io.py
+- src/lqcd_agent/analysis/metrics.py
+- src/lqcd_agent/analysis/fit_analyst.py
+- src/lqcd_agent/reviewer/skeptic.py
+- tests/test_fit_analyst.py
+- tests/test_skeptic.py
+
+Requirements:
+- Read summary.csv with required columns:
+  case_id, observable, model, tmin, tmax, param, value, error, chi2_dof, p_value, status, notes
+- Compute simple diagnostics:
+  chi2 quality, tmin stability, model dependence, fit failure rate.
+- Write fit_diagnostics.json.
+- Skeptic Reviewer should read diagnostics and produce risk_flags with severity and reason.
+- Add tests for stable case, large chi2 case, and model-dependence case.
+
+Constraints:
+- Do not select the final central result here.
+- Do not hide failed fits.
+- Keep metrics transparent and easy to explain.
+\end{lstlisting}
+
+\subsection{Week 7 验收标准}
+
+\begin{itemize}[leftmargin=2em]
+  \item \texttt{fit\_diagnostics.json} 能从 summary.csv 生成。
+  \item \texttt{skeptic\_review.json} 能指出至少三类问题。
+  \item 学生能解释 \(\Delta_\sigma\) 的含义。
+  \item Reviewer 不直接接受结果，而是输出 flags 和 questions。
+  \item 测试覆盖 good、bad、ambiguous 三种情况。
+\end{itemize}
+
+\newpage
+
+\section{Week 8：Rule-based Supervisor、Decision Log 与 Month 2 Demo}
+
+\subsection{本周目标}
+
+本周把前面模块连接成一个初级 decision system。Supervisor 读取 Worker、Fit Analyst、Skeptic Reviewer 的输出，生成 recommendation、risk level、human approval flag 和 decision log。
+
+注意：这里的 Supervisor 仍然是 rule-based，不是 LLM-based。原因是我们先要建立透明、可测试、可回放的决策机制。第三个月再考虑 LangGraph 和 LLM 接入。
+
+\subsection{Supervisor 输入输出}
+
+输入：
+
+\begin{lstlisting}
+case_manifest.json
+summary.csv
+fit_diagnostics.json
+skeptic_review.json
+worker_output.json
+\end{lstlisting}
+
+输出：
+
+\begin{lstlisting}
+decision_log.json
+supervisor_report.md
+\end{lstlisting}
+
+\subsection{Day 1：定义 Supervisor schema}
+
+创建：
+
+\begin{lstlisting}
+src/lqcd_agent/supervisor/schema.py
+\end{lstlisting}
+
+建议 schema：
+
+\begin{lstlisting}[language=Python]
+from pydantic import BaseModel
+from typing import Literal
+
+class DecisionReason(BaseModel):
+    category: str
+    message: str
+    evidence: dict = {}
+
+class FitRecommendation(BaseModel):
+    case_id: str
+    selected_candidate: str | None
+    rejected_candidates: list[str]
+    risk_level: Literal["low", "medium", "high"]
+    human_approval_required: bool
+    reasons: list[DecisionReason]
+    recommended_actions: list[str]
+
+class DecisionLog(BaseModel):
+    case_id: str
+    decision_type: str
+    inputs: dict
+    recommendation: FitRecommendation
+    created_by: str = "rule_based_supervisor_v1"
+\end{lstlisting}
+
+\subsection{Day 2：实现 rule-based Supervisor}
+
+创建：
+
+\begin{lstlisting}
+src/lqcd_agent/supervisor/rules.py
+src/lqcd_agent/supervisor/run.py
+\end{lstlisting}
+
+基础规则建议：
+
+\begin{enumerate}[leftmargin=2em]
+  \item 如果 Worker failed，Supervisor 不做 fit recommendation，只建议 rerun/debug。
+  \item 如果所有 fit failed，risk=high，human approval required。
+  \item 如果 \(\chi^2/\mathrm{dof}\) 普遍过大，risk=high。
+  \item 如果 model dependence 超过 2 sigma，risk=medium 或 high。
+  \item 如果 2-state fit 稳定而 1-state 不稳定，可 provisional 推荐 2-state，但要求 human approval。
+  \item 如果 tmin stability 好、chi2 合理、model dependence 小，则 risk=low。
+  \item 如果 reviewer 提出 high severity flag，则 human approval required。
+\end{enumerate}
+
+\subsection{Day 3：生成 supervisor report}
+
+创建：
+
+\begin{lstlisting}
+src/lqcd_agent/supervisor/report.py
+\end{lstlisting}
+
+生成 Markdown 报告：
+
+\begin{lstlisting}
+# Supervisor Report: l64c64a076_m140
+
+## Recommendation
+Selected candidate: 2state_tmin4_tmax15
+Risk level: medium
+Human approval required: true
+
+## Main reasons
+1. 2-state fit shows better tmin stability.
+2. 1-state fit has visible excited-state contamination.
+3. Model difference is 1.6 sigma, so final approval is required.
+
+## Risk flags from Skeptic Reviewer
+- model_dependence: medium
+- tmin_instability: low
+
+## Recommended next actions
+- Human should inspect fit_stability.pdf.
+- If approved, add this case to accepted memory.
+- If not approved, run targeted scan with larger tmin range.
+\end{lstlisting}
+
+\subsection{Day 4：把 Supervisor 加入 Snakemake}
+
+在 workflow 中加入：
+
+\begin{lstlisting}[language=Python]
+rule fit_analyst:
+    input:
+        summary=f"{OUTDIR}/summary.csv"
+    output:
+        f"{OUTDIR}/fit_diagnostics.json"
+    shell:
+        "python -m lqcd_agent.analysis.fit_analyst --summary {input.summary} --output {output}"
+
+rule skeptic_review:
+    input:
+        diagnostics=f"{OUTDIR}/fit_diagnostics.json",
+        summary=f"{OUTDIR}/summary.csv"
+    output:
+        f"{OUTDIR}/skeptic_review.json"
+    shell:
+        "python -m lqcd_agent.reviewer.skeptic --diagnostics {input.diagnostics} --summary {input.summary} --output {output}"
+
+rule supervisor_decision:
+    input:
+        manifest=f"{OUTDIR}/case_manifest.json",
+        summary=f"{OUTDIR}/summary.csv",
+        diagnostics=f"{OUTDIR}/fit_diagnostics.json",
+        review=f"{OUTDIR}/skeptic_review.json"
+    output:
+        decision=f"{OUTDIR}/decision_log.json",
+        report=f"{OUTDIR}/supervisor_report.md"
+    shell:
+        "python -m lqcd_agent.supervisor.run --case {input.manifest} --summary {input.summary} --diagnostics {input.diagnostics} --review {input.review} --decision {output.decision} --report {output.report}"
+\end{lstlisting}
+
+\subsection{Day 5：Month 2 demo 与总结}
+
+学生需要准备一个 10--15 分钟 demo。
+
+Demo 必须包括：
+
+\begin{enumerate}[leftmargin=2em]
+  \item 展示 Snakemake DAG 或 dry-run 输出。
+  \item 运行 Worker task。
+  \item 展示 summary.csv。
+  \item 展示 fit\_diagnostics.json。
+  \item 展示 skeptic\_review.json。
+  \item 展示 decision\_log.json。
+  \item 展示 supervisor\_report.md。
+  \item 解释 Supervisor 为什么给出该 recommendation。
+  \item 说明哪些地方仍需要 human approval。
+\end{enumerate}
+
+\subsection{Week 8 Codex Prompt}
+
+\begin{lstlisting}
+We are implementing the rule-based Supervisor for the LQCD meson DA analysis-agent project.
+The Supervisor reads Worker output, fit diagnostics, and Skeptic Reviewer output, then writes a structured decision log and a human-readable report.
+
+Task:
+Implement Supervisor schema, rules, CLI runner, and Markdown report generation.
+
+Files:
+- src/lqcd_agent/supervisor/schema.py
+- src/lqcd_agent/supervisor/rules.py
+- src/lqcd_agent/supervisor/run.py
+- src/lqcd_agent/supervisor/report.py
+- tests/test_supervisor.py
+- update workflow rules to include fit_analyst, skeptic_review, and supervisor_decision
+
+Requirements:
+- Read case_manifest.json, summary.csv, fit_diagnostics.json, and skeptic_review.json.
+- Produce decision_log.json following a Pydantic schema.
+- Produce supervisor_report.md.
+- Assign risk_level = low, medium, or high.
+- Set human_approval_required based on risk and reviewer flags.
+- Include explicit reasons with evidence.
+- Add tests for:
+  1. good stable case;
+  2. all fits failed;
+  3. strong model dependence;
+  4. high-severity reviewer flag.
+
+Constraints:
+- Supervisor may recommend but must not silently promote an accepted central result.
+- Medium-risk and high-risk cases require human approval.
+- Keep rules transparent and easy to inspect.
+\end{lstlisting}
+
+\subsection{Week 8 验收标准}
+
+\begin{itemize}[leftmargin=2em]
+  \item Supervisor 可以生成 \texttt{decision\_log.json}。
+  \item 每个 decision 至少有 2--3 条明确理由。
+  \item 风险等级和 human approval 逻辑清楚。
+  \item Supervisor report 能让导师快速理解结果。
+  \item Snakemake workflow 可以跑到 supervisor decision。
+  \item 学生能解释 accepted result 和 recommendation 的区别。
+\end{itemize}
+
+\newpage
+
+\section{第二个月最终运行命令}
+
+第二个月结束时，理想情况下可以用以下命令完整运行：
+
+\begin{lstlisting}[language=bash]
+# 1. 运行 workflow dry-run
+snakemake -s workflow/Snakefile \
+  --configfile configs/l64c64a076_m140.yaml \
+  --cores 1 \
+  --dry-run
+
+# 2. 正式运行 workflow
+snakemake -s workflow/Snakefile \
+  --configfile configs/l64c64a076_m140.yaml \
+  --cores 1 \
+  --rerun-incomplete
+
+# 3. 用 Worker 包装运行
+python -m lqcd_agent.worker.run \
+  --task configs/tasks/run_l64c64a076_worker.yaml
+
+# 4. 单独运行 Supervisor
+python -m lqcd_agent.supervisor.run \
+  --case outputs/l64c64a076_m140/case_manifest.json \
+  --summary outputs/l64c64a076_m140/summary.csv \
+  --diagnostics outputs/l64c64a076_m140/fit_diagnostics.json \
+  --review outputs/l64c64a076_m140/skeptic_review.json \
+  --decision outputs/l64c64a076_m140/decision_log.json \
+  --report outputs/l64c64a076_m140/supervisor_report.md
+
+# 5. 运行测试
+pytest
+\end{lstlisting}
+
+\section{第二个月学生需要提交的周报模板}
+
+\begin{lstlisting}
+Month 2 / Week X Report
+
+1. This week's goal
+
+2. What I implemented
+- ...
+
+3. Commands I ran
+```bash
+...
+```
+
+4. Main outputs
+- ...
+
+5. Tests
+```bash
+pytest
+```
+Result: pass / fail
+
+6. Main problems and fixes
+- Problem:
+- Fix:
+
+7. What I learned
+- Snakemake / Worker / Reviewer / Supervisor related lesson
+
+8. Questions for advisor
+- ...
+
+9. Next week plan
+- ...
+\end{lstlisting}
+
+\section{导师第二个月检查清单}
+
+\subsection{Workflow 检查}
+
+\begin{itemize}[leftmargin=2em]
+  \item workflow 是否能从 clean outputs 重新生成结果？
+  \item Snakemake rules 的 input/output 是否清楚？
+  \item 是否避免把分析逻辑写进 Snakefile？
+  \item 是否支持 dry-run？
+\end{itemize}
+
+\subsection{Worker 检查}
+
+\begin{itemize}[leftmargin=2em]
+  \item Worker 是否有 task schema？
+  \item 是否有 overwrite protection？
+  \item 是否有 expected output validation？
+  \item 失败时是否生成清楚错误？
+\end{itemize}
+
+\subsection{Fit Analyst 和 Reviewer 检查}
+
+\begin{itemize}[leftmargin=2em]
+  \item diagnostics 是否结构化？
+  \item reviewer 是否真的在挑问题？
+  \item 是否覆盖 good/bad/ambiguous cases？
+\end{itemize}
+
+\subsection{Supervisor 检查}
+
+\begin{itemize}[leftmargin=2em]
+  \item decision log 是否有明确理由？
+  \item risk level 是否合理？
+  \item medium/high risk 是否要求 human approval？
+  \item report 是否足够导师快速阅读？
+\end{itemize}
+
+\section{第二个月常见失败模式}
+
+\subsection{失败模式 1：Snakefile 里写了太多 Python 分析逻辑}
+
+解决方法：Snakefile 只负责调度。复杂分析逻辑放回 \texttt{src/lqcd\_agent/} 中，并通过 CLI 调用。
+
+\subsection{失败模式 2：Worker 变成了 Supervisor}
+
+解决方法：Worker 只能执行、检查、记录。所有 recommendation 必须放到 Supervisor。
+
+\subsection{失败模式 3：Reviewer 只重复 Analyst 的结论}
+
+解决方法：Reviewer 的任务是找风险，例如 high chi2、model dependence、tmin instability、fit failure rate，而不是只说“结果看起来不错”。
+
+\subsection{失败模式 4：Decision log 没有 evidence}
+
+解决方法：每条 reason 都应该引用 evidence，例如 chi2、sigma difference、failure rate、reviewer flag。
+
+\subsection{失败模式 5：Codex 一次改太多}
+
+解决方法：每次 Codex 只做一个小模块，例如只写 Worker schema，或只写 Supervisor rules，不要一次要求完成整个 Month 2。
+
+\section{Month 2 完成标准}
+
+第二个月结束时，学生应能做到：
+
+\begin{enumerate}[leftmargin=2em]
+  \item 用 Snakemake 复现 golden example workflow。
+  \item 用 Worker task 文件安全运行 workflow。
+  \item 从 fit scan summary 中生成 fit diagnostics。
+  \item 用 Skeptic Reviewer 找出潜在风险。
+  \item 用 rule-based Supervisor 生成 decision log 和 report。
+  \item 写出至少 10 个相关 pytest tests。
+  \item 清楚解释 workflow engine、Worker Agent、Reviewer、Supervisor 的区别。
+  \item 说明为什么当前结果只是 recommendation，而不是未经人工批准的 final accepted result。
+\end{enumerate}
+
+\begin{tcolorbox}[colback=green!4,colframe=green!40!black,title=进入 Month 3 的条件]
+只有当 Month 2 的 workflow、Worker、Reviewer、Supervisor 和 decision log 都能稳定运行后，才适合进入 Month 3 的 LangGraph multi-agent orchestration。否则，直接上 LangGraph 只会把未定义清楚的问题复杂化。
+\end{tcolorbox}
+
+\end{document}

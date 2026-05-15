@@ -1,0 +1,1141 @@
+\documentclass[11pt,a4paper,fontset=fandol]{ctexart}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{tcolorbox}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!60!black,
+  urlcolor=blue!60!black,
+  citecolor=blue!60!black
+}
+
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{AI-first LQCD Meson DA Analysis Agent}
+\rhead{Student Guide}
+\cfoot{\thepage}
+
+\setlist[itemize]{itemsep=2pt,topsep=4pt}
+\setlist[enumerate]{itemsep=2pt,topsep=4pt}
+\renewcommand{\arraystretch}{1.18}
+
+\definecolor{codebg}{RGB}{248,248,248}
+\definecolor{coderule}{RGB}{220,220,220}
+\lstdefinestyle{codestyle}{
+  backgroundcolor=\color{codebg},
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=single,
+  rulecolor=\color{coderule},
+  columns=fullflexible,
+  keepspaces=true,
+  showstringspaces=false
+}
+\lstset{style=codestyle}
+
+\title{\bfseries 研究生项目指导书\\[4pt]
+AI-first LQCD Meson DA Analysis Agent\\[4pt]
+三个月高级训练与原型系统建设方案}
+\author{项目导师版 / 学生执行版}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{tcolorbox}[colback=blue!3!white,colframe=blue!50!black,title=核心定位]
+本项目不是简单让学生“用 AI 写代码”，也不是单纯搭一个聊天机器人。目标是训练学生在 Codex 等 AI 工具帮助下，把真实的格点 QCD meson DA 数据分析流程尽可能交给 AI 自动执行、自动检查、自动复现和自动记录，只在关键决策、风险升级和人类主动介入时才引入人工判断，最终形成一个可复现、可审计、可扩展、AI-first、human-gated 的科研分析 agent 原型。
+
+三个月结束时，学生应至少完成一个初级但完整的高级原型：以一个真实 golden example 为基准，能够让 AI 自动完成数据审计、配置生成、分析执行、结构化输出、质量检查、Supervisor 推荐、Skeptic 审查、case memory 更新，并在必须人工介入的少数关键节点触发 human approval gate；系统还应能通过 Snakemake 管理可复现 workflow，通过 LangGraph 管理多 agent 状态流转。
+\end{tcolorbox}
+
+\tableofcontents
+\newpage
+
+\section{项目总目标}
+
+\subsection{科研工具目标}
+
+本项目的长期目标是建立一个面向格点 QCD meson distribution amplitude 数据分析的 AI-first analysis agent 系统。该系统应满足以下要求：
+
+\begin{itemize}
+  \item \textbf{可复现}：所有分析由 config、schema、workflow、日志和版本控制驱动，而不是依赖手动 notebook 操作。
+  \item \textbf{可追责}：每一个重要判断都要留下 decision log，包括输入、候选方案、选择理由、风险等级和是否需要人工批准。
+  \item \textbf{AI-first automation}：优先让 AI 自动完成重复性、结构化、可检查的科研工程工作，例如数据整理、workflow 执行、拟合扫描、图表生成、表格汇总和日志记录。
+  \item \textbf{human-gated}：只有在关键决策、风险升级、异常诊断、结果 promotion、系统误差判断或人类主动要求介入时，才把任务交给人工确认。
+  \item \textbf{逐步增强 AI 物理判断}：第一阶段以 rule-based Supervisor 和 structured checks 为主，后续逐步引入 LLM-based reasoning、multi-agent debate、case memory 和 reviewer critique。
+  \item \textbf{真实科研可用}：最终应能让 AI 尽可能承担真实 meson DA 分析中的常规工作，而不是停留在玩具示例。
+\end{itemize}
+
+这里的核心理念是：先进的科研 AI agent 系统不是“工具越多越先进”，而是把科研流程拆解为可执行、可验证、可回放、可批注、可积累经验的结构化系统，并尽量把重复、机械、耗时的工作从人类手里移交给 AI。
+
+\subsection{学生训练目标}
+
+本项目同时是一个研究生训练项目。学生不需要一开始精通所有工具，但需要在三个月内逐步掌握现代 AI-first scientific workflow 的关键能力：
+
+\begin{itemize}
+  \item 把 notebook-style 分析改造成 config-driven pipeline，并让 AI 自动处理能自动处理的大部分步骤；
+  \item 用 Pydantic 或等价工具定义输入输出 schema；
+  \item 用 pytest 验收 Codex 生成的代码；
+  \item 用 Snakemake 管理依赖关系和增量重跑；
+  \item 用 LangGraph 表达多 agent 状态流、人工中断和 targeted rerun；
+  \item 用 Git 做小步提交，而不是一次性大改；
+  \item 写清楚 Codex prompt，学会让 AI 生成代码、测试和文档，并尽量减少人类手工写实现；
+  \item 理解 Worker、Fit Analyst、Skeptic Reviewer、Supervisor、Human Approval、Memory 的不同角色，以及哪些工作应该默认交给 AI，哪些必须留给人类；
+  \item 初步理解 LQCD meson DA 分析中的 fit strategy、sanity check 和 physical interpretation。
+\end{itemize}
+
+三个月后，学生不一定能独立完成所有物理判断，但应能成为一个\textbf{科研 AI agent 搭建初级专家}：知道如何拆任务、如何让 AI 尽量自动化执行、如何测试、如何管理 workflow、如何设计 agent state、如何记录决策、如何在关键节点保留人工审查，以及如何向导师展示一个可靠的初级系统。
+
+\section{当前仓库的真实 example}
+
+为了避免学生一开始学到的是抽象口号而不是实际流程，本项目现在以仓库中的
+\lstinline|examples/l64c64a076_m140/| 作为贯穿全文的真实 example。这个 example 不是 toy data，而是一套已经裁剪成 DA-only 目标的实际分析链，包含当前分支要教给学生的最小闭环。
+
+\subsection{当前 example 的数据布局}
+
+当前 example 目录的核心内容是：
+
+\begin{center}
+\begin{tabular}{p{0.34\linewidth}p{0.56\linewidth}}
+\toprule
+目录 & 作用 \\
+\midrule
+\lstinline|examples/l64c64a076_m140/data/c2pt_csv/| & 两点 correlator 的原始 CSV 输入 \\
+\lstinline|examples/l64c64a076_m140/data/qda/| & 只保留 \lstinline|b_X|、\lstinline|OT5|、\lstinline|bT=0| 的 qDA HDF5 输入 \\
+\lstinline|examples/l64c64a076_m140/analysis/0-effective-mass/| & effective mass 的最小练习，只做统计诊断和画图 \\
+\lstinline|examples/l64c64a076_m140/analysis/1-c2pt-fit/| & 两点拟合 notebook 和输出 \\
+\lstinline|examples/l64c64a076_m140/analysis/2-bm/| & DA bare matrix element 提取 \\
+\lstinline|examples/l64c64a076_m140/analysis/3-normalize/| & DA 归一化，当前 example 只保留 mode3 路径 \\
+\lstinline|examples/l64c64a076_m140/analysis/4-FT/| & DA Fourier 变换，当前 example 只保留 mode3 路径 \\
+\lstinline|examples/l64c64a076_m140/input_files/| & 与 notebook 一致的纯文本输入模版 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{当前 example 的真实分析顺序}
+
+学生要记住的不是“有很多目录”，而是这条固定顺序：
+
+\begin{center}
+\begin{tabular}{p{0.16\linewidth}p{0.28\linewidth}p{0.42\linewidth}}
+\toprule
+阶段 & 结果层级 & 关键问题 \\
+\midrule
+\lstinline|0-effective-mass| & effective mass 和图 & plateau、噪声、bootstrap 误差是否合理 \\
+\lstinline|1-c2pt-fit| & 两点拟合 & 能量、overlap、$\chi^2/\mathrm{dof}$ 是否稳定 \\
+\lstinline|2-bm| & DA bare matrix element & 先把矩阵元从 ratio 中提出来 \\
+\lstinline|3-normalize| & 归一化后的 x-space/中间量 & 只保留 mode3 路径，检查归一化是否合理 \\
+\lstinline|4-FT| & Fourier 结果 & 看最终分布的形状和物理趋势 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+这条链的关键约束现在是：
+
+\begin{itemize}
+  \item 只保留 \lstinline|b_X|；
+  \item 只保留 \lstinline|OT5|；
+  \item 只保留 \lstinline|bT = 0|；
+  \item 删除 \lstinline|b_Y|；
+  \item 删除 \lstinline|OZ5|；
+  \item 下游 example 只保留 \lstinline|mode3| 路径。
+\end{itemize}
+
+\subsection{学生应该先读哪些参考文档}
+
+如果学生第一次接触这套流程，建议先把本章读完，再按当前 example 跑一遍；两点拟合和 DA ratio 的详细推导已经合并进 Month 1 指南，不需要再单独翻旧文件。
+
+\begin{itemize}
+  \item \lstinline|docs/analysis_DA_agent/lqcd_agent_month1_detailed_guide_CN.pdf|：包含两点拟合、bootstrap、最小 $\chi^2$、DA ratio-fit、输入方式和运行顺序的完整说明；
+  \item \lstinline|examples/README.md|：当前 example 的目录约定；
+  \item \lstinline|templates/input_files/two_point/| 和 \lstinline|templates/input_files/da/|：真实输入模版；
+  \item \lstinline|templates/two_point/| 和 \lstinline|templates/da/|：notebook 模版。
+\end{itemize}
+
+\subsection{这套 example 对学生意味着什么}
+
+这套 example 的教学目标不是让学生“会点 notebook 按钮”，而是让学生能回答：
+
+\begin{enumerate}
+  \item 这条分析链里每一步输入是什么；
+  \item 每一步输出是什么；
+  \item 每一步的物理意义是什么；
+  \item 哪些步骤是数值问题，哪些步骤是物理判断；
+  \item 哪些东西应该进 config，哪些东西应该进 result；
+  \item 为什么最终结果不能只看一个数，而要看整条 workflow 的 provenance。
+\end{enumerate}
+
+\subsection{Week 1：真实 example 与统计物理基础}
+
+Week 1 是学生正式进入这套项目时的第一堂练习课。它的任务非常明确：不要先做复杂拟合，不要先学 agent，而是先把 \textbf{effective mass} 这件最基础的事学明白。换句话说，Week 1 的目标是先建立 plateau、噪声和 bootstrap 的最基本直觉，再去看后面的两点拟合。
+
+在格点 QCD 的两点函数分析里，effective mass 是学生最先应该掌握的诊断量，因为它能把原始 correlator 的指数衰减压成更容易观察的局部斜率图像。只要学生能看懂 effective mass 图，后面的两点拟合、窗口选择和 DA ratio 才有意义。
+
+从教学上说，Week 1 是一个最小闭环：
+
+\begin{enumerate}
+  \item 读入一组两点 correlator；
+  \item 只计算 effective mass；
+  \item 只画图，不做复杂拟合；
+  \item 从图上判断哪里开始接近单态区；
+  \item 把 plateau 和噪声结构带到后面的 \lstinline|1-c2pt-fit|。
+\end{enumerate}
+
+Week 1 的推荐顺序是：
+
+\begin{enumerate}
+  \item 先打开 \lstinline|examples/l64c64a076_m140/analysis/0-effective-mass/|；
+  \item 先跑 notebook，观察 effective mass 的 bootstrap 结果和图；
+  \item 再跑 input file，确认同一组参数会得到同样的 effective mass 输出；
+  \item 重点看 plateau、噪声增长和误差条；
+  \item 记录你认为适合进入 \lstinline|1-c2pt-fit| 的时间窗；
+  \item 再把这份观察带到后面的 Month 1 指南里。
+\end{enumerate}
+
+学生在 Week 1 至少要回答下面几个问题：
+
+\begin{itemize}
+  \item 为什么 effective mass 在小 $t$ 和大 $t$ 的行为不同；
+  \item 哪些点最接近 plateau；
+  \item 误差条什么时候开始快速变大；
+  \item 为什么 effective mass 只能作为诊断，而不是最终物理结果；
+  \item 为什么不同动量的图不能机械地用同一个窗口。
+\end{itemize}
+
+如果学生连这一步都看不懂，就不要急着进入两点拟合。先把 \lstinline|0-effective-mass| 跑通，是为了建立最基本的统计物理直觉，而不是为了得到一个最终数值。
+
+\section{为什么采用三层架构}
+
+本项目采用三层架构，而不是把所有功能混在一个大 agent 中。
+
+\subsection{Layer 1：Analysis Core}
+
+Analysis Core 是最底层的科学计算代码。它不应该依赖 LLM，也不应该依赖复杂 agent。它只负责确定性的分析计算：
+
+\begin{itemize}
+  \item 读取数据；
+  \item 检查数据完整性；
+  \item bootstrap / jackknife；
+  \item effective mass；
+  \item 2pt fit；
+  \item ratio construction；
+  \item ratio fit；
+  \item bare matrix element extraction；
+  \item plotting；
+  \item 输出 JSON / CSV / PDF / log。
+\end{itemize}
+
+这一层必须尽量简单、清楚、可测试。任何 agent 都不应该直接把未经测试的复杂逻辑塞进这一层。
+
+\subsection{Layer 2：Scientific Workflow Orchestration}
+
+这一层负责管理分析步骤之间的依赖关系。这里建议使用 \textbf{Snakemake} 作为主 workflow engine。
+
+选择 Snakemake 的理由是：
+
+\begin{itemize}
+  \item 它是成熟的科学 workflow 系统，目标正是支持 reproducible and scalable data analyses；
+  \item 它非常适合文件驱动的科研流程，例如 raw data $\to$ fit result $\to$ plots $\to$ summary；
+  \item 它用 Python 风格规则描述 workflow，适合 LQCD 学生逐步学习；
+  \item 它适合 HPC 环境和批量 ensemble / momentum / $z$ / fit-window 扫描；
+  \item 它可以避免“改了一个 config 以后不知道哪些步骤要重跑”的问题。
+\end{itemize}
+
+本项目不选择 Dagster 或 Prefect 作为第一主线。Dagster 的 software-defined asset 理念很先进，Prefect 的 Python-native retry 和 observability 也很好，但它们更偏数据工程平台或服务化任务编排。对于当前 LQCD 文件型分析流程，Snakemake 更贴近科研工作流和 HPC 实践。Dagster / Prefect 可作为第二阶段生产化或 dashboard 化的候选方案。
+
+\subsection{Layer 3：Agent Orchestration}
+
+这一层负责多 agent 状态流、人工审批、异常回退、targeted rerun 和 memory update。这里建议使用 \textbf{LangGraph} 作为主 agent orchestration framework。
+
+选择 LangGraph 的理由是：
+
+\begin{itemize}
+  \item 它适合构建 stateful multi-agent workflow；
+  \item 它支持 durable execution，即执行状态可以持久化；
+  \item 它适合 human intervention interrupt / resume；
+  \item 它可以把 agent 流程表示为清楚的 graph，而不是不可追踪的长聊天；
+  \item 它适合实现 Data Auditor $\to$ Worker $\to$ Fit Analyst $\to$ Skeptic Reviewer $\to$ Supervisor $\to$ Human Approval $\to$ Memory 的闭环。
+\end{itemize}
+
+重要的是：LangGraph 不替代 Snakemake。二者分工不同：
+
+\begin{center}
+\begin{tabular}{p{0.25\linewidth}p{0.32\linewidth}p{0.32\linewidth}}
+\toprule
+工具 & 负责什么 & 不负责什么 \\
+\midrule
+Snakemake & 科学计算 workflow、文件依赖、增量重跑、HPC 批量执行 & 不负责 agent reasoning 和 human approval 对话 \\
+LangGraph & 多 agent 状态流、判断节点、人工中断、targeted rerun、memory update & 不负责底层文件依赖和大规模批处理 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+因此本项目的推荐结构是：\textbf{Snakemake 管数据分析 DAG，LangGraph 管 agent 决策 DAG}。
+
+\section{借鉴先进 multi-agent practice}
+
+本项目借鉴现代 multi-agent 系统中的几个关键思想，尤其是类似 TradingAgents 这类系统中的 specialized roles、debate、risk management 和 final decision gate。
+
+\subsection{Specialized Roles：不要一个 agent 做所有事}
+
+一个大而全的 agent 很容易出错，因为它同时要读数据、写代码、判断 fit、解释物理、更新 memory。更先进的设计是把任务拆成多个有明确边界的角色：
+
+\begin{center}
+\begin{longtable}{p{0.22\linewidth}p{0.34\linewidth}p{0.34\linewidth}}
+\toprule
+角色 & 主要责任 & 禁止事项 \\
+\midrule
+Data Auditor & 检查文件、metadata、缺失数据、shape、ensemble/momentum/z 覆盖 & 不做 fit 选择 \\
+Worker Agent & 生成 config、调用 CLI、写缺失脚本、修 bug、加测试、产出结果 & 不决定 central result \\
+Fit Analyst & 比较 1-state/2-state/3-state、fit window、prior、plateau、$\chi^2$/dof & 不绕过 Reviewer \\
+Skeptic Reviewer & 专门找问题：不稳定、过拟合、异常 dependence、normalization issue & 不直接批准最终结果 \\
+Supervisor & 综合 Fit Analyst 和 Skeptic 意见，给出推荐和风险等级 & 高风险结果不能自动通过 \\
+Human Approver & 导师或高级研究者最终批准高风险 physics decision & 不需要检查所有低风险机械步骤 \\
+Memory Manager & 记录 accepted/rejected cases、失败原因、经验规则 & 不写入未经批准的 central result \\
+\bottomrule
+\end{longtable}
+\end{center}
+
+\subsection{Debate / Critic：必须设计反方角色}
+
+先进 multi-agent 系统通常不是让一个 agent 直接给结论，而是让不同角色从不同角度分析。对于 LQCD 分析，Skeptic Reviewer 很重要。
+
+例如 Fit Analyst 可能说：
+
+\begin{quote}
+2-state fit 在 $t_{\min}=4$ 到 6 之间稳定，$\chi^2$/dof 可接受，因此推荐 2-state central fit。
+\end{quote}
+
+Skeptic Reviewer 必须检查：
+
+\begin{itemize}
+  \item 1-state 和 2-state 是否在误差内一致？
+  \item 结果是否强烈依赖 $t_{\min}$？
+  \item posterior 是否主要由 prior 决定？
+  \item ratio fit 是否和 2pt fit 的能隙假设一致？
+  \item local matrix element 是否合理？
+  \item $P_z$ dependence 是否异常？
+  \item $z$-dependence 是否平滑？
+  \item real/imag symmetry 是否符合预期？
+\end{itemize}
+
+这不是“让 AI 吵架”，而是把科研审查制度化。
+
+\subsection{Risk Gate：不同风险等级使用不同审批规则}
+
+所有 decision 都应分风险等级。
+
+\begin{center}
+\begin{tabular}{p{0.18\linewidth}p{0.46\linewidth}p{0.26\linewidth}}
+\toprule
+风险等级 & 例子 & 处理方式 \\
+\midrule
+Low & 文件齐全、测试通过、fit 稳定、sanity check 正常 & 可自动通过并记录 \\
+Medium & fit 稳定性一般、model dependence 可见、统计误差偏大 & 需要 Supervisor 明确理由，可请求人工复核 \\
+High & central fit 选择、丢弃数据、系统误差、异常物理解释、结果 promotion & 必须 human approval \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Memory：不是简单保存聊天记录}
+
+Case memory 应保存结构化经验，而不是保存一堆对话。
+
+推荐至少包含：
+
+\begin{itemize}
+  \item \texttt{case\_id}；
+  \item ensemble / momentum / $z$ / operator / channel；
+  \item 使用的 config hash；
+  \item 候选 fit 列表；
+  \item accepted fit；
+  \item rejected fit 及原因；
+  \item risk level；
+  \item human approval 状态；
+  \item downstream validation 结果；
+  \item lessons learned。
+\end{itemize}
+
+初期可用 YAML / JSON。三个月后建议迁移到 SQLite 或 DuckDB，以支持按 ensemble、momentum、$z$、失败类型检索。
+
+\section{三个月总体路线图}
+
+三个月计划分为三个阶段：
+
+\begin{itemize}
+  \item \textbf{第 1 个月：复现与工程化}。目标是让学生理解现有真实分析流程，并把 golden example 变成可测试、可复现的 config-driven CLI。
+  \item \textbf{第 2 个月：workflow 与 agent 化}。目标是用 Snakemake 管理分析 DAG，用 rule-based agents 形成可审计的 Worker / Fit Analyst / Skeptic / Supervisor 流程。
+  \item \textbf{第 3 个月：LangGraph 多 agent 原型与高级展示}。目标是将第二个月形成的稳定 CLI 和 rule-based 逻辑接入 LangGraph，实现 stateful multi-agent prototype、human approval、targeted rerun 和 case memory。
+\end{itemize}
+
+\begin{center}
+\begin{tabular}{p{0.16\linewidth}p{0.38\linewidth}p{0.34\linewidth}}
+\toprule
+阶段 & 核心任务 & 最终产物 \\
+\midrule
+Month 1 & Golden example 复现、CLI、schema、pytest、Codex 训练 & 可运行 analysis core \\
+Month 2 & Snakemake workflow、Worker wrapper、rule-based Supervisor、decision log & 可复现 workflow + 初级 agent 判断 \\
+Month 3 & LangGraph orchestration、Skeptic debate、human approval、memory、demo report & 高级多 agent 原型 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Month 1：复现 golden example 与工程化基础}
+
+\subsection{Month 1 目标}
+
+第一个月的目标不是从零发明新 physics，而是把一个已经准备好的实际分析流程变成学生能复现、能测试、能解释、能扩展的工程化系统。
+
+建议选择一个真实的 golden example，例如：
+
+\begin{lstlisting}
+examples/l64c64a076_m140/
+\end{lstlisting}
+
+它应包含一套相对完整、已知能跑通的 meson DA 分析输入输出。这个 example 同时承担三个作用：
+
+\begin{itemize}
+  \item \textbf{golden example}：作为学生第一套可复现案例；
+  \item \textbf{regression example}：以后代码修改后必须仍能复现；
+  \item \textbf{agent training example}：用于训练 Supervisor 和 Skeptic 判断什么是正常、什么是异常。
+\end{itemize}
+
+\subsection{Month 1 学习内容}
+
+学生需要学习：
+
+\begin{itemize}
+  \item Python package 基本结构；
+  \item 命令行 CLI；
+  \item YAML / JSON config；
+  \item Pydantic schema；
+  \item pytest；
+  \item Git 小步提交；
+  \item Codex prompt 写法；
+  \item meson DA 分析流程的输入输出结构；
+  \item 2pt fit、ratio、bare matrix element 的基本含义。
+\end{itemize}
+
+\subsection{Month 1 任务}
+
+\subsubsection{任务 1：建立 repo skeleton}
+
+推荐目录：
+
+\begin{lstlisting}
+lqcd-meson-da-agent/
+  README.md
+  pyproject.toml
+  configs/
+    l64c64a076_m140.yaml
+  examples/
+    l64c64a076_m140/
+  src/
+    lqcd_agent/
+      __init__.py
+      schema/
+      analysis/
+      io/
+      plots/
+  tests/
+  docs/
+  outputs/
+    .gitkeep
+\end{lstlisting}
+
+学生应使用 Codex 生成初版，但必须检查每个文件是否合理。
+
+\subsubsection{任务 2：把 notebook 或散乱脚本变成 CLI}
+
+目标命令：
+
+\begin{lstlisting}[language=bash]
+python -m lqcd_agent.analysis.run \
+  --config configs/l64c64a076_m140.yaml
+\end{lstlisting}
+
+CLI 不一定一开始完成所有真实分析，但必须形成稳定接口。
+
+\subsubsection{任务 3：定义 config schema}
+
+示例：
+
+\begin{lstlisting}[language=Python]
+class EnsembleConfig(BaseModel):
+    name: str
+    lattice_spacing: float | None = None
+    pion_mass: float | None = None
+    base_dir: str
+
+class AnalysisConfig(BaseModel):
+    case_id: str
+    ensemble: EnsembleConfig
+    momenta: list[str]
+    z_values: list[int]
+    channels: list[str]
+    output_dir: str
+    seed: int = 1234
+    allow_overwrite: bool = False
+\end{lstlisting}
+
+原则：所有会影响结果的参数都必须进入 config，不能散落在代码中。
+
+\subsubsection{任务 4：定义 result schema}
+
+至少包括：
+
+\begin{itemize}
+  \item input config path；
+  \item config hash；
+  \item git commit hash；
+  \item output files；
+  \item candidate fits；
+  \item summary statistics；
+  \item warnings / errors；
+  \item run status。
+\end{itemize}
+
+\subsubsection{任务 5：加入 pytest}
+
+Month 1 至少需要：
+
+\begin{itemize}
+  \item import test；
+  \item config validation test；
+  \item CLI smoke test；
+  \item golden example output existence test；
+  \item no-overwrite safety test。
+\end{itemize}
+
+\subsection{Month 1 交付物}
+
+\begin{itemize}
+  \item 可安装或可导入的 Python repo；
+  \item 一个 golden example config；
+  \item 一个可运行 CLI；
+  \item 初版 Pydantic schema；
+  \item 初版 pytest；
+  \item 输出 \texttt{result.json}、\texttt{summary.csv}、plots、\texttt{run.log}；
+  \item 一份 Month 1 report。
+\end{itemize}
+
+\subsection{Month 1 验收标准}
+
+学生必须能做到：
+
+\begin{itemize}
+  \item 从 clean repo 运行一条命令复现 golden example；
+  \item 解释 config 中每个字段；
+  \item 解释 result.json 中每个字段；
+  \item 运行 pytest 并说明每个测试保护什么；
+  \item 展示至少 8--12 个小 commit；
+  \item 说明 Codex 生成了什么、自己检查了什么、改了什么。
+\end{itemize}
+
+\section{Month 2：Snakemake workflow 与 rule-based agents}
+
+\subsection{Month 2 目标}
+
+第二个月的目标是把 Month 1 的 CLI 分析核心升级为可复现 workflow，并加入第一版 rule-based agents。
+
+这里正式引入 Snakemake。
+
+\subsection{Month 2 学习内容}
+
+学生需要学习：
+
+\begin{itemize}
+  \item Snakemake rule、input、output、params、shell / script；
+  \item dependency-aware rerun；
+  \item workflow config；
+  \item Worker wrapper；
+  \item rule-based Fit Analyst；
+  \item Skeptic Reviewer；
+  \item Supervisor decision log；
+  \item case memory。
+\end{itemize}
+
+\subsection{Month 2 workflow 设计}
+
+推荐 Snakemake DAG：
+
+\begin{lstlisting}
+audit_data
+  -> generate_config
+  -> run_2pt_fit
+  -> run_ratio_analysis
+  -> collect_bare_matrix_elements
+  -> make_plots
+  -> collect_summary
+  -> supervisor_decision
+  -> report
+\end{lstlisting}
+
+示例文件结构：
+
+\begin{lstlisting}
+workflow/
+  Snakefile
+  config.yaml
+  rules/
+    audit.smk
+    fit.smk
+    ratio.smk
+    plots.smk
+    supervisor.smk
+\end{lstlisting}
+
+\subsection{Worker Agent wrapper}
+
+Worker 的输入应是结构化 task：
+
+\begin{lstlisting}
+{
+  "task_id": "run_l64c64a076_m140_001",
+  "task_type": "run_analysis_workflow",
+  "config_path": "configs/l64c64a076_m140.yaml",
+  "output_dir": "outputs/l64c64a076_m140",
+  "allow_overwrite": false
+}
+\end{lstlisting}
+
+Worker 输出：
+
+\begin{lstlisting}
+{
+  "task_id": "run_l64c64a076_m140_001",
+  "status": "success",
+  "outputs": {
+    "result_json": "outputs/.../result.json",
+    "summary_csv": "outputs/.../summary.csv",
+    "plots_dir": "outputs/.../plots",
+    "run_log": "outputs/.../run.log"
+  },
+  "warnings": [],
+  "errors": []
+}
+\end{lstlisting}
+
+Worker 必须遵守：
+
+\begin{itemize}
+  \item 不直接修改 raw data；
+  \item 默认不覆盖已有输出；
+  \item 所有命令写入 log；
+  \item 所有失败写入 structured error；
+  \item 重大代码修改必须附带 tests；
+  \item 不做 central physical result 决策。
+\end{itemize}
+
+\subsection{Fit Analyst}
+
+Fit Analyst 负责对候选 fit 做结构化分析：
+
+\begin{itemize}
+  \item 读取 \texttt{summary.csv}；
+  \item 比较不同 fit window；
+  \item 比较 1-state / 2-state / 3-state；
+  \item 检查 $\chi^2$/dof；
+  \item 检查 fit stability；
+  \item 生成少量 high-value fit recommendation；
+  \item 避免 brute-force scan。
+\end{itemize}
+
+\subsection{Skeptic Reviewer}
+
+Skeptic Reviewer 的任务是找问题，不是给好消息。
+
+它应检查：
+
+\begin{itemize}
+  \item fit 是否对 $t_{\min}$ 过度敏感；
+  \item 2pt fit 是否可能污染 ratio fit；
+  \item local matrix element 是否异常；
+  \item $P_z$ dependence 是否异常；
+  \item $z$-dependence 是否不平滑；
+  \item real/imaginary symmetry 是否异常；
+  \item normalization 是否可能出错；
+  \item 是否需要 targeted rerun。
+\end{itemize}
+
+\subsection{Supervisor 与 decision log}
+
+Supervisor 综合 Fit Analyst 和 Skeptic Reviewer 的结果，输出：
+
+\begin{lstlisting}
+{
+  "case_id": "l64c64a076_m140",
+  "decision_type": "fit_recommendation",
+  "candidate_fits": [...],
+  "recommended_fit": "...",
+  "skeptic_flags": [...],
+  "risk_level": "medium",
+  "human_approval_required": true,
+  "reasons": [
+    "2-state fit is more stable than 1-state fit",
+    "local matrix element passes sanity check",
+    "Pz dependence needs human review"
+  ],
+  "targeted_rerun": {
+    "needed": false,
+    "reason": null
+  }
+}
+\end{lstlisting}
+
+\subsection{Month 2 交付物}
+
+\begin{itemize}
+  \item Snakemake workflow；
+  \item Worker wrapper；
+  \item Fit Analyst rule module；
+  \item Skeptic Reviewer rule module；
+  \item Supervisor decision module；
+  \item \texttt{decision\_log.json}；
+  \item 初版 \texttt{accepted\_cases.yaml} / \texttt{rejected\_cases.yaml}；
+  \item tests for Worker / Supervisor / Skeptic；
+  \item Month 2 report。
+\end{itemize}
+
+\subsection{Month 2 验收标准}
+
+学生必须能做到：
+
+\begin{itemize}
+  \item 用 \texttt{snakemake --cores 1} 复现 golden example；
+  \item 修改一个输入或 config 后，只重跑必要下游步骤；
+  \item Worker 能安全执行 workflow；
+  \item Supervisor 能输出 decision log；
+  \item Skeptic 能指出至少三类潜在问题；
+  \item 至少有三种测试案例：good case、ambiguous case、failed case；
+  \item 学生能解释 Snakemake 和 agent 的区别。
+\end{itemize}
+
+\section{Month 3：LangGraph 多 agent 原型与高级展示}
+
+\subsection{Month 3 目标}
+
+第三个月正式把 rule-based agent pipeline 接入 LangGraph，实现 stateful multi-agent prototype。
+
+注意：LangGraph 不是用来替代已有 CLI 或 Snakemake，而是用来组织 agent 决策流。
+
+\subsection{Month 3 学习内容}
+
+学生需要学习：
+
+\begin{itemize}
+  \item LangGraph StateGraph；
+  \item typed state；
+  \item node / edge / conditional edge；
+  \item checkpoint / durable execution；
+  \item human interrupt / resume；
+  \item targeted rerun loop；
+  \item memory update；
+  \item agent evaluation harness；
+  \item final demo report。
+\end{itemize}
+
+\subsection{推荐 LangGraph state}
+
+\begin{lstlisting}[language=Python]
+class AnalysisAgentState(TypedDict):
+    case_id: str
+    config_path: str
+    output_dir: str
+    audit_report: dict | None
+    worker_result: dict | None
+    fit_analysis: dict | None
+    skeptic_review: dict | None
+    supervisor_decision: dict | None
+    human_feedback: dict | None
+    memory_update: dict | None
+    errors: list[dict]
+    status: str
+\end{lstlisting}
+
+\subsection{推荐 graph}
+
+\begin{lstlisting}
+START
+  -> data_auditor
+  -> worker_run_snakemake
+  -> fit_analyst
+  -> skeptic_reviewer
+  -> supervisor
+  -> risk_gate
+      -> if low risk: memory_update -> END
+      -> if medium/high risk: human_approval
+          -> if approved: memory_update -> END
+          -> if request_rerun: targeted_rerun -> worker_run_snakemake
+          -> if rejected: memory_update -> END
+\end{lstlisting}
+
+\subsection{Human approval 不只是最后按钮}
+
+Human approval 应该出现在关键风险节点，例如：
+
+\begin{itemize}
+  \item central fit selection；
+  \item fit window 变更；
+  \item 数据丢弃；
+  \item systematic uncertainty 估计；
+  \item accepted result promotion；
+  \item paper-level conclusion。
+\end{itemize}
+
+学生应理解：human-gated 的高级实践不是“最后 approve 一下”，而是让人类在最需要判断的节点介入。
+
+\subsection{Agent evaluation harness}
+
+第三个月应加入一个最小 evaluation harness，用来测试 agent 决策是否稳定。
+
+至少包含：
+
+\begin{itemize}
+  \item good synthetic case；
+  \item noisy case；
+  \item unstable fit case；
+  \item normalization problem case；
+  \item missing data case；
+  \item suspicious $P_z$ dependence case。
+\end{itemize}
+
+每个 case 都应有 expected behavior，例如：
+
+\begin{itemize}
+  \item good case：low risk，自动通过；
+  \item unstable fit case：medium/high risk，请求人工批准；
+  \item missing data case：Worker 不运行 fit，Data Auditor 报错；
+  \item normalization problem：Skeptic flag normalization issue，Supervisor 建议 targeted rerun。
+\end{itemize}
+
+\subsection{Month 3 交付物}
+
+\begin{itemize}
+  \item LangGraph prototype；
+  \item typed agent state；
+  \item graph nodes for Data Auditor / Worker / Fit Analyst / Skeptic / Supervisor / Human Approval / Memory；
+  \item checkpoint 或可恢复执行机制；
+  \item human approval demo；
+  \item targeted rerun demo；
+  \item case memory SQLite / DuckDB / YAML 版本；
+  \item evaluation cases；
+  \item final demo report；
+  \item final presentation slides 或 markdown report。
+\end{itemize}
+
+\subsection{Month 3 验收标准}
+
+学生必须能展示：
+
+\begin{itemize}
+  \item 一个完整 LangGraph agent run；
+  \item graph 中每个 node 的输入输出；
+  \item 一次 high-risk case 的 human approval；
+  \item 一次 Skeptic 触发 targeted rerun；
+  \item decision log 和 memory update；
+  \item 如何复现实验；
+  \item 哪些地方仍然需要导师物理判断。
+\end{itemize}
+
+\section{Codex 使用规范}
+
+\subsection{Codex 可以做什么}
+
+Codex 适合：
+
+\begin{itemize}
+  \item repo skeleton；
+  \item CLI；
+  \item Pydantic schema；
+  \item pytest；
+  \item Snakemake rule 初稿；
+  \item LangGraph node skeleton；
+  \item fake data / evaluation case generator；
+  \item README；
+  \item 小范围重构；
+  \item traceback-based bug fix。
+\end{itemize}
+
+\subsection{Codex 不应该直接决定什么}
+
+Codex 不应直接决定：
+
+\begin{itemize}
+  \item central fit；
+  \item 是否丢弃数据；
+  \item systematic uncertainty；
+  \item accepted result promotion；
+  \item paper-level physical conclusion；
+  \item 未经测试的大范围重构。
+\end{itemize}
+
+\subsection{标准 Codex prompt 模板}
+
+\begin{lstlisting}
+We are building an AI-first LQCD meson DA analysis-agent system.
+Current milestone: [Month 1 / Month 2 / Month 3].
+
+Task:
+[one small concrete task]
+
+Files to edit:
+[list files]
+
+Requirements:
+- [requirement 1]
+- [requirement 2]
+- [requirement 3]
+
+Inputs:
+[describe inputs]
+
+Outputs:
+[describe outputs]
+
+Tests:
+Please add or update pytest tests for:
+- [test 1]
+- [test 2]
+- [test 3]
+
+Constraints:
+- Do not modify unrelated files.
+- Do not change public interfaces unless necessary.
+- Do not overwrite existing accepted outputs.
+- Keep code simple and readable.
+- If you introduce a new dependency, explain why.
+
+After implementation, explain:
+- what changed;
+- how to run it;
+- what tests were added;
+- what still needs human review.
+\end{lstlisting}
+
+\section{推荐最终 repo 结构}
+
+\begin{lstlisting}
+lqcd-meson-da-agent/
+  README.md
+  pyproject.toml
+  configs/
+    l64c64a076_m140.yaml
+  examples/
+    l64c64a076_m140/
+  src/
+    lqcd_agent/
+      schema/
+      analysis/
+      io/
+      plots/
+      worker/
+      agents/
+        data_auditor.py
+        fit_analyst.py
+        skeptic.py
+        supervisor.py
+        memory.py
+      graph/
+        state.py
+        build_graph.py
+        run_graph.py
+  workflow/
+    Snakefile
+    config.yaml
+    rules/
+  tests/
+    test_schema.py
+    test_cli.py
+    test_worker.py
+    test_snakemake_smoke.py
+    test_supervisor.py
+    test_skeptic.py
+    test_graph.py
+  memory/
+    accepted_cases.yaml
+    rejected_cases.yaml
+    cases.sqlite
+  docs/
+    student_guide.md
+    architecture.md
+    decision_policy.md
+    codex_prompts.md
+  outputs/
+    .gitkeep
+\end{lstlisting}
+
+\section{每月汇报模板}
+
+\begin{lstlisting}
+Month X Report
+
+1. This month's goal
+[short paragraph]
+
+2. Implemented features
+- feature 1
+- feature 2
+- feature 3
+
+3. Reproduction commands
+[commands]
+
+4. Main outputs
+- output 1
+- output 2
+- output 3
+
+5. Tests
+pytest result: pass/fail
+Important tests added:
+- test 1
+- test 2
+
+6. Codex usage
+- prompts used
+- generated code reviewed
+- bugs fixed
+
+7. Scientific checks
+- fit stability
+- sanity checks
+- skeptic flags
+
+8. Failures and lessons
+- issue 1
+- lesson 1
+
+9. Questions for advisor
+- question 1
+- question 2
+
+10. Plan for next month
+- task 1
+- task 2
+\end{lstlisting}
+
+\section{导师检查清单}
+
+\subsection{Month 1 检查}
+
+\begin{itemize}
+  \item 是否能复现 golden example？
+  \item config 是否完整？
+  \item result schema 是否足够结构化？
+  \item pytest 是否真正保护关键行为？
+  \item 学生是否理解 basic analysis outputs？
+\end{itemize}
+
+\subsection{Month 2 检查}
+
+\begin{itemize}
+  \item Snakemake 是否正确管理依赖？
+  \item Worker 是否安全？
+  \item Supervisor 是否记录理由？
+  \item Skeptic 是否能指出真实风险？
+  \item decision log 是否可读、可追责？
+\end{itemize}
+
+\subsection{Month 3 检查}
+
+\begin{itemize}
+  \item LangGraph state 是否清楚？
+  \item agent node 是否有明确输入输出？
+  \item human approval 是否在正确节点？
+  \item targeted rerun 是否真的闭环？
+  \item memory 是否保存结构化经验？
+  \item 学生是否能解释系统的边界和风险？
+\end{itemize}
+
+\section{三个月后的高级扩展方向}
+
+三个月后，如果原型成功，可以继续扩展：
+
+\begin{itemize}
+  \item 从 rule-based Supervisor 升级到 LLM-assisted Supervisor；
+  \item 加入 multi-agent debate：Fit Analyst vs Skeptic；
+  \item 引入 MLflow 或 OpenTelemetry 风格 tracing 记录 cost、latency、tool calls；
+  \item 用 SQLite / DuckDB 做正式 case memory；
+  \item 加入 RAG，让 agent 读取项目 notes、fit policy、previous decisions；
+  \item 支持多个 ensemble 的迁移；
+  \item 支持 batch targeted rerun；
+  \item 建立 dashboard 展示 analysis DAG、agent graph、decision log、plots；
+  \item 加入真实 meson DA downstream validation；
+  \item 最终形成 paper-quality analysis assistant。
+\end{itemize}
+
+\section{参考资料与工具选择依据}
+
+本方案的工具选择基于以下原则：
+
+\begin{itemize}
+  \item Snakemake 适合 reproducible and scalable scientific data analysis，尤其适合文件依赖清楚的科研 workflow。
+  \item LangGraph 适合 stateful agent workflow、durable execution 和 human intervention interrupt / resume。
+  \item TradingAgents 类系统体现了 specialized roles、debate、risk management 和 final decision gate 的 multi-agent 设计思想。
+  \item Dagster 的 software-defined assets 和 Prefect 的 Python-native retry / observability 很有价值，但本项目第一主线更适合 Snakemake + LangGraph 的组合。
+  \item Nextflow 在容器化、跨平台、标准化大 pipeline 中很强，但对当前 Python-heavy、LQCD exploratory analysis 来说，Snakemake 学习成本和适配性更合适。
+\end{itemize}
+
+\subsection*{Online references}
+
+\begin{itemize}
+  \item TradingAgents project: \url{https://tradingagents-ai.github.io/}
+  \item TradingAgents paper: \url{https://arxiv.org/abs/2412.20138}
+  \item Snakemake documentation: \url{https://snakemake.readthedocs.io/}
+  \item LangGraph durable execution documentation: \url{https://docs.langchain.com/oss/python/langgraph/durable-execution}
+  \item Nextflow documentation: \url{https://www.nextflow.io/docs/latest/}
+  \item Prefect documentation: \url{https://www.prefect.io/how-it-works}
+  \item Dagster software-defined assets: \url{https://docs.dagster.io/}
+\end{itemize}
+
+\section{最终要求}
+
+三个月结束时，学生需要提交：
+
+\begin{enumerate}
+  \item GitHub repo；
+  \item README；
+  \item golden example reproduction command；
+  \item Snakemake workflow；
+  \item LangGraph prototype；
+  \item pytest test suite；
+  \item decision logs；
+  \item memory examples；
+  \item final demo report；
+  \item 15--20 分钟 presentation。
+\end{enumerate}
+
+最终展示时，学生应能清楚回答：
+
+\begin{itemize}
+  \item 这个系统的输入是什么？
+  \item 如何复现结果？
+  \item 哪些步骤由 Worker 完成？
+  \item 哪些判断由 Supervisor 完成？
+  \item Skeptic Reviewer 找到了哪些风险？
+  \item 哪些地方需要 human approval？
+  \item decision log 如何记录理由？
+  \item case memory 如何帮助下一次分析？
+  \item 当前系统还不能做什么？
+  \item 下一步如何扩展到更多 ensemble 或真实 production analysis？
+\end{itemize}
+
+\begin{tcolorbox}[colback=green!3!white,colframe=green!50!black,title=给学生的最后提醒]
+本项目的目标不是让 AI 只做辅助性的零碎工作，而是让 AI 尽可能承担科研工程里的重复劳动、流程执行、初步检查和结果整理；人类只在关键决策、风险升级、异常解释和主动审核节点介入，同时用 schema、tests、workflow、logs、reviewer、approval 和 memory 保证科研可靠性。
+
+你三个月后最重要的能力不是“会调用某个工具”，而是知道如何把一个真实科研分析问题拆成一个尽量自动化、可复现、可检查、可审计、只在必要时才需要人类介入的系统。
+\end{tcolorbox}
+
+\end{document}

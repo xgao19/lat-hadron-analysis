@@ -1,0 +1,1247 @@
+\documentclass[11pt,a4paper,fontset=none]{ctexart}
+\usepackage[a4paper,margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{listings}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage{tcolorbox}
+\usepackage{array}
+
+\setCJKmainfont{Heiti SC}
+\setCJKsansfont{Heiti SC}
+\setCJKmonofont{Heiti SC}
+
+\hypersetup{colorlinks=true, linkcolor=blue, urlcolor=blue, citecolor=blue}
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{Month 3 Detailed Guide}
+\rhead{AI-first LQCD Meson DA Analysis Agent}
+\cfoot{\thepage}
+
+\definecolor{codegray}{RGB}{245,245,245}
+\definecolor{darkblue}{RGB}{30,70,140}
+\definecolor{darkred}{RGB}{150,40,40}
+\definecolor{darkgreen}{RGB}{40,120,70}
+
+\lstdefinestyle{codestyle}{
+  backgroundcolor=\color{codegray},
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=single,
+  columns=fullflexible,
+  keepspaces=true,
+  showstringspaces=false
+}
+\lstset{style=codestyle}
+
+\title{\textbf{Month 3 详细指导书：LangGraph 多 Agent 原型、Human-in-the-loop、Case Memory 与高级产品展示}\\
+\large AI-first LQCD Meson DA Analysis Agent Training Plan}
+\author{项目指导文档}
+\date{ }
+
+\begin{document}
+\maketitle
+
+\begin{tcolorbox}[colback=blue!4,colframe=darkblue,title=Month 3 总目标]
+第三个月的目标是把前两个月已经建立好的 \textbf{config-driven CLI、Pydantic schema、pytest、Snakemake workflow、Worker wrapper、Fit Analyst、Skeptic Reviewer 和 rule-based Supervisor} 进一步升级为一个真正意义上的 \textbf{stateful multi-agent research prototype}。
+
+学生需要完成一个可以展示的初级高级成品：系统能够从一个 golden example 或小规模真实分析 case 出发，尽可能自动完成数据检查、workflow 执行、fit 诊断、skeptic review、Supervisor 决策、targeted rerun 建议、case memory 更新和最终报告生成，并只在关键风险节点触发 human approval gate。
+
+本月重点不是写一个炫酷界面，而是让系统具备现代科研 AI agent 的核心能力：\textbf{状态可追踪、决策可解释、失败可诊断、默认自动化、关键点人工介入、经验可积累、流程可复现}。
+\end{tcolorbox}
+
+\tableofcontents
+\newpage
+
+\section{Month 3 的定位：从 workflow prototype 到 agent prototype}
+
+前两个月已经解决了两个基础问题：
+
+\begin{enumerate}[leftmargin=2em]
+  \item \textbf{Month 1：}把 golden example 复现出来，并逐步整理成 config-driven Python CLI、schema、pytest、manifest、result 和 log。
+  \item \textbf{Month 2：}把 CLI 放入 Snakemake workflow，并加入 Worker wrapper、Fit Analyst、Skeptic Reviewer、rule-based Supervisor 和 decision log。
+\end{enumerate}
+
+第三个月要解决的问题是：
+
+\begin{quote}
+如何让这些已经写好的模块不只是彼此独立运行，而是组成一个有状态、有分工、有回退、有审批、有记忆的科研 agent 系统？
+\end{quote}
+
+因此 Month 3 的核心是：
+
+\begin{itemize}[leftmargin=2em]
+  \item 引入 \textbf{LangGraph 或等价 state-machine 机制} 管理多 agent 的状态传递；
+  \item 把 Data Auditor、Worker、Fit Analyst、Skeptic Reviewer、Supervisor、Human Approver、Memory Manager 串成一个清晰流程；
+  \item 支持 \textbf{targeted rerun}，也就是 Reviewer 或 Supervisor 发现问题后，不是全量重跑，而是精确要求 Worker 重跑某一步；
+  \item 加入 \textbf{human approval gate}，高风险结果不能自动进入 accepted memory；
+  \item 建立 \textbf{case memory}，保存 accepted / rejected / suspicious fit cases；
+  \item 建立 \textbf{evaluation harness}，用固定 test cases 检查 agent 决策是否稳定；
+  \item 生成 \textbf{final demo report}，让导师能够一眼看出系统的价值、边界和下一步升级方向。
+\end{itemize}
+
+\subsection{Snakemake 和 LangGraph 的职责分工}
+
+第三个月必须明确一个原则：\textbf{Snakemake 和 LangGraph 不是互相替代的工具，而是处理不同层面的 DAG。}
+
+\begin{longtable}{p{0.18\textwidth}p{0.36\textwidth}p{0.36\textwidth}}
+\toprule
+工具 & 主要职责 & 在本项目中的作用 \\
+\midrule
+Snakemake & 文件依赖 DAG、增量重跑、批量计算、HPC workflow & 管理 audit、fit、plot、summary、diagnostics 等具体计算步骤 \\
+LangGraph & Agent 状态 DAG、决策流、human approval gate、失败回退、memory update & 管理 Data Auditor、Worker、Reviewer、Supervisor、Human Approval、Memory Manager 的协作 \\
+Pydantic & 输入输出 schema、类型检查、结构化协议 & 约束 config、task、result、decision、memory 的格式 \\
+pytest & 可测试性、回归测试、失败案例固定化 & 保证 Codex 生成代码和 agent 决策不会无声破坏系统 \\
+case memory & 经验积累、accepted/rejected case 管理 & 帮助 Supervisor 从历史 case 中学习和保持一致性 \\
+\bottomrule
+\end{longtable}
+
+学生需要理解：\textbf{Snakemake 管“算什么、什么时候重算”；LangGraph 管“谁判断、判断后下一步做什么”。}
+
+\section{Month 3 四周安排总览}
+
+\begin{longtable}{p{0.13\textwidth}p{0.28\textwidth}p{0.50\textwidth}}
+\toprule
+周次 & 主题 & 主要交付 \\
+\midrule
+Week 9 & LangGraph state machine 原型 & 定义 AgentState；把 Data Auditor、Worker、Fit Analyst、Skeptic、Supervisor 串成可运行 graph；生成 graph run log \\
+Week 10 & Human approval、targeted rerun 与 case memory & 实现 approval gate、rerun request、memory update；区分 accepted/rejected/suspicious case \\
+Week 11 & Evaluation harness、failure cases 与报告自动生成 & 构造 good/ambiguous/bad 三类固定 case；测试 Supervisor 决策稳定性；生成 final analysis report \\
+Week 12 & 最终 demo、文档、产品化设计与未来升级路线 & 完成一键 demo；整理 README、architecture diagram、advisor checklist、future roadmap；准备最终汇报 \\
+\bottomrule
+\end{longtable}
+
+\section{Week 9：建立 LangGraph 多 Agent State Machine 原型}
+
+\subsection{本周目标}
+
+Week 9 的目标不是马上让 LLM 做复杂物理判断，而是先把已有模块用一个清楚的 state machine 串起来。
+
+本周结束时，学生应该能够运行类似命令：
+
+\begin{lstlisting}[language=bash]
+python -m lqcd_agent.graph.run_graph \
+  --case configs/cases/l64c64a076_demo.yaml \
+  --output-dir outputs/graph_demo/l64c64a076
+\end{lstlisting}
+
+系统应自动执行：
+
+\begin{enumerate}[leftmargin=2em]
+  \item Data Auditor 检查输入数据和配置；
+  \item Worker 调用 Snakemake 或 CLI 运行分析；
+  \item Fit Analyst 读取 \texttt{summary.csv} 并生成 \texttt{fit\_diagnostics.json}；
+  \item Skeptic Reviewer 生成 \texttt{skeptic\_review.json}；
+  \item Supervisor 生成 \texttt{decision\_log.json}；
+  \item graph 保存完整状态到 \texttt{graph\_state.json}。
+\end{enumerate}
+
+\subsection{学生需要学习什么}
+
+学生需要学习的不是 LangGraph 的所有高级功能，而是以下核心概念：
+
+\begin{itemize}[leftmargin=2em]
+  \item 什么是 state；
+  \item 什么是 node；
+  \item 什么是 edge；
+  \item 为什么每个 node 都应该读入 state、返回更新后的 state；
+  \item 为什么 node 之间不能传递随意的自由文本，而要传递结构化字段；
+  \item 如何把失败状态、警告、输出路径和 decision 都记录在 state 中。
+\end{itemize}
+
+\subsection{推荐目录结构}
+
+在现有 repo 中增加：
+
+\begin{lstlisting}
+src/lqcd_agent/
+  graph/
+    __init__.py
+    state.py
+    nodes.py
+    edges.py
+    run_graph.py
+    io.py
+  memory/
+    __init__.py
+    store.py
+    schema.py
+
+tests/
+  test_graph_state.py
+  test_graph_smoke.py
+\end{lstlisting}
+
+\subsection{Step 1：定义 AgentState}
+
+建议用 Pydantic 或 TypedDict 定义统一的 graph state。第一版可以简单，但字段必须清楚。
+
+\begin{lstlisting}[language=Python]
+from pydantic import BaseModel, Field
+from typing import Literal
+
+class AgentState(BaseModel):
+    case_id: str
+    case_config_path: str
+    output_dir: str
+
+    status: Literal["initialized", "running", "success", "failed", "needs_human_approval"] = "initialized"
+    current_stage: str = "start"
+
+    audit_report_path: str | None = None
+    worker_result_path: str | None = None
+    summary_csv_path: str | None = None
+    fit_diagnostics_path: str | None = None
+    skeptic_review_path: str | None = None
+    decision_log_path: str | None = None
+    final_report_path: str | None = None
+
+    risk_level: Literal["low", "medium", "high", "unknown"] = "unknown"
+    human_approval_required: bool = False
+    human_approval_status: Literal["not_required", "pending", "approved", "rejected"] = "not_required"
+
+    rerun_requested: bool = False
+    rerun_reason: str | None = None
+    rerun_target: str | None = None
+
+    warnings: list[str] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+    event_log: list[str] = Field(default_factory=list)
+\end{lstlisting}
+
+\subsection{Step 2：把已有模块封装成 graph nodes}
+
+每个 node 应该是一个小函数，输入 state，输出更新后的 state。
+
+\begin{lstlisting}[language=Python]
+def data_auditor_node(state: AgentState) -> AgentState:
+    state.current_stage = "data_audit"
+    # call existing Data Auditor
+    # save audit_report.json
+    state.audit_report_path = ".../audit_report.json"
+    state.event_log.append("Data audit completed")
+    return state
+
+
+def worker_node(state: AgentState) -> AgentState:
+    state.current_stage = "worker_run"
+    # call Worker wrapper or Snakemake workflow
+    # save worker_result.json
+    state.worker_result_path = ".../worker_result.json"
+    state.summary_csv_path = ".../summary.csv"
+    state.event_log.append("Worker run completed")
+    return state
+
+
+def fit_analyst_node(state: AgentState) -> AgentState:
+    state.current_stage = "fit_analysis"
+    # read summary.csv and produce fit_diagnostics.json
+    state.fit_diagnostics_path = ".../fit_diagnostics.json"
+    state.event_log.append("Fit diagnostics completed")
+    return state
+\end{lstlisting}
+
+注意：本周的重点不是重新实现 Data Auditor 或 Worker，而是\textbf{复用 Month 2 已经完成的模块}。
+
+\subsection{Step 3：定义 graph edge 逻辑}
+
+第一版 graph 可以是线性的：
+
+\begin{lstlisting}
+START
+  -> data_auditor
+  -> worker
+  -> fit_analyst
+  -> skeptic_reviewer
+  -> supervisor
+  -> save_state
+  -> END
+\end{lstlisting}
+
+但 supervisor 后应该预留条件分支：
+
+\begin{lstlisting}
+supervisor
+  -> if low risk: memory_update
+  -> if medium/high risk: human_approval
+  -> if rerun_requested: targeted_rerun
+\end{lstlisting}
+
+Week 9 可以先实现线性版本，把条件分支留到 Week 10。
+
+\subsection{Step 4：保存 graph state}
+
+每次 graph run 结束时，都应保存：
+
+\begin{lstlisting}
+outputs/graph_demo/<case_id>/graph_state.json
+outputs/graph_demo/<case_id>/graph_run.log
+\end{lstlisting}
+
+\texttt{graph\_state.json} 是本月最重要的文件之一。它应该回答：
+
+\begin{itemize}[leftmargin=2em]
+  \item 系统运行到了哪一步？
+  \item 每一步生成了哪些文件？
+  \item 有没有 warning 或 error？
+  \item Supervisor 判断的 risk level 是什么？
+  \item 是否需要 human approval？
+  \item 是否提出 targeted rerun？
+\end{itemize}
+
+\subsection{Week 9 Codex Prompt}
+
+\begin{lstlisting}
+We are building Month 3 of an AI-first LQCD meson DA analysis-agent prototype.
+Month 1 implemented config-driven CLI and schema. Month 2 implemented Snakemake workflow, Worker wrapper, Fit Analyst, Skeptic Reviewer, and rule-based Supervisor.
+
+Task:
+Create the first LangGraph-style state-machine wrapper for the existing pipeline.
+
+Files to create:
+- src/lqcd_agent/graph/state.py
+- src/lqcd_agent/graph/nodes.py
+- src/lqcd_agent/graph/run_graph.py
+- tests/test_graph_state.py
+- tests/test_graph_smoke.py
+
+Requirements:
+1. Define an AgentState schema with case_id, case_config_path, output_dir, stage status, paths to generated outputs, risk level, human approval fields, rerun fields, warnings, errors, and event_log.
+2. Implement graph nodes as small functions: data_auditor_node, worker_node, fit_analyst_node, skeptic_reviewer_node, supervisor_node, save_state_node.
+3. For now, nodes may call existing modules if available; otherwise they should use clearly marked placeholder calls and check expected output paths.
+4. Implement a CLI command:
+   python -m lqcd_agent.graph.run_graph --case configs/cases/demo.yaml --output-dir outputs/graph_demo/demo
+5. Save graph_state.json and graph_run.log.
+6. Add pytest tests for AgentState validation and a smoke test using a tiny demo case.
+
+Constraints:
+- Do not rewrite existing Worker/Supervisor modules.
+- Do not perform broad shell operations.
+- Do not overwrite existing outputs unless explicitly allowed.
+- Keep the graph simple and readable.
+- All generated files should be under the specified output_dir.
+
+After implementation, explain how to run the graph and which tests were added.
+\end{lstlisting}
+
+\subsection{Week 9 验收标准}
+
+Week 9 完成时，必须满足：
+
+\begin{itemize}[leftmargin=2em]
+  \item 能运行 \texttt{python -m lqcd\_agent.graph.run\_graph ...}；
+  \item 能生成 \texttt{graph\_state.json}；
+  \item graph state 中包含各模块输出路径；
+  \item 每个 node 的输入输出是结构化 state，而不是自由文本；
+  \item 至少有两个测试：state schema test 和 graph smoke test；
+  \item 学生能画出当前 graph 的流程图并解释每个 node 的作用。
+\end{itemize}
+
+\newpage
+
+\section{Week 10：Human Approval、Targeted Rerun 与 Case Memory}
+
+\subsection{本周目标}
+
+Week 10 的目标是让 agent 系统具备科研可靠性中最关键的三个机制：
+
+\begin{enumerate}[leftmargin=2em]
+  \item \textbf{Human approval gate：}高风险结果必须等待人工批准，不能自动进入 accepted result。
+  \item \textbf{Targeted rerun：}发现问题后，Supervisor 可以要求 Worker 精确重跑某个步骤，而不是盲目全量重跑。
+  \item \textbf{Case memory：}系统把 accepted、rejected、suspicious cases 保存下来，为后续类似 case 提供参考。
+\end{enumerate}
+
+\subsection{学生需要理解的理念}
+
+一个先进的科研 AI agent 系统，不是让 AI 每次都“自信地给答案”。相反，它应该知道：
+
+\begin{itemize}[leftmargin=2em]
+  \item 哪些结果风险低，可以自动归档；
+  \item 哪些结果模型依赖明显，需要人工看；
+  \item 哪些结果明显失败，应该拒绝；
+  \item 哪些结果不是直接失败，而是需要 targeted rerun；
+  \item 哪些经验应该写入 memory，帮助未来判断。
+\end{itemize}
+
+\subsection{Step 1：定义 Human Approval 文件格式}
+
+为了让流程简单可控，第一版 human approval 不需要复杂网页界面，可以使用一个 JSON 或 YAML 文件。
+
+系统生成：
+
+\begin{lstlisting}
+outputs/graph_demo/<case_id>/human_approval_request.json
+\end{lstlisting}
+
+内容示例：
+
+\begin{lstlisting}
+{
+  "case_id": "l64c64a076_demo",
+  "risk_level": "medium",
+  "recommended_action": "approve_with_caution",
+  "selected_fit": "2state_tmin5_tmax15",
+  "reasons": [
+    "2-state fit is more stable than 1-state fit",
+    "1-state and 2-state differ by more than one sigma at small tmin",
+    "chi2_dof is acceptable in the selected window"
+  ],
+  "files_for_review": {
+    "summary_csv": "outputs/.../summary.csv",
+    "fit_stability_pdf": "outputs/.../fit_stability.pdf",
+    "skeptic_review": "outputs/.../skeptic_review.json",
+    "decision_log": "outputs/.../decision_log.json"
+  },
+  "approval_options": ["approved", "rejected", "request_rerun"]
+}
+\end{lstlisting}
+
+人工填写或复制生成：
+
+\begin{lstlisting}
+outputs/graph_demo/<case_id>/human_approval_response.json
+\end{lstlisting}
+
+内容示例：
+
+\begin{lstlisting}
+{
+  "case_id": "l64c64a076_demo",
+  "approval_status": "approved",
+  "approver": "advisor",
+  "comments": "Approved as a demo result. For real production, inspect z-dependence and normalization before promotion."
+}
+\end{lstlisting}
+
+\subsection{Step 2：在 graph 中加入 approval node}
+
+Supervisor node 后面加入条件：
+
+\begin{lstlisting}
+if state.human_approval_required:
+    go to human_approval_node
+else:
+    go to memory_update_node
+\end{lstlisting}
+
+human approval node 的职责：
+
+\begin{itemize}[leftmargin=2em]
+  \item 生成 \texttt{human\_approval\_request.json}；
+  \item 如果没有 response 文件，则把 state 标记为 \texttt{needs\_human\_approval}；
+  \item 如果 response 是 approved，则进入 memory update；
+  \item 如果 response 是 rejected，则进入 rejected memory；
+  \item 如果 response 是 request\_rerun，则进入 targeted rerun。
+\end{itemize}
+
+\subsection{Step 3：定义 Targeted Rerun Request}
+
+Targeted rerun 是 Month 3 的关键能力之一。它的含义是：系统发现问题以后，不是简单说“结果不好”，而是指出应该重跑哪一步、为什么重跑、用什么参数重跑。
+
+\begin{lstlisting}
+{
+  "case_id": "l64c64a076_demo",
+  "rerun_target": "fit_scan",
+  "reason": "Selected fit is sensitive to tmin and 1-state/2-state disagreement is large.",
+  "suggested_changes": {
+    "tmin_values": [5, 6, 7, 8, 9],
+    "models": ["2state"],
+    "increase_bootstrap": true
+  },
+  "expected_outputs": [
+    "summary.csv",
+    "fit_stability.pdf",
+    "fit_diagnostics.json"
+  ]
+}
+\end{lstlisting}
+
+第一版可以不自动执行复杂 rerun，但至少要能生成结构化 \texttt{rerun\_request.json}。如果学生能力允许，可以让 Worker 读取 rerun request 并调用 Snakemake 只重跑相关规则。
+
+\subsection{Step 4：建立 Case Memory}
+
+推荐先用 YAML 或 JSON，不需要一开始上数据库。
+
+目录：
+
+\begin{lstlisting}
+memory/
+  accepted_cases.yaml
+  rejected_cases.yaml
+  suspicious_cases.yaml
+\end{lstlisting}
+
+Accepted case 示例：
+
+\begin{lstlisting}
+- case_id: l64c64a076_demo
+  ensemble: l64c64a076
+  channel: pion
+  status: accepted
+  selected_fit: 2state_tmin5_tmax15
+  risk_level: medium
+  human_approved: true
+  key_reasons:
+    - 2-state fit stable in preferred window
+    - chi2_dof acceptable
+    - skeptic review found no blocking issue
+  output_paths:
+    decision_log: outputs/.../decision_log.json
+    summary_csv: outputs/.../summary.csv
+  notes: Demo accepted for pipeline validation, not final physics result.
+\end{lstlisting}
+
+Rejected case 示例：
+
+\begin{lstlisting}
+- case_id: fake_bad_plateau
+  status: rejected
+  reason:
+    - no stable plateau
+    - large model dependence
+    - chi2_dof too large for all candidate fits
+  recommended_next_action: inspect 2pt fit and statistics
+\end{lstlisting}
+
+\subsection{Week 10 Codex Prompt}
+
+\begin{lstlisting}
+We are extending the Month 3 graph prototype for an AI-first LQCD meson DA analysis-agent system.
+
+Task:
+Add human approval, targeted rerun request, and case memory update to the graph.
+
+Files to create or edit:
+- src/lqcd_agent/graph/nodes.py
+- src/lqcd_agent/graph/edges.py
+- src/lqcd_agent/memory/schema.py
+- src/lqcd_agent/memory/store.py
+- tests/test_human_approval.py
+- tests/test_memory_update.py
+
+Requirements:
+1. If Supervisor marks human_approval_required=true, generate human_approval_request.json.
+2. If no human_approval_response.json exists, stop the graph with status="needs_human_approval".
+3. If response is approved, update accepted_cases.yaml.
+4. If response is rejected, update rejected_cases.yaml.
+5. If response is request_rerun, generate rerun_request.json and set rerun_requested=true.
+6. Define Pydantic schemas for approval request, approval response, rerun request, and memory entries.
+7. Add tests for approved, rejected, and request_rerun cases.
+
+Constraints:
+- Do not require a web UI.
+- Do not use a database yet unless necessary.
+- Do not silently promote high-risk results to accepted memory.
+- Keep all memory files human-readable.
+\end{lstlisting}
+
+\subsection{Week 10 验收标准}
+
+Week 10 完成时，必须满足：
+
+\begin{itemize}[leftmargin=2em]
+  \item 中高风险 case 会生成 \texttt{human\_approval\_request.json}；
+  \item 没有人工 response 时，graph 停在 \texttt{needs\_human\_approval}；
+  \item approved case 会进入 \texttt{accepted\_cases.yaml}；
+  \item rejected case 会进入 \texttt{rejected\_cases.yaml}；
+  \item request\_rerun case 会生成 \texttt{rerun\_request.json}；
+  \item 至少有 3 个测试覆盖 approved/rejected/request\_rerun；
+  \item 学生能解释为什么 human approval 是科研 agent 系统的必要部分。
+\end{itemize}
+
+\newpage
+
+\section{Week 11：Evaluation Harness、Failure Cases 与自动报告生成}
+
+\subsection{本周目标}
+
+Week 11 的目标是让系统不仅能跑一个 case，而且能被测试和评估。一个科研 agent 系统如果没有 evaluation harness，就很难知道它的判断是否稳定、是否可回归、是否被新代码破坏。
+
+本周要构建三类固定 cases：
+
+\begin{enumerate}[leftmargin=2em]
+  \item \textbf{Good case：}plateau 稳定，fit 质量好，Supervisor 应该给 low risk 或 approve recommendation。
+  \item \textbf{Ambiguous case：}1-state / 2-state 有差异，或者 tmin dependence 明显，Supervisor 应该要求 human approval。
+  \item \textbf{Bad case：}无稳定 plateau 或所有 fit 都失败，Supervisor 应该 reject 或 request rerun。
+\end{enumerate}
+
+\subsection{Step 1：建立 evaluation cases 目录}
+
+推荐目录：
+
+\begin{lstlisting}
+evaluation/
+  cases/
+    good_plateau.yaml
+    ambiguous_excited_state.yaml
+    bad_no_plateau.yaml
+  expected/
+    good_plateau_expected.json
+    ambiguous_excited_state_expected.json
+    bad_no_plateau_expected.json
+  run_evaluation.py
+  evaluation_report.md
+\end{lstlisting}
+
+\subsection{Step 2：定义 expected behavior}
+
+不要只测试代码是否能跑，还要测试 Supervisor 的行为是否合理。
+
+Good case expected：
+
+\begin{lstlisting}
+{
+  "case_id": "good_plateau",
+  "expected_risk_levels": ["low"],
+  "expected_human_approval_required": false,
+  "expected_decision_contains": ["stable", "acceptable chi2"]
+}
+\end{lstlisting}
+
+Ambiguous case expected：
+
+\begin{lstlisting}
+{
+  "case_id": "ambiguous_excited_state",
+  "expected_risk_levels": ["medium", "high"],
+  "expected_human_approval_required": true,
+  "expected_decision_contains": ["model dependence", "tmin"]
+}
+\end{lstlisting}
+
+Bad case expected：
+
+\begin{lstlisting}
+{
+  "case_id": "bad_no_plateau",
+  "expected_risk_levels": ["high"],
+  "expected_human_approval_required": true,
+  "expected_decision_contains": ["no stable", "rerun"]
+}
+\end{lstlisting}
+
+\subsection{Step 3：实现 run\_evaluation.py}
+
+\texttt{run\_evaluation.py} 应该循环运行 evaluation cases：
+
+\begin{lstlisting}[language=bash]
+python evaluation/run_evaluation.py --cases evaluation/cases --output-dir outputs/evaluation
+\end{lstlisting}
+
+输出：
+
+\begin{lstlisting}
+outputs/evaluation/
+  good_plateau/
+    graph_state.json
+    decision_log.json
+  ambiguous_excited_state/
+    graph_state.json
+    decision_log.json
+  bad_no_plateau/
+    graph_state.json
+    decision_log.json
+  evaluation_summary.csv
+  evaluation_report.md
+\end{lstlisting}
+
+\subsection{Step 4：自动生成 final analysis report}
+
+除了 agent 内部的 JSON 文件，还需要一个人能读懂的报告。第一版可以生成 Markdown。
+
+报告应包括：
+
+\begin{itemize}[leftmargin=2em]
+  \item case metadata；
+  \item data audit summary；
+  \item Worker outputs；
+  \item fit diagnostics summary；
+  \item Skeptic review；
+  \item Supervisor recommendation；
+  \item risk level；
+  \item human approval status；
+  \item rerun recommendation；
+  \item links to plots and JSON outputs；
+  \item final notes。
+\end{itemize}
+
+推荐文件：
+
+\begin{lstlisting}
+src/lqcd_agent/report/
+  __init__.py
+  generate_report.py
+  templates.py
+\end{lstlisting}
+
+报告示例结构：
+
+\begin{lstlisting}
+# Analysis Agent Report: l64c64a076_demo
+
+## 1. Case Metadata
+...
+
+## 2. Data Audit
+...
+
+## 3. Worker Execution
+...
+
+## 4. Fit Diagnostics
+...
+
+## 5. Skeptic Review
+...
+
+## 6. Supervisor Decision
+...
+
+## 7. Human Approval
+...
+
+## 8. Recommended Next Action
+...
+
+## 9. Reproducibility
+Command:
+...
+Config:
+...
+Git commit:
+...
+\end{lstlisting}
+
+\subsection{Step 5：加入 git commit hash 和 environment info}
+
+为了提高可追责性，报告中最好记录：
+
+\begin{itemize}[leftmargin=2em]
+  \item git commit hash；
+  \item Python version；
+  \item package versions；
+  \item run timestamp；
+  \item config path；
+  \item output path。
+\end{itemize}
+
+第一版可以简单实现：
+
+\begin{lstlisting}[language=Python]
+import subprocess
+
+def get_git_commit():
+    try:
+        return subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    except Exception:
+        return "unknown"
+\end{lstlisting}
+
+注意：只允许这种可控的小命令，不允许 broad shell operations。
+
+\subsection{Week 11 Codex Prompt}
+
+\begin{lstlisting}
+We are building an evaluation harness and report generator for the Month 3 AI-first LQCD meson DA analysis-agent prototype.
+
+Task:
+Create fixed evaluation cases and a script that runs the graph on each case, compares the Supervisor decision with expected behavior, and generates an evaluation report.
+
+Files to create:
+- evaluation/cases/good_plateau.yaml
+- evaluation/cases/ambiguous_excited_state.yaml
+- evaluation/cases/bad_no_plateau.yaml
+- evaluation/expected/*.json
+- evaluation/run_evaluation.py
+- src/lqcd_agent/report/generate_report.py
+- tests/test_evaluation_expected_behavior.py
+
+Requirements:
+1. The evaluation script should run the graph for each case.
+2. It should collect risk_level, human_approval_required, rerun_requested, selected_fit, and decision reasons.
+3. It should compare these fields with expected behavior.
+4. It should write evaluation_summary.csv and evaluation_report.md.
+5. The report generator should produce a human-readable Markdown report for one case.
+6. Include git commit hash and run timestamp if available.
+7. Add tests for expected behavior comparison.
+
+Constraints:
+- Do not depend on real large data.
+- Use small fake or golden-example-derived cases.
+- Keep the evaluation cases deterministic.
+- Do not hide mismatches; report them clearly.
+\end{lstlisting}
+
+\subsection{Week 11 验收标准}
+
+Week 11 完成时，必须满足：
+
+\begin{itemize}[leftmargin=2em]
+  \item 至少有 good、ambiguous、bad 三类 evaluation cases；
+  \item 可以一键运行 evaluation；
+  \item 生成 \texttt{evaluation\_summary.csv}；
+  \item 生成 \texttt{evaluation\_report.md}；
+  \item 对 Supervisor 的 risk level 和 human approval 行为有测试；
+  \item 报告中包含复现命令、config、输出路径和 git commit；
+  \item 学生能解释 evaluation harness 为什么比“跑通一个 demo”更重要。
+\end{itemize}
+
+\newpage
+
+\section{Week 12：最终 Demo、文档整理与产品化设计}
+
+\subsection{本周目标}
+
+Week 12 的目标是把前三周的模块整理成一个导师和组内成员都能理解、能运行、能评价的完整 demo。
+
+最终 demo 不要求系统已经完美处理所有真实数据，但必须展示：
+
+\begin{itemize}[leftmargin=2em]
+  \item 真实科研 workflow 的雏形；
+  \item agent roles 的清晰分工；
+  \item structured state 和 structured outputs；
+  \item reviewer / skeptic 机制；
+  \item Supervisor decision log；
+  \item human approval gate；
+  \item case memory；
+  \item evaluation harness；
+  \item 最终报告。
+\end{itemize}
+
+\subsection{Step 1：整理一键 demo 命令}
+
+建议提供一个 Makefile 或 simple shell script，但脚本要简单透明。
+
+\begin{lstlisting}
+make demo
+\end{lstlisting}
+
+或者：
+
+\begin{lstlisting}[language=bash]
+bash scripts/run_month3_demo.sh
+\end{lstlisting}
+
+脚本内容可以包括：
+
+\begin{lstlisting}[language=bash]
+#!/usr/bin/env bash
+set -euo pipefail
+
+python -m lqcd_agent.graph.run_graph \
+  --case configs/cases/l64c64a076_demo.yaml \
+  --output-dir outputs/month3_demo/l64c64a076_demo
+
+python evaluation/run_evaluation.py \
+  --cases evaluation/cases \
+  --output-dir outputs/evaluation
+\end{lstlisting}
+
+\subsection{Step 2：整理最终输出目录}
+
+最终 demo 输出目录建议如下：
+
+\begin{lstlisting}
+outputs/month3_demo/l64c64a076_demo/
+  graph_state.json
+  audit_report.json
+  worker_result.json
+  summary.csv
+  fit_diagnostics.json
+  skeptic_review.json
+  decision_log.json
+  human_approval_request.json
+  human_approval_response.json      # if provided
+  rerun_request.json                # if needed
+  final_report.md
+  plots/
+    effective_mass.pdf
+    fit_stability.pdf
+  logs/
+    graph_run.log
+    run.log
+\end{lstlisting}
+
+\subsection{Step 3：补全 README}
+
+主 README 至少应包括：
+
+\begin{enumerate}[leftmargin=2em]
+  \item 项目目标；
+  \item 架构图；
+  \item Worker / Supervisor / Reviewer / Memory 的职责；
+  \item 安装方法；
+  \item 如何运行 Month 1 CLI；
+  \item 如何运行 Month 2 Snakemake workflow；
+  \item 如何运行 Month 3 graph demo；
+  \item 如何运行 evaluation；
+  \item 输出文件解释；
+  \item 当前限制；
+  \item 下一步 roadmap。
+\end{enumerate}
+
+\subsection{Step 4：画 architecture diagram}
+
+可以先用 Mermaid 写在 README 中：
+
+\begin{lstlisting}
+flowchart TD
+    A[Case Config] --> B[Data Auditor]
+    B --> C[Worker Agent]
+    C --> D[Snakemake Workflow]
+    D --> E[Fit Analyst]
+    E --> F[Skeptic Reviewer]
+    F --> G[Supervisor]
+    G -->|low risk| H[Memory Update]
+    G -->|medium/high risk| I[Human Approval]
+    I -->|approved| H
+    I -->|rejected| J[Rejected Memory]
+    I -->|request rerun| K[Targeted Rerun Request]
+    K --> C
+    H --> L[Final Report]
+\end{lstlisting}
+
+\subsection{Step 5：准备最终汇报}
+
+学生最终汇报应包括 8--10 页 slides 或一份短报告：
+
+\begin{enumerate}[leftmargin=2em]
+  \item 项目问题：为什么 LQCD meson DA analysis 需要 AI-first agent？
+  \item 系统架构：Worker、Reviewer、Supervisor、Human Approval、Memory。
+  \item Month 1：CLI、schema、pytest。
+  \item Month 2：Snakemake、Worker、Fit Analyst、Skeptic、decision log。
+  \item Month 3：LangGraph state machine、human approval、targeted rerun、case memory、evaluation。
+  \item Demo case 输出。
+  \item 一个 good case 和一个 bad/ambiguous case 的对比。
+  \item 当前系统限制。
+  \item 未来升级方向。
+  \item 学生自己的收获：学会了哪些 AI-first research workflow 技能。
+\end{enumerate}
+
+\subsection{Week 12 Codex Prompt}
+
+\begin{lstlisting}
+We are preparing the final Month 3 demo for an AI-first LQCD meson DA analysis-agent prototype.
+
+Task:
+Create final demo scripts, improve README documentation, and add a Mermaid architecture diagram.
+
+Files to create or edit:
+- README.md
+- scripts/run_month3_demo.sh
+- docs/architecture.md
+- docs/month3_final_demo.md
+- Makefile or equivalent simple command runner
+
+Requirements:
+1. Provide one clear command to run the Month 3 demo.
+2. Provide one clear command to run evaluation cases.
+3. Document the roles: Data Auditor, Worker, Fit Analyst, Skeptic Reviewer, Supervisor, Human Approver, Memory Manager.
+4. Add a Mermaid architecture diagram.
+5. Document all important output files and what they mean.
+6. Add a limitations section and future roadmap.
+7. Do not hide known limitations.
+
+Constraints:
+- Do not add a complex UI.
+- Do not introduce new heavy dependencies.
+- Keep documentation clear enough for a new graduate student to follow.
+\end{lstlisting}
+
+\subsection{Week 12 验收标准}
+
+Week 12 完成时，必须满足：
+
+\begin{itemize}[leftmargin=2em]
+  \item 有一键 demo 命令；
+  \item 有一键 evaluation 命令；
+  \item README 能让新学生理解并运行项目；
+  \item architecture diagram 清楚；
+  \item final report 能自动生成；
+  \item 至少展示一个 good case 和一个 ambiguous/bad case；
+  \item case memory 有 accepted/rejected/suspicious 示例；
+  \item 学生能现场解释每个 agent 的输入、输出和职责边界。
+\end{itemize}
+
+\newpage
+
+\section{Month 3 最终交付清单}
+
+第三个月结束时，学生应该提交：
+
+\begin{enumerate}[leftmargin=2em]
+  \item 完整 Git repo；
+  \item Month 3 demo command；
+  \item LangGraph 或等价 state-machine 代码；
+  \item \texttt{graph\_state.json} 示例；
+  \item \texttt{human\_approval\_request.json} 和 response 示例；
+  \item \texttt{rerun\_request.json} 示例；
+  \item \texttt{accepted\_cases.yaml}、\texttt{rejected\_cases.yaml}、\texttt{suspicious\_cases.yaml}；
+  \item evaluation cases；
+  \item \texttt{evaluation\_summary.csv}；
+  \item \texttt{evaluation\_report.md}；
+  \item final demo report；
+  \item README 和 architecture document；
+  \item 一份 8--10 页最终汇报 slides 或短报告。
+\end{enumerate}
+
+\section{导师验收 checklist}
+
+导师可以按以下 checklist 检查 Month 3 成果：
+
+\subsection{Agent architecture}
+
+\begin{itemize}[leftmargin=2em]
+  \item 是否有明确 agent roles？
+  \item 每个 agent 是否有清楚输入输出？
+  \item 是否有统一 state？
+  \item 是否避免了自由文本乱传？
+  \item 是否支持失败状态？
+\end{itemize}
+
+\subsection{Human-in-the-loop}
+
+\begin{itemize}[leftmargin=2em]
+  \item 高风险结果是否会请求人工审批？
+  \item 没有审批时是否不会自动进入 accepted memory？
+  \item approval response 是否被记录？
+  \item rejected case 是否被保存？
+\end{itemize}
+
+\subsection{Targeted rerun}
+
+\begin{itemize}[leftmargin=2em]
+  \item Supervisor 是否能指出重跑目标？
+  \item rerun reason 是否明确？
+  \item suggested changes 是否结构化？
+  \item 是否避免无意义全量重跑？
+\end{itemize}
+
+\subsection{Memory}
+
+\begin{itemize}[leftmargin=2em]
+  \item 是否有 accepted/rejected/suspicious memory？
+  \item memory 是否人类可读？
+  \item memory 是否记录理由，而不只是记录结果？
+  \item 是否能用于未来 case comparison？
+\end{itemize}
+
+\subsection{Evaluation}
+
+\begin{itemize}[leftmargin=2em]
+  \item 是否有 good/ambiguous/bad 固定 cases？
+  \item Supervisor 行为是否被测试？
+  \item 新代码是否能通过 regression tests？
+  \item evaluation report 是否清楚？
+\end{itemize}
+
+\subsection{科研可靠性}
+
+\begin{itemize}[leftmargin=2em]
+  \item 是否记录 config、git commit、运行命令和输出路径？
+  \item 是否有 decision log？
+  \item 是否有 skeptic review？
+  \item 是否区分了 demo result 和 production physics result？
+  \item 是否清楚说明系统限制？
+\end{itemize}
+
+\newpage
+
+\section{升华：理想产品应该呈现出的效果}
+
+\subsection{理想中的产品不是“自动跑脚本”，而是“科研分析驾驶舱”}
+
+本项目的最终目标不应该停留在“AI 帮我跑几个脚本”或“Codex 帮我写代码”。理想产品应该逐步发展成一个 \textbf{LQCD meson DA analysis cockpit}，也就是一个科研分析驾驶舱。
+
+在这个理想系统中，研究者给出一个物理目标，例如：
+
+\begin{quote}
+在 ensemble A 上分析某个 meson DA matrix element，检查 2pt fit、ratio fit、normalization、z-dependence、momentum dependence，并判断是否可以进入下一步 matching 或 continuum analysis。
+\end{quote}
+
+系统应该能够：
+
+\begin{enumerate}[leftmargin=2em]
+  \item 自动识别所需数据是否齐全；
+  \item 自动生成或检查 config；
+  \item 自动运行可复现 workflow；
+  \item 自动汇总 fit candidates；
+  \item 自动发现异常趋势；
+  \item 自动给出少量高价值 rerun 建议；
+  \item 自动写出 decision log；
+  \item 自动生成带图、带路径、带理由的 analysis report；
+  \item 对高风险判断请求人工审批；
+  \item 把人工批准或拒绝的 case 写入 memory；
+  \item 在未来遇到类似 case 时参考历史经验。
+\end{enumerate}
+
+这才是科研 AI agent 的核心价值：\textbf{它不是替代科研者，而是把科研者的分析流程结构化、审计化、可复现化，并逐步学习科研判断。}
+
+\subsection{产品最终应该让导师看到什么}
+
+一个成熟的 demo 不应该只展示代码，而应该展示一个完整闭环：
+
+\begin{itemize}[leftmargin=2em]
+  \item \textbf{输入：}一个 case config 和数据路径；
+  \item \textbf{执行：}Snakemake 管理计算依赖，Worker 安全运行；
+  \item \textbf{分析：}Fit Analyst 产生 fit diagnostics；
+  \item \textbf{批判：}Skeptic Reviewer 找出潜在问题；
+  \item \textbf{决策：}Supervisor 给出 recommendation、risk level 和 reasons；
+  \item \textbf{审批：}Human Approver 对中高风险结果把关；
+  \item \textbf{记忆：}Memory Manager 保存 accepted/rejected/suspicious cases；
+  \item \textbf{报告：}系统自动生成 final report；
+  \item \textbf{评估：}evaluation harness 证明系统在 good/ambiguous/bad cases 上行为合理。
+\end{itemize}
+
+如果这九个环节都能跑通，即使每个环节还很初级，这个项目也已经具有很高价值。
+
+\subsection{未来升级方向：如何变成更高级的系统}
+
+\subsubsection{升级 1：从 rule-based Supervisor 到 LLM-assisted Supervisor}
+
+第一版 Supervisor 使用规则是正确的，因为规则透明、可测试、可控。下一阶段可以引入 LLM，但不要让 LLM 直接决定结果。更好的方式是：
+
+\begin{itemize}[leftmargin=2em]
+  \item LLM 读取 structured diagnostics；
+  \item LLM 生成 human-readable reasoning；
+  \item LLM 提出 candidate explanations；
+  \item LLM 提出 targeted rerun plan；
+  \item rule-based guardrail 检查 LLM 输出是否符合 schema 和安全规则；
+  \item 中高风险结论仍需 human approval。
+\end{itemize}
+
+也就是说，LLM 应该先做 \textbf{reasoning assistant}，再逐步参与 \textbf{strategy recommendation}，最后才可能在积累足够 case memory 后承担更高层次的判断。
+
+\subsubsection{升级 2：从 YAML memory 到 SQLite / DuckDB analysis memory}
+
+当 case 数量增多后，YAML 会不方便检索。可以升级到 SQLite 或 DuckDB：
+
+\begin{itemize}[leftmargin=2em]
+  \item 保存 ensemble、channel、momentum、z、fit model、fit window、risk level；
+  \item 支持查询类似 cases；
+  \item 支持统计常见失败原因；
+  \item 支持生成 performance dashboard；
+  \item 支持从 rejected cases 中总结规则。
+\end{itemize}
+
+这会让系统从“能记录经验”升级为“能检索和利用经验”。
+
+\subsubsection{升级 3：加入 richer observability}
+
+高级 agent 系统需要 observability，也就是可观察性。未来可以加入：
+
+\begin{itemize}[leftmargin=2em]
+  \item MLflow 或类似工具记录 run metadata；
+  \item 每个 node 的耗时、输入、输出、失败率；
+  \item Codex/LLM 调用成本和 latency；
+  \item 每次 rerun 的原因；
+  \item 每个 case 的审批历史；
+  \item dashboard 展示 pipeline health。
+\end{itemize}
+
+目标不是为了好看，而是为了回答：\textbf{系统什么时候可靠，什么时候不可靠，哪里最容易失败。}
+
+\subsubsection{升级 4：从单 case 到 ensemble-level campaign}
+
+当前 demo 可能只处理一个 golden example。下一阶段应扩展到多个 ensembles、多个 momenta、多个 z values：
+
+\begin{itemize}[leftmargin=2em]
+  \item 自动生成 campaign config；
+  \item Snakemake 批量调度；
+  \item Supervisor 对每个 case 生成 decision；
+  \item campaign-level Reviewer 检查 ensemble dependence、Pz dependence、z-dependence；
+  \item 生成 campaign summary report。
+\end{itemize}
+
+这是从“单点分析 agent”升级为“项目级分析 agent”的关键一步。
+
+\subsubsection{升级 5：引入 multi-agent debate，但必须有风险控制}
+
+借鉴先进 multi-agent 系统，可以加入多个 reviewer：
+
+\begin{itemize}[leftmargin=2em]
+  \item Fit Optimist：寻找可接受 fit window；
+  \item Fit Skeptic：寻找不稳定和模型依赖；
+  \item Physics Reviewer：检查物理趋势；
+  \item Systematics Reviewer：检查系统误差风险；
+  \item Supervisor：综合各方意见。
+\end{itemize}
+
+但 debate 不能变成自由聊天。每个 reviewer 必须输出结构化 JSON：
+
+\begin{lstlisting}
+{
+  "reviewer_role": "FitSkeptic",
+  "blocking_issues": [...],
+  "non_blocking_warnings": [...],
+  "recommended_action": "human_review",
+  "confidence": "medium",
+  "evidence_files": [...]
+}
+\end{lstlisting}
+
+这样 debate 才能被测试、记录和复现。
+
+\subsubsection{升级 6：加入真实 LQCD physics checks}
+
+未来 Supervisor 的物理检查应逐步增强，包括：
+
+\begin{itemize}[leftmargin=2em]
+  \item local matrix element consistency；
+  \item z=0 normalization；
+  \item real/imaginary symmetry；
+  \item positive/negative z relation；
+  \item Pz dependence；
+  \item excited-state contamination；
+  \item source-sink separation dependence；
+  \item ensemble dependence；
+  \item lattice-spacing dependence；
+  \item comparison with known limits or previous accepted cases。
+\end{itemize}
+
+这些检查应该逐步从人工经验转化为 machine-checkable diagnostics。
+
+\subsection{如何变成 ``the best''}
+
+要把这个项目做成最好的科研 AI agent 系统，关键不是一开始接入最多模型或最多框架，而是坚持以下原则：
+
+\begin{enumerate}[leftmargin=2em]
+  \item \textbf{Every result is reproducible.} 任何结果都能追溯到 config、code version、input data 和 command。
+  \item \textbf{Every decision is logged.} 每个 fit recommendation 都必须有理由、有证据、有风险等级。
+  \item \textbf{Every high-risk decision has human approval.} AI 可以建议，但不能无审查地提升高风险结果。
+  \item \textbf{Every failure becomes memory.} 失败不是垃圾，而是训练未来 Supervisor 的案例。
+  \item \textbf{Every module has tests.} Codex 写的代码必须被 pytest 和 evaluation cases 固定下来。
+  \item \textbf{Every agent has a narrow responsibility.} Worker 不做最终物理判断，Reviewer 不直接修改结果，Supervisor 不静默覆盖人工决定。
+  \item \textbf{Every upgrade is incremental.} 先 rule-based，再 LLM-assisted；先 single case，再 campaign；先 YAML memory，再 database；先 CLI，再 dashboard。
+  \item \textbf{Every physics check becomes structured.} 把导师脑中的判断逐步变成 diagnostics、rules、reports 和 memory。
+\end{enumerate}
+
+最终最好的系统应该达到这样的状态：
+
+\begin{quote}
+导师提出物理目标，系统自动组织分析流程、运行计算、检查质量、提出少量高价值判断和 rerun 建议，并把所有代码、数据、图、日志、决策和人工审批保存下来。学生通过使用和扩展这个系统，不仅完成分析，也学习如何构建一个尽量自动化、只在关键点需要人类介入的现代科研系统。
+\end{quote}
+
+这就是本项目的核心愿景：\textbf{用 AI 尽可能承担科研工程里的重复劳动和常规分析，用工程化和审计机制守住科研可靠性，并让人类把精力集中在关键判断和高风险决策上。}
+
+\section{给学生的最终提醒}
+
+第三个月会比前两个月更难，因为你不再只是写单个函数，而是在搭建一个小型科研系统。你需要始终记住：
+
+\begin{itemize}[leftmargin=2em]
+  \item 不要只追求“能跑”，要追求“能解释为什么这样跑”；
+  \item 不要只生成结果，要生成 result、log、diagnostics、decision 和 report；
+  \item 不要害怕失败 case，失败 case 是训练 Supervisor 的材料；
+  \item 不要盲目相信 Codex，必须让它写 tests，并自己运行和检查；
+  \item 不要把 agent 设计成一个万能黑箱，要把它拆成可检查的小角色；
+  \item 不要让 AI 静默决定高风险物理结论，必须保留 human approval。
+\end{itemize}
+
+如果你完成了 Month 3，你已经不只是会用 AI 写代码，而是初步掌握了如何构建一个 \textbf{AI-first scientific analysis agent system}。这是一种非常重要的现代科研能力。
+
+\end{document}
