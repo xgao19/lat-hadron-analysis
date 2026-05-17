@@ -34,6 +34,7 @@
   showstringspaces=false
 }
 
+\setlength{\headheight}{15pt}
 \pagestyle{fancy}
 \fancyhf{}
 \lhead{AI-assisted LQCD Meson DA Agent}
@@ -61,7 +62,7 @@
 
 \begin{enumerate}[leftmargin=2em]
   \item 复现一个已经准备好的 golden example，例如 \lstinline|examples/l64c64a076_m140| 或导师指定的 meson DA 分析样例；
-  \item 说清楚这个样例的输入、输出、中间文件、关键图和主要物理检查；
+  \item 说清楚这个样例的输入、输出、中间文件、关键图和主要物理检查（尤其是 effective mass plateau 诊断，这对应后续 Correlator Analyst Agent 的职责）；
   \item 把原本 notebook-style 或手动运行的流程整理成 config-driven Python CLI；
   \item 使用 Pydantic 定义 config schema 和 result schema；
   \item 使用 pytest 对关键模块做基本测试；
@@ -1296,6 +1297,32 @@ Do not change existing outputs.
   \item 学生理解 config-driven pipeline 的意义。
 \end{itemize}
 
+\paragraph{Week 1 命令示例}
+
+\begin{lstlisting}[language=bash]
+git status
+python --version
+pip list
+pytest
+git rev-parse HEAD  # 记录 commit hash
+\end{lstlisting}
+
+\paragraph{Week 1 常见错误}
+\begin{itemize}[leftmargin=2em]
+  \item \textbf{只跑 notebook，不记录命令}：必须记录每一条命令和对应的输出。
+  \item \textbf{一开始就让 Codex 写完整系统}：每天只做一个小任务，不要一次要求 Codex 完成整个 Month 1。
+  \item \textbf{不理解 effective mass 就继续}：如果看不出来 plateau，先回看 Week 1 的物理背景部分。
+\end{itemize}
+
+\paragraph{Week 1 导师检查问题}
+\begin{enumerate}[leftmargin=2em]
+  \item 学生是否真的跑通了一遍 golden example？
+  \item 是否记录了完整命令和 git commit hash？
+  \item 是否理解了主要输入输出？
+  \item 是否知道哪些参数应该 config 化？
+  \item 是否有不理解的问题被明确列出？
+\end{enumerate}
+
 \paragraph{Day 5：Week 1 总结与导师 review}
 
 课堂动作：
@@ -1548,6 +1575,28 @@ Do not implement Snakemake yet.
   \item CLI smoke test 通过。
 \end{itemize}
 
+\subsection{Week 2 命令示例}
+
+\begin{lstlisting}[language=bash]
+python -m lqcd_agent.cli.run_golden --config configs/golden_example.yaml
+pytest tests/test_schema.py tests/test_cli_smoke.py -q
+\end{lstlisting}
+
+\subsection{Week 2 常见错误}
+\begin{itemize}[leftmargin=2em]
+  \item \textbf{config 字段太随意}：所有影响结果的参数必须进 config，用 Pydantic Field 加约束。
+  \item \textbf{没有 schema 直接读 dict}：后续 agent 无法可靠读取 config/result。
+  \item \textbf{CLI 没有 overwrite protection}：默认不应覆盖已有输出。
+\end{itemize}
+
+\subsection{Week 2 导师检查问题}
+\begin{itemize}[leftmargin=2em]
+  \item config 是否完整？所有影响结果的参数是否都进入了 config？
+  \item Pydantic validation 是否会对错误 config 清晰报错？
+  \item CLI 是否能从 clean environment 运行？
+  \item 是否有 overwrite protection？
+\end{itemize}
+
 \subsection{Week 2 任务 4：记录 Codex 使用日志}
 
 学生需要维护：
@@ -1591,7 +1640,7 @@ Follow-up prompt:
   \item 如何检查输出是否可复现。
 \end{itemize}
 
-\subsection{Week 3 任务 1：Data Auditor 模块}
+\subsection{Week 3 任务 1：data audit 模块（Data Integrity Check / Correlator Analyst）}
 
 创建：
 
@@ -1599,7 +1648,7 @@ Follow-up prompt:
 src/lqcd_agent/audit/data_audit.py
 \end{lstlisting}
 
-Data Auditor 的职责：
+data audit 模块的职责：
 
 \begin{enumerate}[leftmargin=2em]
   \item 检查 input root 是否存在；
@@ -1613,7 +1662,7 @@ Data Auditor 的职责：
 Codex prompt 示例：
 
 \begin{lstlisting}
-Please implement a Data Auditor module for the golden example.
+Please implement a data audit module (Data Integrity Check) for the golden example.
 
 File:
 `src/lqcd_agent/audit/data_audit.py`
@@ -1637,7 +1686,7 @@ The auditor should fail clearly if required inputs are missing.
   \item 缺文件时能清楚报错；
   \item \texttt{audit\_report.json} 能生成；
   \item 测试覆盖正常和失败情况；
-  \item 学生理解为什么 data audit 是 Worker 之前的第一步。
+  \item 学生理解为什么 data audit 是 Analysis Engineer 之前的第一步。
 \end{itemize}
 
 \subsection{Week 3 任务 2：最小 pytest 体系}
@@ -1674,7 +1723,7 @@ Please add a minimal pytest suite for the Month 1 golden example pipeline.
 Tests required:
 1. valid config loads successfully;
 2. invalid config with negative bootstrap_samples fails;
-3. Data Auditor fails when input_root is missing;
+3. data audit module fails when input_root is missing;
 4. CLI smoke test writes manifest.json and result.json into a temporary output directory;
 5. result.json can be validated by AnalysisResult schema.
 
@@ -1682,6 +1731,18 @@ Use tmp_path for tests.
 Do not require real large raw data in unit tests.
 Do not make tests depend on machine-specific paths.
 \end{lstlisting}
+
+\subsection{Week 3 任务 2.5：生成 correlator\_diagnostics.json}
+
+基于 effective mass 和 bootstrap 结果，生成 Correlator Analyst 的第一版输出：
+
+\begin{lstlisting}
+outputs/<case_id>/correlator_diagnostics.json
+outputs/<case_id>/effective_mass_summary.csv
+outputs/<case_id>/effective_mass.pdf
+\end{lstlisting}
+
+\texttt{correlator\_diagnostics.json} 至少包含：每个 momentum 的 plateau 检测结果、bootstrap 误差评估、标记为 suspicious 的 correlator（如果存在）。
 
 \subsection{Week 3 任务 3：输出规范}
 
@@ -1725,6 +1786,33 @@ plots/
 
 对于 Month 1，可以先简单记录输出文件和关键数值；后续 Month 2 再扩展为 fit candidate table。
 
+\subsection{Week 3 命令示例}
+
+\begin{lstlisting}[language=bash]
+# data audit
+python -m lqcd_agent.audit.run --config configs/l64c64a076_m140.yaml
+# correlator diagnostics
+python -m lqcd_agent.analysis.correlator_diagnostics \\
+  --config configs/l64c64a076_m140.yaml
+# run all tests
+pytest tests/ -q
+\end{lstlisting}
+
+\subsection{Week 3 常见错误}
+\begin{itemize}[leftmargin=2em]
+  \item \textbf{用真实数据路径写测试}：测试会不可迁移；用 \texttt{tmp\_path} 创建临时目录。
+  \item \textbf{data audit 不检查 output dir}：可能意外覆盖已有结果。
+  \item \textbf{correlator diagnostics 只画图不输出结构化 JSON}：图是给人看的，JSON 是给后续 agent 读的。
+\end{itemize}
+
+\subsection{Week 3 导师检查问题}
+\begin{itemize}[leftmargin=2em]
+  \item data audit 是否能检测缺失输入？
+  \item correlator diagnostics 是否能标记 bad correlator？
+  \item pytest 是否覆盖正常和失败情况？
+  \item 学生能否解释为什么 raw data 不能被修改？
+\end{itemize}
+
 \subsection{Week 3 验收标准}
 
 第三周结束时：
@@ -1733,34 +1821,34 @@ plots/
   \item CLI 已经不是黑盒运行，而是有 manifest/audit/result/log；
   \item pytest 至少有 5 个有效测试；
   \item 学生能解释 smoke test 和 unit test 的区别；
-  \item 学生能说明为什么 raw data 不能被 Worker 修改；
+  \item 学生能说明为什么 raw data 不能被 Analysis Engineer 修改；
   \item 输出目录结构稳定。
 \end{itemize}
 
-\section{Week 4：Month 1 集成、最小 Worker 雏形与展示}
+\section{Week 4：Month 1 集成、最小 Analysis Engineer 雏形与展示}
 
 \subsection{Week 4 目标}
 
-第四周的目标是完成第一个月的集成展示：学生应该能用一个命令运行 golden example，并生成完整的结构化输出和复现报告。同时，开始引入 Worker Agent 的雏形，但不要求完成完整多 agent 系统。
+第四周的目标是完成第一个月的集成展示：学生应该能用一个命令运行 golden example，并生成完整的结构化输出和复现报告。同时，开始引入 Analysis Engineer Agent 的雏形，但不要求完成完整多 agent 系统。
 
 \subsection{Week 4 学习内容}
 
 学生需要学习：
 
 \begin{itemize}[leftmargin=2em]
-  \item Worker Agent 的边界；
+  \item Analysis Engineer Agent 的边界；
   \item task input 和 task output；
   \item 安全规则；
   \item 如何写 demo report；
   \item 如何向导师展示一个科研软件原型。
 \end{itemize}
 
-\subsection{Week 4 任务 1：定义 Worker task schema}
+\subsection{Week 4 任务 1：定义 Analysis Engineer task schema}
 
 创建：
 
 \begin{lstlisting}
-src/lqcd_agent/schema/worker_task.py
+src/lqcd_agent/schema/analysis_engineer_task.py
 \end{lstlisting}
 
 示意：
@@ -1769,7 +1857,7 @@ src/lqcd_agent/schema/worker_task.py
 from pydantic import BaseModel
 from typing import Optional, List
 
-class WorkerTask(BaseModel):
+class AnalysisEngineerTask(BaseModel):
     task_id: str
     task_type: str
     config_path: str
@@ -1777,7 +1865,7 @@ class WorkerTask(BaseModel):
     allow_overwrite: bool = False
     notes: Optional[str] = None
 
-class WorkerTaskResult(BaseModel):
+class AnalysisEngineerTaskResult(BaseModel):
     task_id: str
     status: str
     result_json: Optional[str] = None
@@ -1790,36 +1878,36 @@ class WorkerTaskResult(BaseModel):
 Codex prompt 示例：
 
 \begin{lstlisting}
-Please add a minimal Worker task schema.
+Please add a minimal Analysis Engineer task schema.
 
 File:
-`src/lqcd_agent/schema/worker_task.py`
+`src/lqcd_agent/schema/analysis_engineer_task.py`
 
 Requirements:
-- define WorkerTask with task_id, task_type, config_path, output_dir, allow_overwrite, notes;
-- define WorkerTaskResult with status, output paths, warnings, errors;
+- define AnalysisEngineerTask with task_id, task_type, config_path, output_dir, allow_overwrite, notes;
+- define AnalysisEngineerTaskResult with status, output paths, warnings, errors;
 - validate that task_type is one of the supported values for Month 1: `run_golden_example`;
 - add tests for valid and invalid task types.
 
 Do not implement LangGraph yet.
 \end{lstlisting}
 
-\subsection{Week 4 任务 2：最小 Worker wrapper}
+\subsection{Week 4 任务 2：最小 Analysis Engineer wrapper}
 
 创建：
 
 \begin{lstlisting}
-src/lqcd_agent/worker/run_worker.py
+src/lqcd_agent/analysis_engineer/run.py
 \end{lstlisting}
 
-Worker wrapper 的第一版职责：
+Analysis Engineer wrapper 的第一版职责：
 
 \begin{enumerate}[leftmargin=2em]
-  \item 读取 WorkerTask；
+  \item 读取 AnalysisEngineerTask；
   \item 检查 task type；
   \item 调用 \texttt{run\_golden} CLI 或内部函数；
   \item 检查输出文件是否存在；
-  \item 写 WorkerTaskResult；
+  \item 写 AnalysisEngineerTaskResult；
   \item 不做 final physics decision。
 \end{enumerate}
 
@@ -1832,18 +1920,18 @@ python -m lqcd_agent.worker.run_worker --task tasks/month1_golden_task.yaml
 Codex prompt 示例：
 
 \begin{lstlisting}
-Please implement a minimal Worker wrapper for Month 1.
+Please implement a minimal Analysis Engineer wrapper for Month 1.
 
 File:
-`src/lqcd_agent/worker/run_worker.py`
+`src/lqcd_agent/analysis_engineer/run.py`
 
 Requirements:
 - command: `python -m lqcd_agent.worker.run_worker --task tasks/month1_golden_task.yaml`;
-- load WorkerTask schema;
+- load AnalysisEngineerTask schema;
 - support task_type = `run_golden_example`;
 - call the existing golden example CLI or internal run function;
 - check that result.json, summary.csv, manifest.json, and run.log exist;
-- write `worker_result.json`;
+- write `analysis_engineer_result.json`;
 - if any required output is missing, mark status as failed and record errors;
 - do not decide central physics results;
 - do not overwrite existing outputs unless allow_overwrite is true;
@@ -1853,10 +1941,10 @@ Requirements:
 验收标准：
 
 \begin{itemize}[leftmargin=2em]
-  \item Worker task 可以运行 golden example；
+  \item Analysis Engineer task 可以运行 golden example；
   \item \texttt{worker\_result.json} 生成；
-  \item 输出缺失时 Worker 能报告失败；
-  \item Worker 不做 fit selection 或 final physics decision；
+  \item 输出缺失时 Analysis Engineer 能报告失败；
+  \item Analysis Engineer 不做 fit selection 或 final physics decision；
   \item 测试通过。
 \end{itemize}
 
@@ -1878,10 +1966,38 @@ docs/month1_final_report.md
   \item result schema 设计；
   \item data audit；
   \item pytest 测试列表；
-  \item Worker wrapper 雏形；
+  \item Analysis Engineer wrapper 雏形；
   \item 当前限制；
   \item Month 2 计划。
 \end{enumerate}
+
+\subsection{Week 4 命令示例}
+
+\begin{lstlisting}[language=bash]
+# 一键运行 Analysis Engineer
+python -m lqcd_agent.analysis_engineer.run \\
+  --task configs/tasks/month1_golden_task.yaml
+# 检查输出
+ls outputs/l64c64a076_m140/
+cat outputs/l64c64a076_m140/correlator_diagnostics.json
+# 运行全部测试
+pytest -q
+\end{lstlisting}
+
+\subsection{Week 4 常见错误}
+\begin{itemize}[leftmargin=2em]
+  \item \textbf{把 Analysis Engineer 当成物理判断者}：它只执行和检查，不能决定 central fit。
+  \item \textbf{输出没有 provenance}：图和数值如果没有 config、git commit、run id 和 log，无法用于严肃科研。
+  \item \textbf{Month 1 final report 只列做了什么，不写学到什么}：应该包含 failures 和 lessons。
+\end{itemize}
+
+\subsection{Week 4 导师检查问题}
+\begin{itemize}[leftmargin=2em]
+  \item 是否能从 clean repo 一键运行 Month 1 全流程？
+  \item pytest 是否全部通过？学生是否能解释每个测试保护什么？
+  \item 学生能否解释 Analysis Engineer 的作用和边界？
+  \item Month 1 report 是否包含复现命令、输出文件列表、failures 和 lessons？
+\end{itemize}
 
 \subsection{Week 4 任务 4：Month 1 demo}
 
@@ -1894,7 +2010,7 @@ docs/month1_final_report.md
   \item 一页展示 CLI 运行命令；
   \item 一页展示 result.json / summary.csv / plots；
   \item 一页展示 pytest 结果；
-  \item 一页说明 Worker wrapper；
+  \item 一页说明 Analysis Engineer wrapper；
   \item 一页说明当前问题和 Month 2 计划。
 \end{itemize}
 
@@ -1938,8 +2054,8 @@ docs/month1_final_report.md
   \item 什么是 golden example？
   \item 为什么需要 config-driven pipeline？
   \item manifest.json 和 result.json 有什么区别？
-  \item Data Auditor 为什么不能修改 raw data？
-  \item Worker 为什么不能决定 central physics result？
+  \item data audit 模块为什么不能修改 raw data？
+  \item Analysis Engineer 为什么不能决定 central physics result？
   \item pytest 在科研分析中保护了什么？
   \item Codex 写的代码为什么不能直接相信？
 \end{enumerate}
@@ -1962,9 +2078,9 @@ docs/month1_final_report.md
 
 没有 tests，Codex 每次修改都可能破坏已有功能。
 
-\subsection{错误 5：把 Worker 当成物理判断者}
+\subsection{错误 5：把 Analysis Engineer 当成物理判断者}
 
-Worker 可以运行和整理结果，但不能决定 central fit、丢弃数据或给出最终物理结论。
+Analysis Engineer 可以运行和整理结果，但不能决定 central fit、丢弃数据或给出最终物理结论。
 
 \subsection{错误 6：输出没有 provenance}
 
@@ -1976,9 +2092,9 @@ Worker 可以运行和整理结果，但不能决定 central fit、丢弃数据�
 
 \begin{enumerate}[leftmargin=2em]
   \item 将 Month 1 的 CLI 包装进 Snakemake workflow；
-  \item 增加 Fit Analyst 和 Skeptic Reviewer；
+  \item 增加 Fit Strategy Postdoc、Matrix Element Analyst 和 Critical Referee；
   \item 建立 fit candidate summary table；
-  \item 实现 rule-based Supervisor；
+  \item 实现 rule-based Analysis Coordinator；
   \item 写 \texttt{decision\_log.json}；
   \item 建立 accepted/rejected case memory。
 \end{enumerate}
@@ -1986,10 +2102,10 @@ Worker 可以运行和整理结果，但不能决定 central fit、丢弃数据�
 所以 Month 1 的关键不是把所有高级功能做完，而是打好以下基础：
 
 \begin{lstlisting}
-config -> schema -> CLI -> audit -> output -> tests -> Worker wrapper
+config -> schema -> CLI -> audit -> output -> tests -> Analysis Engineer wrapper
 \end{lstlisting}
 
-只有这条链路清楚，Month 2 的 Snakemake 和 Supervisor 才能自然接上。
+只有这条链路清楚，Month 2 的 Snakemake 和 Analysis Coordinator 才能自然接上。
 
 \section{附录：第一个月推荐 Codex Prompt 模板}
 
@@ -2081,11 +2197,11 @@ If you find a bug, explain it first and then make a minimal fix.
   \item 能用 Codex 辅助生成代码，但知道如何检查和修正；
   \item 能写最小 pytest；
   \item 能用 Git 做小步提交；
-  \item 能解释 Worker 的作用和边界；
+  \item 能解释 Analysis Engineer 的作用和边界；
   \item 能用一个命令运行基础 pipeline；
   \item 能提交一份清楚的 Month 1 final report。
 \end{itemize}
 
-如果学生完成以上内容，就已经具备继续进入 Month 2 高级 workflow 和 Supervisor agent 阶段的基础。
+如果学生完成以上内容，就已经具备继续进入 Month 2 高级 workflow 和 Analysis Coordinator agent 阶段的基础。
 
 \end{document}
