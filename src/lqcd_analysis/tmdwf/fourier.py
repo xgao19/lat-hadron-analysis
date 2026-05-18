@@ -458,7 +458,7 @@ def run_tmdwf_fourier_from_fit_outputs(
         handle.write(f"zstep_fm {zstep_fm:.10e}\n")
         handle.write(f"interpolation_kind {_resolve_interpolation_kind(interpolation_kind, bz_fit.size)}\n")
         handle.write("x\tq_mean\tq_err\tq_p16\tq_p84\n")
-        for x_value, mean_value, err_value, p16_value, p84_value in zip(x_grid, q_mean, q_err, q_p16, q_p84, strict=True):
+        for x_value, mean_value, err_value, p16_value, p84_value in zip(x_grid, q_mean, q_err, q_p16, q_p84):
             handle.write(
                 "\t".join(
                     [
@@ -475,7 +475,7 @@ def run_tmdwf_fourier_from_fit_outputs(
     with sample_path.open("w", encoding="utf-8") as handle:
         handle.write("sample_id\tx\tq_sample\n")
         for sample_id, sample_values in enumerate(q_samples):
-            for x_value, q_value in zip(x_grid, sample_values, strict=True):
+            for x_value, q_value in zip(x_grid, sample_values):
                 handle.write(f"{sample_id}\t{x_value:.10e}\t{q_value:.10e}\n")
 
     outputs = [table_path, sample_path]

@@ -441,7 +441,7 @@ def write_nstate_plot_notebook(
     notebook_path = Path(notebook_path)
     notebook_output_dir = Path(notebook_output_dir)
     fit_tables_repr = {str(key): str(Path(value)) for key, value in fit_tables.items()}
-    repo_src = Path(__file__).resolve().parents[1]
+    repo_src = Path(__file__).resolve().parents[2]
     notebook = {
         "cells": [
             {

@@ -472,7 +472,7 @@ def summarize_tmdwf_cs_kernel_average(
                 n_samples=int(finite_means.size),
             )
         )
-        for sample_id, sample_success, mean, std in zip(sample_ids_reference, success, sample_means, sample_stds, strict=True):
+        for sample_id, sample_success, mean, std in zip(sample_ids_reference, success, sample_means, sample_stds):
             sample_rows.append(
                 TMDWFCSKernelAverageSampleRow(
                     bT=bT,

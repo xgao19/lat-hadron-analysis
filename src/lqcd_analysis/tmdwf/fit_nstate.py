@@ -495,7 +495,6 @@ def _write_ratio_outputs(
                 ratio_real_err,
                 ratio_imag_mean,
                 ratio_imag_err,
-                strict=True,
             ):
                 handle.write(
                     "\t".join(
@@ -611,7 +610,7 @@ def _write_component_outputs(
                                 ),
                                 component,
                             )
-                            for sample_index, params in zip(valid_indices, valid_samples, strict=True)
+                            for sample_index, params in zip(valid_indices, valid_samples)
                         ]
                     )
                 else:
@@ -651,7 +650,7 @@ def _write_component_outputs(
                 )
                 low = np.full_like(center, np.nan)
                 high = np.full_like(center, np.nan)
-            for t, mean_value, low_value, high_value in zip(times, center, low, high, strict=True):
+            for t, mean_value, low_value, high_value in zip(times, center, low, high):
                 handle.write(
                     "\t".join(
                         [
@@ -703,7 +702,7 @@ def _write_component_outputs(
                                 ),
                                 component,
                             )
-                            for sample_index, params in zip(valid_indices, valid_samples, strict=True)
+                            for sample_index, params in zip(valid_indices, valid_samples)
                         ]
                     )
                 else:

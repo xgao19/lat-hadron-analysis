@@ -277,7 +277,7 @@ def _write_xfit_outputs(
         header += [f"q{idx}_mean" for idx in range(nstates)]
         header += [f"q{idx}_err" for idx in range(nstates)]
         handle.write("\t".join(header) + "\n")
-        for x_value, result, sample_params in zip(x_values, results, sample_params_by_x, strict=True):
+        for x_value, result, sample_params in zip(x_values, results, sample_params_by_x):
             success_mask = np.all(np.isfinite(sample_params), axis=1)
             errors = []
             for column in range(nstates):
@@ -297,7 +297,7 @@ def _write_xfit_outputs(
 
     with sample_path.open("w", encoding="utf-8") as handle:
         handle.write("\t".join(["sample_id", "x", "success", *[f"q{idx}" for idx in range(nstates)]]) + "\n")
-        for x_value, sample_params in zip(x_values, sample_params_by_x, strict=True):
+        for x_value, sample_params in zip(x_values, sample_params_by_x):
             for sample_id, params in enumerate(sample_params):
                 success = int(np.all(np.isfinite(params)))
                 values = params if success else np.full(nstates, np.nan)
@@ -353,7 +353,7 @@ def _fit_curves_for_x(
                     pz=pz,
                     ns=ns,
                 ))
-                for sample_id, params in zip(sample_indices, valid_params, strict=True)
+                for sample_id, params in zip(sample_indices, valid_params)
             ],
             dtype=float,
         )

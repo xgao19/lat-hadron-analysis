@@ -222,7 +222,7 @@ def compute_pairwise_type2_estimators(
         raise ValueError("reference_samples must be one-dimensional")
     estimators: list[np.ndarray] = []
     sigmas: list[float] = []
-    for comparison, p2_gev in zip(comparison_samples, p2_gevs, strict=True):
+    for comparison, p2_gev in zip(comparison_samples, p2_gevs):
         if comparison.ndim != 1 or comparison.shape != reference_samples.shape:
             raise ValueError("each comparison sample array must match reference_samples")
         log_ratio = 1.0 / np.log(p1_gev / p2_gev) * np.log(np.abs(reference_samples / comparison))
@@ -368,7 +368,7 @@ def build_cs_kernel_pair_jobs(
             raise ValueError("reference_p1 must leave at least one comparison pz value")
         return [(fixed_reference_p1, comparison_pz_list, f"{fixed_reference_p1}-{comparison_pz_list[-1]}")]
     if pair_mode == "adjacent":
-        return [(pz1, [pz2], f"{pz1}-{pz2}") for pz1, pz2 in zip(pzlist[:-1], pzlist[1:], strict=True)]
+        return [(pz1, [pz2], f"{pz1}-{pz2}") for pz1, pz2 in zip(pzlist[:-1], pzlist[1:])]
     if pair_mode == "fixed_p1":
         comparison_pz_list = [pz for pz in pzlist if pz != fixed_reference_p1]
         if not comparison_pz_list:
@@ -412,7 +412,7 @@ def summarize_cs_kernel_adjacent_breakdown(
     total_p50: list[float] = []
     total_p84: list[float] = []
     matching_values: list[float] = []
-    for local_index, x_value in zip(np.where(x_mask)[0], x_values, strict=True):
+    for local_index, x_value in zip(np.where(x_mask)[0], x_values):
         reference_samples = reference.samples[:, local_index]
         comparison_samples = comparison.samples[:, local_index]
         log_ratio = 1.0 / np.log(p1_gev / p2_gev) * np.log(np.abs(reference_samples / comparison_samples))

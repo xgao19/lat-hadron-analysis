@@ -41,6 +41,13 @@ class CSKernelBreakdownSeries:
     total_p84: np.ndarray
 
 
+def _safe_tight_layout(fig, **kwargs) -> None:
+    try:
+        fig.tight_layout(**kwargs)
+    except OverflowError:
+        pass
+
+
 def plot_tmdwf_cs_kernel_average_bT(
     output_path: str | Path,
     rows: tuple[object, ...] | list[object],
@@ -90,7 +97,7 @@ def plot_tmdwf_cs_kernel_average_bT(
         ax.set_title(title)
     ax.legend(title="error bars")
     ax.grid(True, alpha=0.2)
-    fig.tight_layout()
+    _safe_tight_layout(fig)
     fig.savefig(output_path)
     plt.close(fig)
     return output_path
@@ -135,7 +142,7 @@ def plot_tmdwf_joint_cs_kernel_x_band(
         ax.set_ylim(*ylim)
     ax.grid(True, alpha=0.2)
     ax.legend()
-    fig.tight_layout()
+    _safe_tight_layout(fig)
     fig.savefig(output_path)
     plt.close(fig)
     return output_path
@@ -232,7 +239,7 @@ def plot_tmdwf_joint_cs_kernel_pz_diagnostics(
             f"{ens_label}  x={x_actual:.3f}  pz-diagnostics",
             fontsize=10,
         )
-        fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.97])
+        _safe_tight_layout(fig, rect=[0.0, 0.0, 1.0, 0.97])
 
         plot_path = output_dir / f"{stem}_x{x_token}_{ens_label}_pz_diagnostics.pdf"
         fig.savefig(plot_path)
@@ -354,10 +361,6 @@ def _choose_ratio_axis_scale(
             item.fit_p84,
         ):
             all_values.append(_finite_values(values))
-    finite_values = np.concatenate(all_values) if all_values else np.array([], dtype=float)
-    if component == "real" and finite_values.size > 0 and np.all(finite_values > 0.0):
-        return "log", {}
-
     nonzero_abs = np.concatenate([_finite_nonzero_abs(values) for values in all_values]) if all_values else np.array([], dtype=float)
     if nonzero_abs.size == 0:
         linthresh = 1.0
@@ -412,7 +415,7 @@ def plot_tmdwf_ratio_fit(
     if title:
         ax.set_title(title)
     ax.legend()
-    fig.tight_layout()
+    _safe_tight_layout(fig)
     fig.savefig(output_path)
     plt.close(fig)
     return output_path
@@ -491,7 +494,7 @@ def plot_tmdwf_m0_vs_bz(
     else:
         ax.set_title(f"m0 vs bz ({component}, {nstates}state)")
     ax.legend()
-    fig.tight_layout()
+    _safe_tight_layout(fig)
     fig.savefig(output_path)
     plt.close(fig)
     return output_path
@@ -554,7 +557,7 @@ def plot_tmdwf_cs_kernel_band(
         ax.set_ylim(*ylim)
     ax.set_title(f"{title} bT={bT} ref pz={reference_pz}")
     ax.legend()
-    fig.tight_layout()
+    _safe_tight_layout(fig)
     fig.savefig(output_path)
     plt.close(fig)
     return output_path
@@ -591,7 +594,7 @@ def plot_tmdwf_cs_kernel_adjacent_breakdown(
     for ax in axes:
         ax.axvline(0.5, color="0.85", linewidth=1.0)
         ax.legend()
-    fig.tight_layout()
+    _safe_tight_layout(fig)
     fig.savefig(output_path)
     plt.close(fig)
     return output_path
@@ -635,7 +638,7 @@ def write_tmdwf_plot_notebook(
         }
         for bT, component_map in sample_tables.items()
     }
-    repo_src = Path(__file__).resolve().parents[1]
+    repo_src = Path(__file__).resolve().parents[2]
     notebook = {
         "cells": [
             {
@@ -851,7 +854,7 @@ def write_tmdwf_cs_kernel_joint_diagnostics_notebook(
 ) -> Path:
     notebook_path = Path(notebook_path)
     results_dir = Path(results_dir)
-    repo_src = Path(__file__).resolve().parents[1]
+    repo_src = Path(__file__).resolve().parents[2]
     notebook = {
         "cells": [
             {
