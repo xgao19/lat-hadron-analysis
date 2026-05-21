@@ -5,6 +5,11 @@
 - Never write comments in Chinese or any other non-English language.
 - This applies to both new code and modifications to existing code.
 
+## Commit Documentation
+- Before every commit, update `SESSION_MEMORY.md` and `log.md`.
+- Keep `SESSION_MEMORY.md` concise and focused on reusable practices, pitfalls, fixes, and key project conventions.
+- Keep each `log.md` entry short: one or two concise paragraphs at most.
+
 ## Behavioral Guidelines
 These guidelines reduce common LLM coding mistakes. Use judgment for trivial tasks.
 

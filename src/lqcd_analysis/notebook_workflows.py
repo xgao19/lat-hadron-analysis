@@ -35,6 +35,8 @@ from .tmdwf.xfit_normalize import (
     parse_tmdwf_xfit_normalize_input,
     run_tmdwf_xfit_normalization,
 )
+from .emff.fit_nstate import run_emff_nstate_fit
+from .emff.io import parse_emff_fit_input
 from .two_point.effective_mass import parse_effective_mass_input, run_effective_mass_workflow
 from .two_point.fit_nstate import parse_nstate_fit_input, run_nstate_fit
 from .two_point.plotting import plot_nstate_outputs
@@ -327,6 +329,41 @@ TMDWF_NORMALIZE_KEYS = {
     "results_dir",
 }
 TMDWF_NORMALIZE_RUN_KEYS = {"results_dir"}
+EMFF_INPUT_KEYS = {
+    "title_pattern",
+    "ns",
+    "nt",
+    "lattice_spacing_fm",
+    "hadron_mass_gev",
+    "src_gamma",
+    "sink_gamma",
+    "insert_gamma",
+    "nstates",
+    "c2pt",
+    "c3pt_h5",
+    "c3pt_dataset_path",
+    "pflist",
+    "qxlist",
+    "qxrange",
+    "qylist",
+    "qyrange",
+    "qzlist",
+    "qzrange",
+    "tslist",
+    "average_transverse_orbits",
+    "fit_method",
+    "tau_range",
+    "tsep_range",
+    "binsize",
+    "bootstrap_samples",
+    "bootstrap_size",
+    "seed",
+    "two_point_fit_root",
+    "two_point_fit_window_by_pz",
+    "plot",
+    "results_dir",
+}
+EMFF_RUN_KEYS = {"results_dir"}
 PLOT_REQUIRED_KEYS = {
     "output_dir",
     "correlator_table",
@@ -1616,6 +1653,133 @@ def run_plot_2pt_from_notebook(config: dict[str, Any]) -> list[Path]:
         nt=int(validated["nt"]),
         lattice_spacing_fm=float(validated["lattice_spacing_fm"]),
     )
+
+
+
+
+def render_emff_fit_input_text(config: dict[str, Any]) -> str:
+    config = _subset_config(config, EMFF_INPUT_KEYS)
+    required = [
+        "title_pattern",
+        "ns",
+        "nt",
+        "lattice_spacing_fm",
+        "hadron_mass_gev",
+        "src_gamma",
+        "sink_gamma",
+        "insert_gamma",
+        "nstates",
+        "c2pt",
+        "c3pt_h5",
+        "c3pt_dataset_path",
+        "pflist",
+        "tslist",
+        "fit_method",
+        "tau_range",
+        "tsep_range",
+        "two_point_fit_root",
+        "two_point_fit_window_by_pz",
+    ]
+    missing = [key for key in required if key not in config]
+    if missing:
+        raise ValueError(f"missing EMFF notebook config keys: {missing}")
+    if "qxlist" not in config and "qxrange" not in config:
+        raise ValueError("missing EMFF notebook config key: qxlist or qxrange")
+    if "qylist" not in config and "qyrange" not in config:
+        raise ValueError("missing EMFF notebook config key: qylist or qyrange")
+    if "qzlist" not in config and "qzrange" not in config:
+        raise ValueError("missing EMFF notebook config key: qzlist or qzrange")
+
+    lines = [
+        f"{config['title_pattern']} {config['ns']} {config['nt']} {config['lattice_spacing_fm']}",
+        f"hadron_mass_gev {_as_scalar_string(config['hadron_mass_gev'])}",
+        f"c2pt {_as_scalar_string(config['c2pt'])}",
+        f"c3pt_h5 {_as_scalar_string(config['c3pt_h5'])}",
+        f"c3pt_dataset_path {_as_scalar_string(config['c3pt_dataset_path'])}",
+        f"src_gamma {_as_scalar_string(config['src_gamma'])}",
+        f"sink_gamma {_as_scalar_string(config['sink_gamma'])}",
+        f"insert_gamma {_as_scalar_string(config['insert_gamma'])}",
+        f"nstates {_as_scalar_string(config['nstates'])}",
+        f"pflist {_as_scalar_string(config['pflist'])}",
+        f"tslist {_as_scalar_string(config['tslist'])}",
+        f"average_transverse_orbits {_as_scalar_string(config.get('average_transverse_orbits', True))}",
+        f"fit_method {_as_scalar_string(config['fit_method'])}",
+        f"tau_range {_as_scalar_string(config['tau_range'])}",
+        f"tsep_range {_as_scalar_string(config['tsep_range'])}",
+        f"two_point_fit_root {_as_scalar_string(config['two_point_fit_root'])}",
+        f"two_point_fit_window_by_pz {_as_scalar_string(config['two_point_fit_window_by_pz'])}",
+    ]
+    if "qxlist" in config and config["qxlist"] is not None:
+        lines.append(f"qxlist {_as_scalar_string(config['qxlist'])}")
+    elif "qxrange" in config and config["qxrange"] is not None:
+        lines.append(f"qxrange {_as_scalar_string(config['qxrange'])}")
+    if "qylist" in config and config["qylist"] is not None:
+        lines.append(f"qylist {_as_scalar_string(config['qylist'])}")
+    elif "qyrange" in config and config["qyrange"] is not None:
+        lines.append(f"qyrange {_as_scalar_string(config['qyrange'])}")
+    if "qzlist" in config and config["qzlist"] is not None:
+        lines.append(f"qzlist {_as_scalar_string(config['qzlist'])}")
+    elif "qzrange" in config and config["qzrange"] is not None:
+        lines.append(f"qzrange {_as_scalar_string(config['qzrange'])}")
+    for optional_key in (
+        "binsize",
+        "bootstrap_samples",
+        "bootstrap_size",
+        "seed",
+        "plot",
+        "results_dir",
+    ):
+        if optional_key in config and config[optional_key] is not None:
+            lines.append(f"{optional_key} {_as_scalar_string(config[optional_key])}")
+    return "\n".join(lines) + "\n"
+
+
+def validate_emff_notebook_config(config: dict[str, Any]) -> dict[str, Any]:
+    input_path = _materialize_input_text(
+        render_emff_fit_input_text(config),
+        "input_emff.txt",
+    )
+    parsed = parse_emff_fit_input(input_path)
+    validated = {
+        "title_pattern": parsed.title_pattern,
+        "ns": parsed.ns,
+        "nt": parsed.nt,
+        "lattice_spacing_fm": parsed.lattice_spacing_fm,
+        "src_gamma": parsed.src_gamma,
+        "sink_gamma": parsed.sink_gamma,
+        "insert_gamma": parsed.insert_gamma,
+        "nstates": parsed.nstates,
+        "pflist": parsed.pflist,
+        "qxlist": parsed.qxlist,
+        "qylist": parsed.qylist,
+        "qzlist": parsed.qzlist,
+        "tslist": parsed.tslist,
+        "fit_method": parsed.fit_method,
+        "tau_range": parsed.tau_range,
+        "tsep_range": parsed.tsep_range,
+        "make_plots": parsed.make_plots,
+    }
+    if "results_dir" in config and config["results_dir"] is not None:
+        validated["results_dir"] = Path(config["results_dir"])
+    return validated
+
+
+def run_emff_fit_from_notebook(
+    config: dict[str, Any],
+    **overrides: Any,
+) -> list[Path]:
+    run_config: dict[str, Any] = {"results_dir": None}
+    run_config.update(_subset_config(config, EMFF_RUN_KEYS))
+    run_config.update(
+        {key: value for key, value in overrides.items() if value is not None}
+    )
+    if run_config["results_dir"] is None:
+        run_config["results_dir"] = _guess_notebook_dir()
+    input_path = _materialize_input_text(
+        render_emff_fit_input_text(config),
+        "input_emff.txt",
+    )
+    return run_emff_nstate_fit(input_path, results_dir=run_config["results_dir"])
 
 
 def pretty_print_config(config: dict[str, Any]) -> str:

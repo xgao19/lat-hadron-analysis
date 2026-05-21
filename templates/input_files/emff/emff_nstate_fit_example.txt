@@ -1,0 +1,55 @@
+# Example EMFF n-state fit control file
+# Lines starting with # are comments, blank lines are ignored.
+# The first non-empty, non-comment line must be:
+#   title_pattern Ns Nt a_fm
+#
+# Key parameters:
+#   c2pt              - path pattern to 2pt HDF5 files (use {src_gamma})
+#   c3pt_h5           - three-point HDF5 file path/glob template
+#   c3pt_dataset_path - three-point HDF5 dataset path template
+#   src_gamma         - source gamma matrix (matches the 2pt HDF5 file name)
+#   sink_gamma        - sink gamma matrix under SS/ in the 2pt HDF5 file
+#   insert_gamma      - current insertion gamma (T for vector current)
+#   nstates           - number of states (1 and/or 2)
+#   pflist            - final momentum Pf: pfx pfy pfz
+#   qxlist/qylist/qzlist - momentum transfer values (or qxrange/qyrange/qzrange)
+#   average_transverse_orbits - average degenerate transverse q sign/exchange orbits
+#   tslist            - time separation values (or tsrange_emff for range)
+#   fit_method        - "2state", "summation", or "plateau"
+#   hadron_mass_gev   - hadron mass used in the ratio dispersion relation
+#   ratio             - Eq. (6) of arXiv:2102.06047
+#   tau_range         - tau window: tau_min tau_offset (-1 means tsep-1)
+#   tsep_range        - tsep window for fitting: tsep_min tsep_max
+#   binsize           - binning size before bootstrap
+#   bootstrap_samples - "auto" or integer number of bootstrap samples
+#   seed              - random seed for bootstrap
+#   two_point_fit_root         - root directory for 2pt nstate fit results
+#   two_point_fit_window_by_pz - path to 2pt fit window table
+#   plot              - whether to generate plots (true/false)
+#   results_dir       - output directory
+
+l48c64a060_m140_EMFF 48 64 0.060
+hadron_mass_gev 0.140
+c2pt /Users/xiang/Desktop/docs/0-2026/projects/3-EMFF/data/l48c64a060_m140/c2pt/l48c64a060.c2pt.CFG.EMFF.ex.SRC.1HYP_M140_GSRC_W52_5.posSrc000_posSink000_negSrc000_negSink000.src{src_gamma}.h5
+c3pt_h5 /Users/xiang/Desktop/docs/0-2026/projects/3-EMFF/data/l48c64a060_m140/pion_EMFF/l48c64a060.pion_EMFF.CFG.EMFF.ex.SRC.1HYP_M140_GSRC_W52_5.posSrc000_posSink000_negSrc000_negSink000.src{src_gamma}.PX{pfx}PY{pfy}PZ{pfz}dt{tsep}.h5
+c3pt_dataset_path SS/{insert_gamma}/PX{qx}PY{qy}PZ{qz}
+src_gamma 5
+sink_gamma 5
+insert_gamma T
+nstates 2
+pflist 0 0 0
+qxlist -2 -1 0 1 2
+qylist -2 -1 0 1 2
+qzlist -2 -1 0 1 2
+average_transverse_orbits true
+tslist 4 6 8 10 12
+fit_method 2state
+tau_range 1 -1
+tsep_range 4 12
+binsize 1
+bootstrap_samples auto
+seed 2026
+two_point_fit_root /Users/xiang/Desktop/docs/0-2026/projects/lat-hadron-analysis/results
+two_point_fit_window_by_pz /Users/xiang/Desktop/docs/0-2026/projects/lat-hadron-analysis/2pt_fit_windows.txt
+plot true
+results_dir results_emff

@@ -23,6 +23,7 @@ processed data.
 ├── scripts/              Domain-organized command-line entry points
 ├── src/lqcd_analysis/    Python source package
 │   ├── common/           Shared reusable helpers and infrastructure
+│   ├── emff/             EM form-factor ratio and fit workflows
 │   ├── two_point/        Two-point analysis workflows
 │   └── tmdwf/            TMDWF analysis scaffolding
 ├── templates/            Domain-organized notebook and input-file templates
@@ -37,6 +38,12 @@ source .venv/bin/activate
 pip install -e ".[dev]"
 python -m unittest discover
 ```
+
+## Project Memory
+
+- `SESSION_MEMORY.md` stores concise reusable practices, common pitfalls, fixes, and key project conventions for future coding sessions.
+- `log.md` stores short commit-oriented notes. Keep each entry to one or two concise paragraphs at most.
+- Before every commit, update both files when the commit changes durable project knowledge or workflow behavior.
 
 ## Next Steps
 
@@ -890,6 +897,41 @@ For the x-space fit chain, `tmdwf-xfit-normalize` reads old bare `m0(bz)`
 outputs from `tmdwf-nstate-fit` only to construct the normalization factor; it
 does not consume old `tmdwf-fourier` outputs.
 
+## EMFF Ratio And N-State Fit
+
+The repository includes an EM form-factor workflow that reads EMFF 3pt data and
+2pt correlators directly from HDF5 inputs, constructs ratios, and supports
+plateau, summation, and N-state fits:
+
+```bash
+lqcd-analysis emff-nstate-fit templates/input_files/emff/emff_nstate_fit_example.txt
+```
+
+The current ratio construction follows Eq. (6) of arXiv:2102.06047 with
+`Pi = Pf - q`. Energies are computed from the dispersion relation,
+`E(P) = sqrt(hadron_mass_gev^2 + |P|^2)`, where `hadron_mass_gev` is a user
+input rather than a pion-specific parameter.
+
+Key EMFF input conventions:
+
+- 2pt correlators are read from HDF5, not CSV.
+- The 2pt source gamma is encoded in the filename, while sink gamma and momentum
+  are encoded in the HDF5 dataset path.
+- The expected 2pt dataset path pattern is `SS/{sink_gamma}/PX{px}PY{py}PZ{pz}`.
+- Transverse momentum orbit averaging, when enabled, averages raw correlators
+  before ratio construction and keeps longitudinal momentum-transfer signs
+  separate.
+
+Template inputs are provided in:
+
+- `templates/input_files/emff/emff_nstate_fit_example.txt`
+- `templates/input_files/emff/emff_nstate_fit_example_annotated.txt`
+
+Matching notebook templates are provided in:
+
+- `templates/emff/emff_ratio_plot_template.ipynb`
+- `templates/emff/emff_nstate_fit_template.ipynb`
+
 ## Workflows
 
 Both workflows are supported:
@@ -912,13 +954,15 @@ Current notebook templates:
 - `templates/tmdwf/tmdwf_xfit_normalize_template.ipynb`
 - `templates/tmdwf/tmdwf_cs_kernel_template.ipynb`
 - `templates/tmdwf/tmdwf_cs_kernel_joint_template.ipynb`
+- `templates/emff/emff_ratio_plot_template.ipynb`
+- `templates/emff/emff_nstate_fit_template.ipynb`
 - `templates/two_point/plot_2pt_template.ipynb`
 
 Notebook templates are thin wrappers around the existing analysis code. They are intended for clarity and interactive use, while the plain-text input-file workflow remains the stable batch-style interface.
 Each template now uses the same notebook-facing pattern: edit a single `workflow_config` object, validate it, and then call one `run_*_from_notebook(...)` function.
 Each notebook template also includes an `Option Guide` markdown cell right after the user-input cell, describing the main options, their expected choices, and their practical effect.
 
-The helper bridge for notebooks lives in `src/lqcd_analysis/notebook_workflows.py`. Notebook workflows take their configuration directly from the notebook `workflow_config` object and call the same backend runners in the `two_point` and `tmdwf` packages; they do not require a separate input file.
+The helper bridge for notebooks lives in `src/lqcd_analysis/notebook_workflows.py`. Notebook workflows take their configuration directly from the notebook `workflow_config` object and call the same backend runners in the `two_point`, `tmdwf`, and `emff` packages; they do not require a separate input file.
 The two workflows use different default output locations by design: notebook workflows default to the current working directory, while plain-text input-file workflows default to a results directory next to the input file.
 For `nstatefit`, the user-facing `fit_mode` option supports both `uncorrelated` and `correlated` fits. In correlated mode the code builds one shared covariance matrix from the full bootstrap ensemble and reuses it across the mean fit and bootstrap fits; if a correlated sample/window fit fails, it falls back to a diagonal fit using only the covariance diagonal.
 The N-state fit outputs also track this fallback usage: fit tables include a `fallback_uncorrelated_successes` column for each `tmin` window, and summaries report the representative window's fallback count.
@@ -942,6 +986,7 @@ and plain-text example inputs under:
 - `templates/input_files/tmdwf/tmdwf_xfit_normalize_example.txt`
 - `templates/input_files/tmdwf/tmdwf_cs_kernel_example.txt`
 - `templates/input_files/tmdwf/tmdwf_cs_kernel_joint_example.txt`
+- `templates/input_files/emff/emff_nstate_fit_example.txt`
 - `templates/input_files/two_point/plot_2pt_example_command.txt`
 - `templates/input_files/two_point/tgevp_example_realdata_annotated.txt`
 - `templates/input_files/two_point/nstate_fit_1state_example_realdata_annotated.txt`
@@ -952,7 +997,10 @@ and plain-text example inputs under:
 - `templates/input_files/tmdwf/tmdwf_xfit_normalize_example_annotated.txt`
 - `templates/input_files/tmdwf/tmdwf_cs_kernel_example_annotated.txt`
 - `templates/input_files/tmdwf/tmdwf_cs_kernel_joint_example_annotated.txt`
+- `templates/input_files/emff/emff_nstate_fit_example_annotated.txt`
 - `templates/tmdwf/tmdwf_nstate_template.ipynb`
+- `templates/emff/emff_ratio_plot_template.ipynb`
+- `templates/emff/emff_nstate_fit_template.ipynb`
 
 These examples use repository-relative paths, so they can be run directly from the repository root.
 The `_annotated.txt` variants include inline comments describing each option and are meant to mirror the notebook `Option Guide` cells in plain-text form.
@@ -969,3 +1017,4 @@ This lets the repository keep realistic data and templates tracked, while avoidi
 - `lqcd_analysis.common` contains genuinely shared infrastructure such as bootstrap helpers, folding utilities, generic correlator helpers, and fit-table schema parsing.
 - `lqcd_analysis.two_point` submodules contain the current two-point analysis implementations, including N-state fitting, effective-mass extraction, plotting, TGEVP, and two-point-specific CSV loading. Import from the submodules directly.
 - `lqcd_analysis.tmdwf` submodules contain the current TMDWF ratio-fitting workflow and TMDWF-specific HDF5/data-model helpers. Import from the submodules directly.
+- `lqcd_analysis.emff` submodules contain the current EM form-factor HDF5 IO, ratio construction, plotting, and fit workflow. Import from the submodules directly.

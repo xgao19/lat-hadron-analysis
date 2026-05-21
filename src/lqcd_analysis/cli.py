@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from .emff.fit_nstate import run_emff_nstate_fit
 from .tmdwf.cs_kernel_extract import run_tmdwf_cs_kernel_workflow
 from .tmdwf.cs_kernel_joint import run_tmdwf_cs_kernel_joint_workflow
 from .tmdwf.cs_kernel_average import run_tmdwf_cs_kernel_average_workflow
@@ -203,6 +204,20 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Directory for joint CS-kernel surface tables, samples, and diagnostics",
     )
+
+    emff_parser = subparsers.add_parser(
+        "emff-nstate-fit",
+        help="Run bootstrap-based EMFF N-state fits from a text input file.",
+    )
+    emff_parser.add_argument(
+        "input_file",
+        help="Input control file for the EMFF fit workflow",
+    )
+    emff_parser.add_argument(
+        "--results-dir",
+        default=None,
+        help="Directory for EMFF fit tables, sample outputs, and plots",
+    )
     return parser
 
 
@@ -315,6 +330,15 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.command == "tmdwf-cs-kernel-joint":
         outputs = run_tmdwf_cs_kernel_joint_workflow(
+            args.input_file,
+            results_dir=args.results_dir,
+        )
+        for output in outputs:
+            print(output)
+        return
+
+    if args.command == "emff-nstate-fit":
+        outputs = run_emff_nstate_fit(
             args.input_file,
             results_dir=args.results_dir,
         )

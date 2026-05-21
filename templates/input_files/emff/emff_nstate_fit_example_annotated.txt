@@ -1,0 +1,117 @@
+# EMFF N-State Fit Control File - Annotated Reference
+#
+# FORMAT OVERVIEW
+# --------------
+# Lines starting with # are comments (ignored).
+# Blank lines are ignored.
+# The first non-empty non-comment line is: title Ns Nt a_fm
+# All other lines are: key value1 [value2 ...]
+#
+# REQUIRED KEYS
+# -------------
+# title_pattern Ns Nt a_fm  (first non-comment line)
+#   title_pattern: used for output directory naming and 2pt fit title
+#   Ns: spatial lattice extent (integer)
+#   Nt: temporal lattice extent (integer)
+#   a_fm: lattice spacing in fm (float)
+#
+# hadron_mass_gev <float> - Hadron mass in GeV used in the dispersion relation.
+#
+# c2pt <path>             - Two-point correlator HDF5 path pattern.
+#   Placeholders: {src_gamma}, {sink_gamma}, {pz}
+#   Example: ...c2pt...src{src_gamma}.h5
+#
+# c3pt_h5 <path>          - Three-point HDF5 file path/glob template.
+#   Placeholders: {src_gamma}, {pfx}, {pfy}, {pfz}, {tsep}
+#   Example: ...src{src_gamma}.PX{pfx}PY{pfy}PZ{pfz}dt{tsep}.h5
+#
+# c3pt_dataset_path <path> - Three-point internal HDF5 dataset path template.
+#   Placeholders: {insert_gamma}, {qx}, {qy}, {qz}
+#   Example: SS/{insert_gamma}/PX{qx}PY{qy}PZ{qz}
+#
+# src_gamma <str>         - Source gamma matrix (e.g., 5, T5, Z5).
+#                           Must match the 2pt HDF5 file name.
+#
+# sink_gamma <str>        - Sink gamma matrix (e.g., 5, T5, Z5).
+#                           Must match the SS/<sink_gamma>/ group in the 2pt HDF5 file.
+#
+# insert_gamma <str>      - Current insertion gamma matrix.
+#                           Options under SS/: 5, I, T, X, Y, Z,
+#                           T5, X5, Y5, Z5, SXT, SXY, SXZ, SYT, SYZ, SZT
+#                           For EMFF vector current: T (γ_t)
+#
+# nstates <int> [int]     - Number of states for fitting: 1 and/or 2.
+#
+# pflist <pfx> <pfy> <pfz> - Final momentum Pf (3 integers).
+#                            The ratio uses Pi = Pf - q and reads both
+#                            initial/final 2pt HDF5 datasets.
+#
+# qxlist <q1> <q2> ...    - Momentum transfer x-components (integers).
+# qylist <q1> <q2> ...    - Momentum transfer y-components.
+# qzlist <q1> <q2> ...    - Momentum transfer z-components.
+#   Can also use qxrange/qyrange/qzrange with "start stop" format.
+#
+# average_transverse_orbits <true|false>
+#   When true, average degenerate transverse q sign flips and x/y exchanges,
+#   requiring Pf_x=Pf_y=0. Only canonical non-negative representatives are saved.
+#
+# tslist <t1> <t2> ...    - Time separation values (integers).
+#   Can also use tsrange_emff "start stop".
+#
+# fit_method <str>        - Fitting method:
+#   "2state"    - Full 2-state model for R(tsep, tau)
+#   "summation" - Sum over tau, linear fit in tsep
+#   "plateau"   - Constant fit to plateau region
+#
+# The ratio follows Eq. (6) of arXiv:2102.06047 with energies from
+# E(P)=sqrt(hadron_mass_gev^2+P^2).
+#
+# tau_range <tau_min> <tau_offset>
+#   tau_min: minimum insertion time (inclusive).
+#   tau_offset: offset from tsep for max tau.
+#               -1 means tsep-1, -2 means tsep-2, etc.
+#   Actual tau range per tsep: [tau_min, tsep + tau_offset]
+#
+# tsep_range <tsep_min> <tsep_max>
+#   tsep values (from tslist) to include in the fit.
+#
+# two_point_fit_root <path>   - Root directory of 2pt fit results.
+#   Expected structure: {root}/{title}/tables/{title}_*_{n}state_tmax*_fits.txt
+#
+# two_point_fit_window_by_pz <path> - Path to 2pt fit window table.
+#   Format: "pz tmin tmax" per line (no gm column needed).
+#
+# OPTIONAL KEYS
+# -------------
+# binsize <int>           - Bin size before bootstrap (default: 1).
+# bootstrap_samples <int> - Number of bootstrap samples (default: auto = n_cfg).
+# bootstrap_size <int>    - Bootstrap draw size (default: auto = n_cfg).
+# seed <int>              - Bootstrap random seed (default: 2026).
+# plot <true|false>       - Generate plots (default: false).
+# results_dir <path>      - Output directory (default: results_emff/ next to input).
+
+l48c64a060_m140_EMFF 48 64 0.060
+hadron_mass_gev 0.140
+c2pt /path/to/c2pt...src{src_gamma}.h5
+c3pt_h5 /path/to/*src{src_gamma}.*PX{pfx}PY{pfy}PZ{pfz}dt{tsep}.h5
+c3pt_dataset_path SS/{insert_gamma}/PX{qx}PY{qy}PZ{qz}
+src_gamma 5
+sink_gamma 5
+insert_gamma T
+nstates 2
+pflist 0 0 0
+qxlist -2 -1 0 1 2
+qylist -2 -1 0 1 2
+qzlist -2 -1 0 1 2
+average_transverse_orbits true
+tslist 4 6 8 10 12
+fit_method 2state
+tau_range 1 -1
+tsep_range 4 12
+binsize 1
+bootstrap_samples auto
+seed 2026
+two_point_fit_root /path/to/2pt_fit_results
+two_point_fit_window_by_pz /path/to/2pt_fit_windows.txt
+plot true
+results_dir results_emff
