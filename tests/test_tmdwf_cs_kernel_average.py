@@ -254,6 +254,64 @@ class TMDWFCSKernelAverageTests(unittest.TestCase):
             )
             self.assertIn("x_range 0.0000000000e+00 3.0000000000e-01", summary)
 
+    def test_average_central_value_uses_bootstrap_median(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            input_root = tmp / "cs_kernel"
+            x_grid = [0.4, 0.6]
+
+            self._write_source_outputs(
+                input_root,
+                source_title="demo_src5",
+                output_title="demo_pzmultiPz",
+                reference_bT=0,
+                reference_pz=5,
+                reference_pz_label="5-6",
+                dP_gev=0.25,
+                x_grid=x_grid,
+                sample_values={
+                    0: [-0.2, -0.2],
+                    1: [-0.1, -0.1],
+                    2: [-0.3, -0.3],
+                    3: [-20.0, -20.0],
+                    4: [-0.15, -0.15],
+                },
+                band_shift=0.0,
+            )
+
+            input_file = tmp / "input_avg_outlier.txt"
+            input_file.write_text(
+                "\n".join(
+                    [
+                        "title_pattern demo_src*",
+                        f"input_root {input_root}",
+                        "lattice_spacing_fm 0.076",
+                        "gm T5",
+                        "eta eta0",
+                        "component real",
+                        "nstates 1",
+                        "normalization_mode raw",
+                        "scheme CG",
+                        "extraction_type type2",
+                        "kernel_label LO",
+                        "bTrange 0 0",
+                        "x_range 0.3 0.7",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            parsed = parse_tmdwf_cs_kernel_average_input(input_file)
+            sources = discover_tmdwf_cs_kernel_sources(parsed)
+            rows, _, _ = summarize_tmdwf_cs_kernel_average(parsed, sources)
+
+            sample_means = np.array([-0.2, -0.1, -0.3, -20.0, -0.15], dtype=float)
+            q16, q50, q84 = np.percentile(sample_means, [16.0, 50.0, 84.0])
+            self.assertTrue(np.isclose(rows[0].value, q50))
+            self.assertTrue(np.isclose(rows[0].stat_err, 0.5 * (q84 - q16)))
+            self.assertFalse(np.isclose(rows[0].value, np.mean(sample_means)))
+
 
 if __name__ == "__main__":
     unittest.main()

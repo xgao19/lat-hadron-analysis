@@ -286,12 +286,31 @@ def _summarize_percentile(values: np.ndarray) -> tuple[float, float]:
     return 0.5 * (p16 + p84), 0.5 * (p84 - p16)
 
 
+def _central_complex_reference(
+    sample_map: dict[int, dict[int, tuple[int, complex]]],
+    *,
+    bz: int,
+) -> complex:
+    values: list[complex] = []
+    for by_bz in sample_map.values():
+        entry = by_bz.get(bz)
+        if entry is None:
+            continue
+        success, value = entry
+        if success == 1 and np.isfinite(value):
+            values.append(value)
+    if not values:
+        return complex(np.nan, np.nan)
+    real_center, _ = _summarize_percentile(np.asarray([value.real for value in values], dtype=float))
+    imag_center, _ = _summarize_percentile(np.asarray([value.imag for value in values], dtype=float))
+    return complex(real_center, imag_center)
+
+
 def _compute_normalized_sample(
     mode: str,
     target_value: complex,
     ref_same_pz_bt0: complex | None,
     ref_pz0_same_bt: complex | None,
-    ref_pz0_bt0: complex | None,
 ) -> complex:
     if mode == "mode1":
         assert ref_same_pz_bt0 is not None
@@ -299,8 +318,15 @@ def _compute_normalized_sample(
     if mode == "mode2":
         assert ref_pz0_same_bt is not None
         return target_value / ref_pz0_same_bt
-    assert ref_same_pz_bt0 is not None and ref_pz0_same_bt is not None and ref_pz0_bt0 is not None
-    return (target_value / ref_same_pz_bt0) / (ref_pz0_same_bt / ref_pz0_bt0)
+    raise ValueError(f"unsupported normalization mode for direct sample normalization: {mode}")
+
+
+def _compute_mode3_normalized_sample(
+    target_value: complex,
+    ref_pz0_same_bt: complex,
+    central_extra_factor: complex,
+) -> complex:
+    return (target_value / ref_pz0_same_bt) * central_extra_factor
 
 
 def _write_normalized_outputs(
@@ -438,6 +464,22 @@ def run_tmdwf_normalization(
                         reference_uses_complex = reference_uses_complex or mode3_used_complex
                         _require_reference_bz0(mode3_fit_rows, mode3_samples, label=f"pz=0 gm={gm} eta={eta} bT=0")
 
+                    mode3_central_extra_factor: complex | None = None
+                    if spec.normalization_mode == "mode3":
+                        assert mode1_samples is not None and mode3_samples is not None
+                        central_ref_same_pz_bt0 = _central_complex_reference(mode1_samples, bz=0)
+                        central_ref_pz0_bt0 = _central_complex_reference(mode3_samples, bz=0)
+                        if (
+                            not np.isfinite(central_ref_same_pz_bt0)
+                            or central_ref_same_pz_bt0 == 0.0
+                            or not np.isfinite(central_ref_pz0_bt0)
+                        ):
+                            raise ValueError(
+                                f"TMDWF normalization could not compute finite mode3 central factor "
+                                f"for title={title}, gm={gm}, eta={eta}, bT={bT}"
+                            )
+                        mode3_central_extra_factor = central_ref_pz0_bt0 / central_ref_same_pz_bt0
+
                     fit_rows_out: list[dict[str, str]] = []
                     sample_rows_out: list[tuple[int, int, int, float]] = []
                     all_sample_ids = sorted(target_samples)
@@ -453,8 +495,8 @@ def run_tmdwf_normalization(
                                 sample_rows_out.append((bz, sample_id, 0, np.nan))
                                 continue
 
-                            ref1 = ref2 = ref3 = None
-                            if mode1_samples is not None:
+                            ref1 = ref2 = None
+                            if mode1_samples is not None and spec.normalization_mode != "mode3":
                                 ref_entry = mode1_samples.get(sample_id, {}).get(0)
                                 if ref_entry is None or ref_entry[0] != 1 or not np.isfinite(ref_entry[1]) or ref_entry[1] == 0.0:
                                     sample_rows_out.append((bz, sample_id, 0, np.nan))
@@ -466,20 +508,21 @@ def run_tmdwf_normalization(
                                     sample_rows_out.append((bz, sample_id, 0, np.nan))
                                     continue
                                 ref2 = ref_entry[1]
-                            if mode3_samples is not None:
-                                ref_entry = mode3_samples.get(sample_id, {}).get(0)
-                                if ref_entry is None or ref_entry[0] != 1 or not np.isfinite(ref_entry[1]) or ref_entry[1] == 0.0:
-                                    sample_rows_out.append((bz, sample_id, 0, np.nan))
-                                    continue
-                                ref3 = ref_entry[1]
 
-                            normalized_complex = _compute_normalized_sample(
-                                spec.normalization_mode,
-                                target_entry[1],
-                                ref1,
-                                ref2,
-                                ref3,
-                            )
+                            if spec.normalization_mode == "mode3":
+                                assert ref2 is not None and mode3_central_extra_factor is not None
+                                normalized_complex = _compute_mode3_normalized_sample(
+                                    target_entry[1],
+                                    ref2,
+                                    mode3_central_extra_factor,
+                                )
+                            else:
+                                normalized_complex = _compute_normalized_sample(
+                                    spec.normalization_mode,
+                                    target_entry[1],
+                                    ref1,
+                                    ref2,
+                                )
                             normalized = float(normalized_complex.real if spec.component == "real" else normalized_complex.imag)
                             success = int(np.isfinite(normalized))
                             sample_rows_out.append((bz, sample_id, success, normalized))

@@ -23,8 +23,11 @@ Durable project memory for future sessions. Keep this file concise and focused o
 - Avoid vague names like "HDF5 patterns" for EMFF data after both 2pt and 3pt became HDF5; prefer specific names such as 2pt HDF5 path or 3pt HDF5 path.
 - Do not average already-built ratios for momentum orbits; average correlators first to preserve the intended estimator.
 - Notebook files under `/Users/xiang/Desktop/docs/...` are outside the repo and usually need escalated write permission.
+- TMDWF mode3 sample normalization uses each bootstrap target divided by the matching pz=0 same-bT sample, then multiplies by one central complex factor from pz=0,bT=0 over same-pz,bT=0 references.
+- CS kernel averaged central values should use the bootstrap median with percentile half-widths, not the arithmetic mean.
 
 ## Useful Checks
 - Targeted tests: `python3 -m pytest tests/test_emff_fit.py`
+- Targeted TMDWF CS kernel tests: `python3 -m pytest tests/test_tmdwf_cs_kernel_average.py`
 - Compile EMFF code: `python3 -m compileall -q src/lqcd_analysis/emff src/lqcd_analysis/notebook_workflows.py`
 - Validate EMFF template notebooks with `python3 -m json.tool`.

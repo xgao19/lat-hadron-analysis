@@ -357,8 +357,8 @@ def _sample_summary(samples: np.ndarray) -> tuple[float, float]:
     values = np.asarray(samples, dtype=float)
     if values.size == 0:
         return np.nan, np.nan
-    q16, q84 = np.percentile(values, [16.0, 84.0])
-    return float(np.mean(values)), float(0.5 * (q84 - q16))
+    q16, q50, q84 = np.percentile(values, [16.0, 50.0, 84.0])
+    return float(q50), float(0.5 * (q84 - q16))
 
 
 def _summarize_selected_bootstrap_rows(concatenated: np.ndarray, sample_ids: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:

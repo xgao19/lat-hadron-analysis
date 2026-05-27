@@ -2,8 +2,8 @@
 
 Update this file before every commit. Keep each entry short: one or two concise paragraphs at most.
 
-## Uncommitted - EMFF HDF5 Ratio Workflow
+## Uncommitted - TMDWF Mode3 Normalization
 
-Migrated the EMFF ratio workflow to read 2pt correlators directly from HDF5, use the Eq. (6) ratio from arXiv:2102.06047, compute energies with `hadron_mass_gev` through the dispersion relation, average transverse momentum orbits at the raw-correlator level before constructing ratios, and expose the workflow through the CLI.
+Updated TMDWF mode3 normalization so bootstrap samples use the pz=0 same-bT denominator with a central complex bT=0 correction factor, and reused the same rule in x-fit normalization. CS kernel average summaries now report bootstrap medians with percentile half-widths.
 
-Updated the active analysis notebook, repo templates, README, `AGENTS.md`, `SESSION_MEMORY.md`, and this log to match the backend workflow and commit documentation practice. Verified targeted EMFF tests, module compilation, template JSON validity, and successful execution of the active analysis notebook.
+Added focused tests for the median-centered CS kernel average and the revised mode3 sample outputs. Verified TMDWF module compilation and the CS kernel average test file; the broader `tests/test_tmdwf_fit.py` collection is currently blocked by its stale `fit_tmdwf_mean_component` import.
