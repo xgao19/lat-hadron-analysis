@@ -14,6 +14,7 @@ class CLITests(unittest.TestCase):
         self.assertIn("2pt-effective-mass", help_text)
         self.assertIn("tmdwf-normalize", help_text)
         self.assertIn("tmdwf-fourier", help_text)
+        self.assertIn("tmdwf-nstate-diff-fit", help_text)
         self.assertIn("tmdwf-ratio-fourier-t", help_text)
         self.assertIn("tmdwf-x-nstate-fit", help_text)
         self.assertIn("tmdwf-xfit-normalize", help_text)
@@ -45,6 +46,19 @@ class CLITests(unittest.TestCase):
         printed = output_buffer.getvalue()
         self.assertIn("/tmp/norm_fit.txt", printed)
         self.assertIn("/tmp/norm_samples.txt", printed)
+
+    def test_tmdwf_nstate_diff_cli_dispatches_to_workflow(self) -> None:
+        output_buffer = io.StringIO()
+        fake_outputs = [Path("/tmp/diff_fit.txt"), Path("/tmp/diff_samples.txt")]
+        with patch("lqcd_analysis.cli.run_tmdwf_nstate_diff_fit", return_value=fake_outputs) as mock_run:
+            with redirect_stdout(output_buffer):
+                main(["tmdwf-nstate-diff-fit", "diff_input.txt", "--results-dir", "/tmp/diff_results"])
+
+        self.assertEqual(mock_run.call_args.args[0], "diff_input.txt")
+        self.assertEqual(mock_run.call_args.kwargs["results_dir"], "/tmp/diff_results")
+        printed = output_buffer.getvalue()
+        self.assertIn("/tmp/diff_fit.txt", printed)
+        self.assertIn("/tmp/diff_samples.txt", printed)
 
     def test_tmdwf_fourier_cli_dispatches_to_workflow(self) -> None:
         output_buffer = io.StringIO()

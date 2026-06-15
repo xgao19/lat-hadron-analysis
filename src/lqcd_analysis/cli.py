@@ -9,6 +9,7 @@ from .tmdwf.cs_kernel_joint import run_tmdwf_cs_kernel_joint_workflow
 from .tmdwf.cs_kernel_average import run_tmdwf_cs_kernel_average_workflow
 from .tmdwf.fourier import run_tmdwf_fourier_workflow
 from .tmdwf.fit_nstate import run_tmdwf_nstate_fit
+from .tmdwf.nstate_diff_fit import run_tmdwf_nstate_diff_fit
 from .tmdwf.normalize import run_tmdwf_normalization
 from .tmdwf.ratio_fourier_t import run_tmdwf_ratio_fourier_t_workflow
 from .tmdwf.x_nstate_fit import run_tmdwf_x_nstate_fit_workflow
@@ -91,6 +92,20 @@ def build_parser() -> argparse.ArgumentParser:
         "--results-dir",
         default=None,
         help="Directory for TMDWF fit tables, sample outputs, and summaries",
+    )
+
+    tmdwf_diff_parser = subparsers.add_parser(
+        "tmdwf-nstate-diff-fit",
+        help="Run TMDWF adjacent-b difference N-state fits and graph reconstruction.",
+    )
+    tmdwf_diff_parser.add_argument(
+        "input_file",
+        help="Input control file for the TMDWF adjacent-b difference fit workflow",
+    )
+    tmdwf_diff_parser.add_argument(
+        "--results-dir",
+        default=None,
+        help="Directory for reconstructed TMDWF fit tables, samples, and diagnostics",
     )
 
     tmdwf_normalize_parser = subparsers.add_parser(
@@ -258,6 +273,15 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.command == "tmdwf-nstate-fit":
         outputs = run_tmdwf_nstate_fit(
+            args.input_file,
+            results_dir=args.results_dir,
+        )
+        for output in outputs:
+            print(output)
+        return
+
+    if args.command == "tmdwf-nstate-diff-fit":
+        outputs = run_tmdwf_nstate_diff_fit(
             args.input_file,
             results_dir=args.results_dir,
         )

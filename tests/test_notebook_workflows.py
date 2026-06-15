@@ -14,6 +14,7 @@ from lqcd_analysis.notebook_workflows import (
     render_tmdwf_cs_kernel_average_input_text,
     render_tmdwf_cs_kernel_joint_input_text,
     render_tmdwf_fourier_input_text,
+    render_tmdwf_nstate_diff_input_text,
     render_tmdwf_ratio_fourier_t_input_text,
     render_tmdwf_fit_input_text,
     render_tmdwf_normalize_input_text,
@@ -26,6 +27,7 @@ from lqcd_analysis.notebook_workflows import (
     run_tmdwf_cs_kernel_average_from_notebook,
     run_tmdwf_cs_kernel_joint_from_notebook,
     run_tmdwf_fourier_from_notebook,
+    run_tmdwf_nstate_diff_from_notebook,
     run_tmdwf_ratio_fourier_t_from_notebook,
     run_tmdwf_fit_from_notebook,
     run_tmdwf_normalize_from_notebook,
@@ -39,6 +41,7 @@ from lqcd_analysis.notebook_workflows import (
     validate_tmdwf_cs_kernel_average_notebook_config,
     validate_tmdwf_cs_kernel_joint_notebook_config,
     validate_tmdwf_fourier_notebook_config,
+    validate_tmdwf_nstate_diff_notebook_config,
     validate_tmdwf_ratio_fourier_t_notebook_config,
     validate_tmdwf_notebook_config,
     validate_tmdwf_normalize_notebook_config,
@@ -46,6 +49,7 @@ from lqcd_analysis.notebook_workflows import (
     validate_tmdwf_xfit_normalize_notebook_config,
 )
 from lqcd_analysis.tmdwf.fit_nstate import parse_tmdwf_fit_input
+from lqcd_analysis.tmdwf.nstate_diff_fit import parse_tmdwf_nstate_diff_input
 from lqcd_analysis.two_point.fit_nstate import parse_nstate_fit_input
 from lqcd_analysis.two_point.tgevp import parse_tgevp_input
 
@@ -457,6 +461,35 @@ class NotebookWorkflowTests(unittest.TestCase):
         parsed = validate_tmdwf_notebook_config(self.tmdwf_config)
         self.assertEqual(parsed.fit_target, "ratio")
         self.assertEqual(parsed.nstates, (1, 2))
+
+    def test_render_tmdwf_nstate_diff_text(self) -> None:
+        config = {
+            **self.tmdwf_config,
+            "bTlist": [0, 1],
+            "bzlist": [0, 1],
+        }
+        config.pop("fit_target")
+        text = render_tmdwf_nstate_diff_input_text(config)
+        self.assertIn("fit_component both", text)
+        self.assertIn("bTlist 0 1", text)
+        self.assertIn("bzlist 0 1", text)
+        self.assertNotIn("fit_target", text)
+        match = re.search(r"fit_window (.+)", text)
+        self.assertIsNotNone(match)
+        override_path = Path(match.group(1).strip())
+        self.assertEqual(override_path.read_text(encoding="utf-8"), "0 3 6\n")
+
+    def test_validate_tmdwf_nstate_diff_notebook_config(self) -> None:
+        config = {
+            **self.tmdwf_config,
+            "bTlist": [0, 1],
+            "bzlist": [0, 1],
+        }
+        config.pop("fit_target")
+        parsed = validate_tmdwf_nstate_diff_notebook_config(config)
+        self.assertEqual(parsed.fit_component, "both")
+        self.assertEqual(parsed.bTlist, (0, 1))
+        self.assertEqual(parsed.bzlist, (0, 1))
 
     def test_validate_nstate_and_tmdwf_configs_without_tsrange(self) -> None:
         nstate_config = dict(self.nstate_config)
@@ -938,6 +971,12 @@ class NotebookWorkflowTests(unittest.TestCase):
             run_tmdwf_fit_from_notebook(self.tmdwf_config, results_dir="/tmp/explicit_tmdwf")
         self.assertEqual(Path(mock_tmdwf.call_args.kwargs["results_dir"]), Path("/tmp/explicit_tmdwf"))
 
+        with patch("lqcd_analysis.notebook_workflows.run_tmdwf_nstate_diff_fit", return_value=[] ) as mock_diff:
+            config = {**self.tmdwf_config, "bTlist": [0, 1], "bzlist": [0, 1]}
+            config.pop("fit_target")
+            run_tmdwf_nstate_diff_from_notebook(config, results_dir="/tmp/explicit_tmdwf_diff")
+        self.assertEqual(Path(mock_diff.call_args.kwargs["results_dir"]), Path("/tmp/explicit_tmdwf_diff"))
+
         with patch("lqcd_analysis.notebook_workflows.run_tmdwf_fourier_workflow", return_value=[] ) as mock_fourier:
             import tempfile
 
@@ -1039,6 +1078,13 @@ class NotebookWorkflowTests(unittest.TestCase):
             self.assertEqual(Path(mock_tmdwf.call_args.kwargs["results_dir"]), Path("/tmp/vscode").resolve())
 
         with patch.dict(sys.modules, {"IPython": fake_ipython}):
+            with patch("lqcd_analysis.notebook_workflows.run_tmdwf_nstate_diff_fit", return_value=[] ) as mock_diff:
+                config = {**self.tmdwf_config, "bTlist": [0, 1], "bzlist": [0, 1]}
+                config.pop("fit_target")
+                run_tmdwf_nstate_diff_from_notebook(config)
+            self.assertEqual(Path(mock_diff.call_args.kwargs["results_dir"]), Path("/tmp/vscode").resolve())
+
+        with patch.dict(sys.modules, {"IPython": fake_ipython}):
             with patch("lqcd_analysis.notebook_workflows.run_tmdwf_fourier_workflow", return_value=[] ) as mock_fourier:
                 import tempfile
 
@@ -1126,6 +1172,7 @@ class NotebookWorkflowTests(unittest.TestCase):
             "templates/two_point/nstate_fit_1state_template.ipynb",
             "templates/two_point/nstate_fit_2state_template.ipynb",
             "templates/tmdwf/tmdwf_nstate_template.ipynb",
+            "templates/tmdwf/tmdwf_nstate_diff_template.ipynb",
             "templates/tmdwf/tmdwf_fourier_template.ipynb",
             "templates/tmdwf/tmdwf_normalize_template.ipynb",
             "templates/tmdwf/tmdwf_ratio_fourier_t_template.ipynb",
@@ -1196,6 +1243,17 @@ class NotebookWorkflowTests(unittest.TestCase):
         self.assertIn("\"bare_matrix_root\":", joined)
         self.assertIn("\"normalization_mode\": \"mode1\"", joined)
 
+    def test_tmdwf_nstate_diff_template_contains_expected_workflow_hooks(self) -> None:
+        path = Path("templates/tmdwf/tmdwf_nstate_diff_template.ipynb")
+        notebook = json.loads(path.read_text(encoding="utf-8"))
+        joined = "\n".join("".join(cell.get("source", [])) for cell in notebook["cells"])
+        self.assertIn("render_tmdwf_nstate_diff_input_text", joined)
+        self.assertIn("validate_tmdwf_nstate_diff_notebook_config", joined)
+        self.assertIn("run_tmdwf_nstate_diff_from_notebook", joined)
+        self.assertIn("\"bTlist\": [0, 1, 2]", joined)
+        self.assertIn("\"bzlist\": [0, 1, 2, 3]", joined)
+        self.assertIn("diagnostics/", joined)
+
     def test_tmdwf_cs_kernel_template_contains_expected_workflow_hooks(self) -> None:
         path = Path("templates/tmdwf/tmdwf_cs_kernel_template.ipynb")
         notebook = json.loads(path.read_text(encoding="utf-8"))
@@ -1245,6 +1303,7 @@ class NotebookWorkflowTests(unittest.TestCase):
         nstate_1_input = Path("templates/input_files/two_point/nstate_fit_1state_example_realdata.txt")
         nstate_2_input = Path("templates/input_files/two_point/nstate_fit_2state_example_realdata.txt")
         tmdwf_input = Path("templates/input_files/tmdwf/tmdwf_nstate_example.txt")
+        tmdwf_diff_annotated = Path("templates/input_files/tmdwf/tmdwf_nstate_diff_example_annotated.txt")
         tmdwf_fourier_input = Path("templates/input_files/tmdwf/tmdwf_fourier_example.txt")
         tmdwf_fourier_annotated = Path("templates/input_files/tmdwf/tmdwf_fourier_example_annotated.txt")
         tmdwf_cs_input = Path("templates/input_files/tmdwf/tmdwf_cs_kernel_example.txt")
@@ -1261,6 +1320,7 @@ class NotebookWorkflowTests(unittest.TestCase):
         self.assertTrue(nstate_1_input.exists())
         self.assertTrue(nstate_2_input.exists())
         self.assertTrue(tmdwf_input.exists())
+        self.assertTrue(tmdwf_diff_annotated.exists())
         self.assertTrue(tmdwf_fourier_input.exists())
         self.assertTrue(tmdwf_fourier_annotated.exists())
         self.assertTrue(tmdwf_cs_input.exists())
@@ -1276,9 +1336,11 @@ class NotebookWorkflowTests(unittest.TestCase):
         parsed_tgevp = parse_tgevp_input(tgevp_input)
         parsed_nstate = parse_nstate_fit_input(nstate_2_input)
         parsed_tmdwf = parse_tmdwf_fit_input(tmdwf_input)
+        parsed_tmdwf_diff = parse_tmdwf_nstate_diff_input(tmdwf_diff_annotated)
         self.assertEqual(parsed_tgevp.pzlist, (0,))
         self.assertEqual(parsed_nstate.pzlist, (0,))
         self.assertEqual(parsed_tmdwf.pzlist, (0,))
+        self.assertEqual(parsed_tmdwf_diff.bTlist, (0, 1, 2))
 
     def test_example_data_files_exist(self) -> None:
         base = Path("examples/data/l64c64a076_m140/comb_c2pt_csv")

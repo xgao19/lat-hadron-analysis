@@ -322,6 +322,43 @@ Useful extra TMDWF fit controls:
 These TMDWF templates are intentionally example workflow templates rather than
 fully runnable tracked examples, because they depend on user-local HDF5 data.
 
+## Experimental TMDWF Adjacent-b Difference Fit
+
+The primary TMDWF matrix-element extraction path remains `tmdwf-nstate-fit`.
+The repository also includes an experimental adjacent-b difference workflow for
+diagnostics and method comparisons:
+
+```bash
+lqcd-analysis tmdwf-nstate-diff-fit input_tmdwf_nstate_diff.txt
+```
+
+This workflow keeps the same TMDWF ratio model and two-point inputs as the main
+N-state fit, but reorganizes the fit in b space:
+
+- fits the local anchor `(bT = 0, bz = 0)` directly
+- builds paired-bootstrap adjacent differences `Delta R(t) = R_v(t) - R_u(t)`
+- fits adjacent `bz -> bz + 1` and adjacent `bT -> bT + 1` edges with linear
+  weighted least squares
+- reconstructs absolute `m_i(bT, bz)` values from the anchor and edge
+  differences using graph least squares
+- writes grouped `..._fit.txt` and `..._samples.txt` outputs in the same shape
+  consumed by `tmdwf-normalize` and `tmdwf-fourier`
+- writes diagnostics for edge fits, graph residuals, plaquette closure, and the
+  fixed-`bT` bz-chain reconstruction
+
+Use this workflow as an experimental cross-check when studying correlations
+between neighboring b points. Do not treat it as the recommended production
+replacement for the direct N-state fit unless the diagnostics and downstream
+physics checks support that choice for a specific analysis.
+
+Template inputs are provided in:
+
+- `templates/input_files/tmdwf/tmdwf_nstate_diff_example_annotated.txt`
+
+A matching notebook template is also provided in:
+
+- `templates/tmdwf/tmdwf_nstate_diff_template.ipynb`
+
 ## TMDWF Normalize
 
 The extracted TMDWF matrix elements can also be normalized in a separate
@@ -847,10 +884,19 @@ For the joint CS-kernel path, replace steps 4 and 5 with:
 
 4. `tmdwf-cs-kernel-joint`
 
+The recommended first step is the direct `tmdwf-nstate-fit` workflow. The
+experimental `tmdwf-nstate-diff-fit` workflow writes compatible grouped
+fit/sample outputs, so it can be substituted for method-comparison studies, but
+it is not the default production path.
+
 The data products passed between these steps are:
 
 - `tmdwf-nstate-fit`:
   writes grouped matrix-element outputs in `m0(bT, bz)`, including grouped fit tables and grouped bootstrap sample tables.
+- `tmdwf-nstate-diff-fit`:
+  optionally writes the same grouped matrix-element output shape after
+  adjacent-b difference fitting and graph reconstruction, together with
+  diagnostics for the edge and graph consistency checks.
 - `tmdwf-normalize`:
   reads those grouped `m0` outputs and writes normalized grouped `m0` outputs with the same general structure.
 - `tmdwf-fourier`:
@@ -947,6 +993,7 @@ Current notebook templates:
 - `templates/two_point/nstate_fit_1state_template.ipynb`
 - `templates/two_point/nstate_fit_2state_template.ipynb`
 - `templates/tmdwf/tmdwf_nstate_template.ipynb`
+- `templates/tmdwf/tmdwf_nstate_diff_template.ipynb`
 - `templates/tmdwf/tmdwf_normalize_template.ipynb`
 - `templates/tmdwf/tmdwf_fourier_template.ipynb`
 - `templates/tmdwf/tmdwf_ratio_fourier_t_template.ipynb`
@@ -992,6 +1039,7 @@ and plain-text example inputs under:
 - `templates/input_files/two_point/nstate_fit_1state_example_realdata_annotated.txt`
 - `templates/input_files/two_point/nstate_fit_2state_example_realdata_annotated.txt`
 - `templates/input_files/tmdwf/tmdwf_nstate_example_annotated.txt`
+- `templates/input_files/tmdwf/tmdwf_nstate_diff_example_annotated.txt`
 - `templates/input_files/tmdwf/tmdwf_ratio_fourier_t_example_annotated.txt`
 - `templates/input_files/tmdwf/tmdwf_x_nstate_fit_example_annotated.txt`
 - `templates/input_files/tmdwf/tmdwf_xfit_normalize_example_annotated.txt`
@@ -999,6 +1047,7 @@ and plain-text example inputs under:
 - `templates/input_files/tmdwf/tmdwf_cs_kernel_joint_example_annotated.txt`
 - `templates/input_files/emff/emff_nstate_fit_example_annotated.txt`
 - `templates/tmdwf/tmdwf_nstate_template.ipynb`
+- `templates/tmdwf/tmdwf_nstate_diff_template.ipynb`
 - `templates/emff/emff_ratio_plot_template.ipynb`
 - `templates/emff/emff_nstate_fit_template.ipynb`
 

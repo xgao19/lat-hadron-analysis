@@ -1,0 +1,49 @@
+# Example TMDWF adjacent-b difference N-state fit input file
+# Run with:
+#   lqcd-analysis tmdwf-nstate-diff-fit templates/input_files/tmdwf/tmdwf_nstate_diff_example_annotated.txt
+#
+# First line format:
+#   title_pattern Ns Nt lattice_spacing_fm
+l64c64a076_m140_fit_pz* 64 64 0.076
+
+# Matrix-element component(s) to reconstruct: real, imag, or both.
+fit_component both
+
+# Supported state choices: 1, 2, or both.
+nstates 1 2
+
+# Momentum and operator labels.
+pzlist 0
+gmlist T5
+etalist eta0
+Tdirlist plus minus
+
+# The graph anchor is fixed at bT=0, bz=0, so both lists must include 0.
+# The workflow uses adjacent entries in the sorted lists as graph edges.
+bTlist 0 1 2
+bzlist 0 1 2 3
+
+# HDF5 file and dataset templates.
+qtmdwf_h5 /path/to/qTMDWF_..._O{gm}.h5
+dataset_path_template SP/{gm}/PX0PY0PZ{pz}/{Tdir}/{eta}/bT{bT}/bz{bz}
+
+# Raw time range retained before fitting. If omitted, defaults to [0, Nt//2 - 1].
+tsrange 0 20
+
+# Two-point references reused by the ratio model.
+two_point_fit_root examples/outputs/tmdwf_two_point_fit_ref
+two_point_fit_window_by_pz templates/input_files/tmdwf/tmdwf_two_point_fit_window_by_pz_example.txt
+c2pt examples/data/l64c64a076_m140/comb_c2pt_csv/c2pt_5_5_k0_pz*_real.csv
+fold_t periodic
+
+# Fit settings.
+binsize 1
+bootstrap_samples 32
+bootstrap_size 32
+seed 2026
+two_point_fit_sample_coupled false
+fit_window /path/to/tmdwf_fit_windows.txt
+
+# Output directory. Main fit/sample tables keep the standard tmdwf-nstate-fit
+# naming and can be used directly as input_root for tmdwf-normalize/tmdwf-fourier.
+results_dir examples/outputs/tmdwf_nstate_diff_fit_example

@@ -22,6 +22,10 @@ from .tmdwf.fourier import (
     run_tmdwf_fourier_workflow,
 )
 from .tmdwf.fit_nstate import parse_tmdwf_fit_input, run_tmdwf_nstate_fit
+from .tmdwf.nstate_diff_fit import (
+    parse_tmdwf_nstate_diff_input,
+    run_tmdwf_nstate_diff_fit,
+)
 from .tmdwf.normalize import parse_tmdwf_normalize_input, run_tmdwf_normalization
 from .tmdwf.ratio_fourier_t import (
     parse_tmdwf_ratio_fourier_t_input,
@@ -140,6 +144,37 @@ TMDWF_INPUT_KEYS = {
     "results_dir",
 }
 TMDWF_RUN_KEYS = {"results_dir"}
+TMDWF_NSTATE_DIFF_KEYS = {
+    "title_pattern",
+    "ns",
+    "nt",
+    "lattice_spacing_fm",
+    "two_point_fit_sample_coupled",
+    "fit_component",
+    "nstates",
+    "pzlist",
+    "gmlist",
+    "etalist",
+    "Tdirlist",
+    "bTlist",
+    "bTrange",
+    "bzlist",
+    "bzrange",
+    "binsize",
+    "bootstrap_samples",
+    "bootstrap_size",
+    "seed",
+    "fit_window",
+    "qtmdwf_h5",
+    "dataset_path_template",
+    "two_point_fit_root",
+    "two_point_fit_window_by_pz",
+    "c2pt",
+    "fold_t",
+    "tsrange",
+    "results_dir",
+}
+TMDWF_NSTATE_DIFF_RUN_KEYS = {"results_dir"}
 TMDWF_FOURIER_KEYS = {
     "title_pattern",
     "input_root",
@@ -609,6 +644,88 @@ def render_tmdwf_fit_input_text(config: dict[str, Any]) -> str:
         "bootstrap_size",
         "seed",
         "plot",
+        "results_dir",
+        "two_point_fit_sample_coupled",
+    ):
+        if optional_key in config and config[optional_key] is not None:
+            lines.append(f"{optional_key} {_as_scalar_string(config[optional_key])}")
+    return "\n".join(lines) + "\n"
+
+
+def render_tmdwf_nstate_diff_input_text(config: dict[str, Any]) -> str:
+    if isinstance(config.get("fit_window"), dict):
+        config = dict(config)
+        config["fit_window"] = str(
+            _materialize_tmdwf_fit_window_file(config["fit_window"])
+        )
+    if isinstance(config.get("two_point_fit_window_by_pz"), dict):
+        config = dict(config)
+        config["two_point_fit_window_by_pz"] = str(
+            _materialize_tmdwf_two_point_fit_window_file(config["two_point_fit_window_by_pz"])
+        )
+    config = _subset_config(config, TMDWF_NSTATE_DIFF_KEYS)
+    required = [
+        "title_pattern",
+        "ns",
+        "nt",
+        "lattice_spacing_fm",
+        "fit_component",
+        "nstates",
+        "pzlist",
+        "gmlist",
+        "etalist",
+        "Tdirlist",
+        "fit_window",
+        "qtmdwf_h5",
+        "dataset_path_template",
+        "two_point_fit_root",
+        "two_point_fit_window_by_pz",
+        "c2pt",
+        "fold_t",
+    ]
+    missing = [key for key in required if key not in config]
+    if missing:
+        raise ValueError(f"missing TMDWF nstate-diff notebook config keys: {missing}")
+    if "bTlist" not in config and "bTrange" not in config:
+        raise ValueError("missing TMDWF nstate-diff notebook config key: bTlist or bTrange")
+    if "bzlist" not in config and "bzrange" not in config:
+        raise ValueError("missing TMDWF nstate-diff notebook config key: bzlist or bzrange")
+
+    lines = [
+        f"{config['title_pattern']} {config['ns']} {config['nt']} {config['lattice_spacing_fm']}",
+        f"fit_component {_as_scalar_string(config['fit_component'])}",
+        f"nstates {_as_scalar_string(config['nstates'])}",
+        f"pzlist {_as_scalar_string(config['pzlist'])}",
+        f"gmlist {_as_scalar_string(config['gmlist'])}",
+        f"etalist {_as_scalar_string(config['etalist'])}",
+        f"Tdirlist {_as_scalar_string(config['Tdirlist'])}",
+    ]
+    if "bTlist" in config and config["bTlist"] is not None:
+        lines.append(f"bTlist {_as_scalar_string(config['bTlist'])}")
+    elif "bTrange" in config and config["bTrange"] is not None:
+        lines.append(f"bTrange {_as_scalar_string(config['bTrange'])}")
+    if "bzlist" in config and config["bzlist"] is not None:
+        lines.append(f"bzlist {_as_scalar_string(config['bzlist'])}")
+    elif "bzrange" in config and config["bzrange"] is not None:
+        lines.append(f"bzrange {_as_scalar_string(config['bzrange'])}")
+    lines.extend(
+        [
+            f"fit_window {_as_scalar_string(config['fit_window'])}",
+            f"qtmdwf_h5 {_as_scalar_string(config['qtmdwf_h5'])}",
+            f"dataset_path_template {_as_scalar_string(config['dataset_path_template'])}",
+            f"two_point_fit_root {_as_scalar_string(config['two_point_fit_root'])}",
+            f"two_point_fit_window_by_pz {_as_scalar_string(config['two_point_fit_window_by_pz'])}",
+            f"c2pt {_as_scalar_string(config['c2pt'])}",
+            f"fold_t {_as_scalar_string(config['fold_t'])}",
+        ]
+    )
+    if "tsrange" in config and config["tsrange"] is not None:
+        lines.append(f"tsrange {_as_scalar_string(config['tsrange'])}")
+    for optional_key in (
+        "binsize",
+        "bootstrap_samples",
+        "bootstrap_size",
+        "seed",
         "results_dir",
         "two_point_fit_sample_coupled",
     ):
@@ -1236,6 +1353,14 @@ def validate_tmdwf_notebook_config(config: dict[str, Any]):
     return parse_tmdwf_fit_input(input_path)
 
 
+def validate_tmdwf_nstate_diff_notebook_config(config: dict[str, Any]):
+    input_path = _materialize_input_text(
+        render_tmdwf_nstate_diff_input_text(config),
+        "input_tmdwf_nstate_diff.txt",
+    )
+    return parse_tmdwf_nstate_diff_input(input_path)
+
+
 def validate_tmdwf_fourier_notebook_config(config: dict[str, Any]) -> dict[str, Any]:
     input_path = _materialize_input_text(render_tmdwf_fourier_input_text(config), "input_tmdwf_fourier.txt")
     parsed = parse_tmdwf_fourier_input(input_path)
@@ -1514,6 +1639,22 @@ def run_tmdwf_fit_from_notebook(
     if run_config["results_dir"] is None:
         run_config["results_dir"] = _guess_notebook_dir()
     return run_tmdwf_nstate_fit(input_path, results_dir=run_config["results_dir"])
+
+
+def run_tmdwf_nstate_diff_from_notebook(
+    config: dict[str, Any],
+    **overrides: Any,
+) -> list[Path]:
+    input_path = _materialize_input_text(
+        render_tmdwf_nstate_diff_input_text(config),
+        "input_tmdwf_nstate_diff.txt",
+    )
+    run_config = {"results_dir": None}
+    run_config.update(_subset_config(config, TMDWF_NSTATE_DIFF_RUN_KEYS))
+    run_config.update({key: value for key, value in overrides.items() if value is not None})
+    if run_config["results_dir"] is None:
+        run_config["results_dir"] = _guess_notebook_dir()
+    return run_tmdwf_nstate_diff_fit(input_path, results_dir=run_config["results_dir"])
 
 
 def run_tmdwf_fourier_from_notebook(
