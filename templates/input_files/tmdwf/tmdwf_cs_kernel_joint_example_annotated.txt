@@ -43,25 +43,28 @@ spline_kind linear
 # Systematic error corrections.
 #
 # When enabled, the joint-fit formula becomes:
-#   O = A_g * (pz/p_ref)^{gamma_MSbar(bT) - delta_m(pz)}
-#       * [1 + a^2 * (alpha_0 + alpha_1 / bT^2)
-#            + exp(-M_pi L) / sqrt(M_pi L) * (beta_0 + beta_1 * exp(M_pi bT))
-#            + (1/x^2 + 1/(1-x)^2) / pz^2 * (kappa_0 + kappa_1 / bT^2)
-#            + (a P_z)^2 * lambda_0]
+#   O = A_g * (pz/p_ref)^{gamma_MSbar(bT) * C_corr - delta_m(pz)}
 #
-# Corrections are multiplicative factors on the matrix element, not additive
-# corrections to gamma_MSbar or to the exponent. The a2, fv, and pz2 channels add
-# two parameters each; apz2 adds one. The central model enables a2 and pz2; fv and apz2 are useful
-# systematic variations. If a 1/bT^2 channel is enabled, the selected fit data
-# must not contain bT=0.
+#   C_corr =
+#       1 + (a / 0.1 fm)^2 * (alpha_0 + alpha_1 * (1.0 fm / bT)^2)
+#         + exp(-M_pi L) / sqrt(M_pi L) * (beta_0 + beta_1 * exp(M_pi bT))
+#         + (1/x^2 + 1/(1-x)^2) * (1.0 GeV / pz)^2
+#           * (kappa_0 + kappa_1 * (1.0 fm / bT)^2)
+#         + (a P_z)^2 * lambda_0
+#
+# Corrections multiply gamma_MSbar inside the exponent, not the full matrix
+# element outside the exponent. The a2, fv, and pz2 channels add two
+# parameters each; apz2 adds one. The central model enables a2 and pz2; fv and apz2 are useful
+# systematic variations. The a2 and pz2 coefficients are dimensionless. If an inverse-bT
+# channel is enabled, the selected fit data must not contain bT=0.
 #
 # Each enabled correction channel also has a zero-centered Gaussian prior on
 # its nuisance coefficients. The prior width is set per channel below.
 #
-# - fit_a2_correction:  lattice discretisation correction ~ a^2
+# - fit_a2_correction:  lattice discretisation correction ~ (a / 0.1 fm)^2
 # - fit_fv_correction:  finite-volume correction ~ exp(-M_pi L) / sqrt(M_pi L)
 #                       times [beta_0 + beta_1 exp(M_pi bT)]
-# - fit_pz2_correction: momentum power correction ~ (1/x^2+1/(1-x)^2)/pz^2
+# - fit_pz2_correction: momentum power correction ~ (1/x^2+1/(1-x)^2) * (1.0 GeV / pz)^2
 # - fit_apz2_correction: lattice momentum correction ~ (a P_z)^2
 # ---------------------------------------------------------------------------
 fit_a2_correction true

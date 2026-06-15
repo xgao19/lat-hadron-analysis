@@ -2,8 +2,8 @@
 
 Update this file before every commit. Keep each entry short: one or two concise paragraphs at most.
 
-## Uncommitted - TMDWF Mode3 Normalization
+## Uncommitted - TMDWF Joint CS Kernel Corrections
 
-Updated TMDWF mode3 normalization so bootstrap samples use the pz=0 same-bT denominator with a central complex bT=0 correction factor, and reused the same rule in x-fit normalization. CS kernel average summaries now report bootstrap medians with percentile half-widths.
+Updated the TMDWF joint CS-kernel correction model so nuisance factors multiply `gamma_MSbar` inside the evolution exponent with fixed dimensionless reference scales for a2, inverse-bT, and pz2 shapes. Summary outputs now record those scales and the independent/output x-fit counts.
 
-Added focused tests for the median-centered CS kernel average and the revised mode3 sample outputs. Verified TMDWF module compilation and the CS kernel average test file; the broader `tests/test_tmdwf_fit.py` collection is currently blocked by its stale `fit_tmdwf_mean_component` import.
+Added x-reflection planning so x and 1-x share one independent fit while the workflow still writes mirrored outputs for all requested x values. Added focused tests for the correction formula, summary metadata, and reflected x outputs.

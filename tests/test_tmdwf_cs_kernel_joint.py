@@ -6,8 +6,12 @@ import numpy as np
 
 from lqcd_analysis.tmdwf.cs_kernel_extract import momentum_unit_gev
 from lqcd_analysis.tmdwf.cs_kernel_joint import (
+    CORRECTION_A0_FM,
+    CORRECTION_B0_FM,
+    CORRECTION_P0_GEV,
     JointCSObservation,
     _evaluate_correction_shape,
+    _evaluate_evolution_factor,
     fit_gamma_eff_at_x,
     parse_tmdwf_cs_kernel_joint_input,
     run_tmdwf_cs_kernel_joint_workflow,
@@ -218,6 +222,21 @@ class TMDWFCSKernelJointTests(unittest.TestCase):
                 fit_a2_correction=True,
             )
 
+    def test_inverse_bT_correction_shape_uses_dimensionless_reference_bT(self) -> None:
+        coeffs = np.asarray([2.0, 3.0], dtype=float)
+        bT_values = np.asarray([CORRECTION_B0_FM, 2.0 * CORRECTION_B0_FM], dtype=float)
+        values = _evaluate_correction_shape("a2", coeffs, bT_values)
+        expected = np.asarray([5.0, 2.75], dtype=float)
+        np.testing.assert_allclose(values, expected)
+
+    def test_correction_factor_multiplies_gamma_inside_exponent(self) -> None:
+        log_p = np.asarray([0.7], dtype=float)
+        gamma = np.asarray([2.0], dtype=float)
+        delta_m = np.asarray([5.0], dtype=float)
+        correction_factor = np.asarray([3.0], dtype=float)
+        value = _evaluate_evolution_factor(log_p, gamma, delta_m, correction_factor)
+        np.testing.assert_allclose(value, np.exp(0.7 * (2.0 * 3.0 - 5.0)))
+
     def test_fv_shape_uses_exp_mpi_bT_and_increases_with_bT(self) -> None:
         coeffs = np.asarray([0.2, 0.4], dtype=float)
         values = _evaluate_correction_shape(
@@ -344,6 +363,17 @@ class TMDWFCSKernelJointTests(unittest.TestCase):
                 / "joint_T5_eta0_mode3_real_2state_CG_LO_gamma_eff_surface.txt"
             )
             self.assertIn(surface_path, outputs)
+            summary_path = (
+                tmp
+                / "results"
+                / "joint_gamma_eff"
+                / "joint_T5_eta0_mode3_real_2state_CG_LO_gamma_eff_summary.txt"
+            )
+            self.assertIn(summary_path, outputs)
+            summary_text = summary_path.read_text(encoding="utf-8")
+            self.assertIn(f"correction_a0_fm {CORRECTION_A0_FM:.10e}", summary_text)
+            self.assertIn(f"correction_b0_fm {CORRECTION_B0_FM:.10e}", summary_text)
+            self.assertIn(f"correction_p0_GeV {CORRECTION_P0_GEV:.10e}", summary_text)
             lines = [
                 line.strip()
                 for line in surface_path.read_text(encoding="utf-8").splitlines()
@@ -411,6 +441,92 @@ class TMDWFCSKernelJointTests(unittest.TestCase):
                 gamma_sample_0,
                 places=10,
             )
+
+    def test_joint_workflow_mirrors_reflected_x_outputs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            x_grid = np.array([0.25, 0.5, 0.75], dtype=float)
+            sample_count = 3
+            ns = 48
+            lattice_spacing_fm = 0.060
+            pzlist = (3, 4, 5)
+            bTlist = (1, 2)
+            reference_p1 = 1.0
+            d_p = momentum_unit_gev(ns, lattice_spacing_fm)
+            for bT in bTlist:
+                bT_fm = bT * lattice_spacing_fm
+                for pz in pzlist:
+                    pz_gev = pz * d_p
+                    rows = []
+                    for sample_id in range(sample_count):
+                        amplitude = 1.0 + 0.1 * sample_id + 0.05 * bT
+                        gamma = 0.15 + 0.7 * bT_fm + 0.01 * sample_id
+                        rows.append(
+                            np.full_like(
+                                x_grid,
+                                amplitude * np.exp(np.log(pz_gev / reference_p1) * gamma),
+                            )
+                        )
+                    _write_fourier_samples(
+                        tmp / "ens",
+                        title=f"ens_pz{pz}",
+                        bT=bT,
+                        pz=pz,
+                        x_grid=x_grid,
+                        q_samples=np.asarray(rows, dtype=float),
+                    )
+
+            input_path = tmp / "joint_input.txt"
+            input_path.write_text(
+                "\n".join(
+                    [
+                        "gm T5",
+                        "eta eta0",
+                        "component real",
+                        "nstates 2",
+                        "normalization_mode mode3",
+                        "mu 2.0",
+                        "scheme CG",
+                        "kernel_label LO",
+                        f"reference_p1_gev {reference_p1}",
+                        "x_window 0.2 0.8",
+                        "x_knots 0.25 0.5 0.75",
+                        "bT_knots_fm 0.06 0.12",
+                        "spline_kind linear",
+                        "plot false",
+                        "progress false",
+                        f"ensemble ens {tmp / 'ens'} ens_pz* 48 0.060 pz=3,4,5 bT=1,2",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            run_tmdwf_cs_kernel_joint_workflow(input_path, results_dir=tmp / "results")
+            stem = "joint_T5_eta0_mode3_real_2state_CG_LO_gamma_eff"
+            coeff_path = tmp / "results" / "joint_gamma_eff" / "samples" / f"{stem}_coefficients.txt"
+            coeff_rows = [
+                line.split("\t")
+                for line in coeff_path.read_text(encoding="utf-8").splitlines()[1:]
+                if line.strip()
+            ]
+            coeff_by_x_sample = {
+                (float(row[0]), int(row[1])): np.asarray([float(v) for v in row[2:]], dtype=float)
+                for row in coeff_rows
+            }
+            for sample_id in range(sample_count):
+                np.testing.assert_allclose(
+                    coeff_by_x_sample[(0.75, sample_id)],
+                    coeff_by_x_sample[(0.25, sample_id)],
+                    rtol=0.0,
+                    atol=0.0,
+                )
+
+            summary_path = tmp / "results" / "joint_gamma_eff" / f"{stem}_summary.txt"
+            summary_text = summary_path.read_text(encoding="utf-8")
+            self.assertIn("x_reflection_symmetry true", summary_text)
+            self.assertIn("n_output_x_points 3", summary_text)
+            self.assertIn("n_independent_x_fits 2", summary_text)
 
 
 if __name__ == "__main__":

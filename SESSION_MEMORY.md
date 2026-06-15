@@ -25,6 +25,8 @@ Durable project memory for future sessions. Keep this file concise and focused o
 - Notebook files under `/Users/xiang/Desktop/docs/...` are outside the repo and usually need escalated write permission.
 - TMDWF mode3 sample normalization uses each bootstrap target divided by the matching pz=0 same-bT sample, then multiplies by one central complex factor from pz=0,bT=0 over same-pz,bT=0 references.
 - CS kernel averaged central values should use the bootstrap median with percentile half-widths, not the arithmetic mean.
+- TMDWF joint CS-kernel correction factors multiply `gamma_MSbar` inside the evolution exponent. Use fixed reference scales `a0=0.1 fm`, `b0=1.0 fm`, and `p0=1.0 GeV` so a2, inverse-bT, and pz2 nuisance coefficients stay dimensionless.
+- TMDWF joint CS-kernel x reflection fits one representative from each x and 1-x pair, then mirrors outputs back to the requested x grid.
 
 ## Useful Checks
 - Targeted tests: `python3 -m pytest tests/test_emff_fit.py`

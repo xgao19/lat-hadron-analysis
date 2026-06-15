@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, replace
 from pathlib import Path
 import time
 
@@ -25,6 +25,10 @@ from .plotting import (
     plot_tmdwf_joint_cs_kernel_pz_diagnostics,
     write_tmdwf_cs_kernel_joint_diagnostics_notebook,
 )
+
+CORRECTION_A0_FM = 0.1
+CORRECTION_B0_FM = 1.0
+CORRECTION_P0_GEV = 1.0
 
 
 @dataclass(frozen=True)
@@ -157,6 +161,14 @@ class DiagnosticGroupData:
     model_median: np.ndarray
     model_p16: np.ndarray
     model_p84: np.ndarray
+
+
+@dataclass(frozen=True)
+class XReflectionPlan:
+    fit_entries: list[tuple[int, float]]
+    output_entries: list[tuple[int, float]]
+    output_fit_keys: list[tuple[int, float]]
+    uses_reflection: bool
 
 
 # ---------------------------------------------------------------------------
@@ -424,6 +436,46 @@ def _find_x_indices(
     return result
 
 
+def _plan_x_reflection(
+    x_indices: list[tuple[int, float]],
+    *,
+    atol: float = 1e-10,
+) -> XReflectionPlan:
+    """Fit one representative from each x <-> 1-x pair and mirror outputs."""
+    if not x_indices:
+        return XReflectionPlan(
+            fit_entries=[],
+            output_entries=[],
+            output_fit_keys=[],
+            uses_reflection=False,
+        )
+
+    fit_entries: list[tuple[int, float]] = []
+    output_fit_keys: list[tuple[int, float]] = []
+    fit_keys: set[tuple[int, float]] = set()
+    uses_reflection = False
+
+    for _, x_actual in x_indices:
+        target_x = min(x_actual, 1.0 - x_actual)
+        candidate = min(x_indices, key=lambda item: abs(item[1] - target_x))
+        if abs(candidate[1] - target_x) > atol:
+            candidate = min(x_indices, key=lambda item: abs(item[1] - x_actual))
+        uses_reflection = uses_reflection or abs(candidate[1] - x_actual) > atol
+
+        key = (candidate[0], round(candidate[1], 12))
+        if key not in fit_keys:
+            fit_entries.append(candidate)
+            fit_keys.add(key)
+        output_fit_keys.append(key)
+
+    return XReflectionPlan(
+        fit_entries=fit_entries,
+        output_entries=x_indices,
+        output_fit_keys=output_fit_keys,
+        uses_reflection=uses_reflection,
+    )
+
+
 def _build_observations_at_x(
     ensemble_datasets: list[EnsembleDataset],
     x_index: int,
@@ -549,7 +601,16 @@ def _evaluate_correction_shape(
         return np.expand_dims(c0, axis=-1) + np.expand_dims(c1, axis=-1) * fv_exp
     if np.any(bT <= 0.0):
         raise ValueError(f"{name} correction uses 1/bT^2 and requires bT > 0")
-    return np.expand_dims(c0, axis=-1) + np.expand_dims(c1, axis=-1) / bT ** 2
+    return np.expand_dims(c0, axis=-1) + np.expand_dims(c1, axis=-1) * (CORRECTION_B0_FM / bT) ** 2
+
+
+def _evaluate_evolution_factor(
+    log_p: np.ndarray,
+    gamma: np.ndarray,
+    delta_m: np.ndarray,
+    correction_factor: np.ndarray,
+) -> np.ndarray:
+    return np.exp(log_p * (gamma * correction_factor - delta_m))
 
 
 def fit_gamma_eff_at_x(
@@ -616,11 +677,15 @@ def fit_gamma_eff_at_x(
     n_groups = int(group_ids.max()) + 1
 
     # Precompute per-observation correction scales
-    a2_vals = np.asarray([obs.a_fm ** 2 for obs in observations], dtype=float)
+    a2_vals = np.asarray([(obs.a_fm / CORRECTION_A0_FM) ** 2 for obs in observations], dtype=float)
     fv_prefactor_vals = np.asarray([obs.fv_prefactor for obs in observations], dtype=float)
     fv_exp_m_pi_bT_vals = np.asarray([obs.fv_exp_m_pi_bT for obs in observations], dtype=float)
     inv_pz2_vals = np.asarray(
-        [(1.0 / obs.x ** 2 + 1.0 / (1.0 - obs.x) ** 2) / obs.pz_gev ** 2 for obs in observations],
+        [
+            (1.0 / obs.x ** 2 + 1.0 / (1.0 - obs.x) ** 2)
+            * (CORRECTION_P0_GEV / obs.pz_gev) ** 2
+            for obs in observations
+        ],
         dtype=float,
     )
     apz2_vals = np.asarray(
@@ -692,7 +757,7 @@ def fit_gamma_eff_at_x(
         def residuals(coeffs: np.ndarray) -> np.ndarray:
             # gamma_MSbar(bT) from first n_knots coefficients
             gamma = local_design @ coeffs[:n_knots]
-            # Multiplicative correction factor on the matrix element.
+            # Multiplicative correction factor on gamma_MSbar inside the exponent.
             corr_factor = np.ones(len(gamma), dtype=float)
             block_offset = n_knots
             if fit_a2_correction:
@@ -716,7 +781,7 @@ def fit_gamma_eff_at_x(
                 lam = _evaluate_correction_shape("apz2", coeffs[block_offset:block_offset + 1], local_bT)
                 corr_factor += local_apz2 * lam
                 block_offset += 1
-            evolution = np.exp(local_log_p * (gamma - local_delta_m)) * corr_factor
+            evolution = _evaluate_evolution_factor(local_log_p, gamma, local_delta_m, corr_factor)
             amplitudes = np.zeros(n_groups, dtype=float)
             for g in np.unique(local_groups):
                 g_mask = local_groups == g
@@ -840,11 +905,10 @@ def _build_diagnostic_groups(
         )
 
         for sample_id in range(sample_count):
-            evolution = np.exp(log_p * (gamma_per_sample[sample_id] - corrections))
-            # Build per-pz correction factor
+            # Build per-pz correction factor on gamma_MSbar inside the exponent.
             pz_corr = np.ones(len(pz_set), dtype=float)
             if per_x_result.fit_a2_correction and per_x_result.alpha_samples is not None:
-                pz_corr += a_fm ** 2 * _evaluate_correction_shape(
+                pz_corr += (a_fm / CORRECTION_A0_FM) ** 2 * _evaluate_correction_shape(
                     "a2",
                     per_x_result.alpha_samples[sample_id],
                     np.asarray([bT_fm]),
@@ -863,7 +927,7 @@ def _build_diagnostic_groups(
                     np.asarray([bT_fm]),
                 )[0]
                 x_weight = 1.0 / per_x_result.x_actual ** 2 + 1.0 / (1.0 - per_x_result.x_actual) ** 2
-                pz_corr += (x_weight / pz_arr ** 2) * kappa_val
+                pz_corr += x_weight * (CORRECTION_P0_GEV / pz_arr) ** 2 * kappa_val
             if per_x_result.fit_apz2_correction and per_x_result.lambda_samples is not None:
                 lam_val = _evaluate_correction_shape(
                     "apz2",
@@ -871,7 +935,12 @@ def _build_diagnostic_groups(
                     np.asarray([bT_fm]),
                 )[0]
                 pz_corr += (a_fm * pz_arr / HBAR_C_GEV_FM) ** 2 * lam_val
-            evolution = evolution * pz_corr
+            evolution = _evaluate_evolution_factor(
+                log_p,
+                gamma_per_sample[sample_id] + np.zeros_like(pz_arr, dtype=float),
+                corrections,
+                pz_corr,
+            )
             weights = 1.0 / sigma_by_pz ** 2
             o_sample = np.asarray(
                 [
@@ -934,8 +1003,11 @@ def _evaluate_bT_surface(
 
 def _write_joint_outputs(
     spec: TMDWFCSKernelJointInput,
-    x_fit_order: list[float],
+    x_output_order: list[float],
     per_x_results: list[PerXFitResult],
+    x_independent_fit_order: list[float],
+    independent_results: list[PerXFitResult],
+    x_reflection_symmetry: bool,
 ) -> list[Path]:
     output_root = spec.results_dir / "joint_gamma_eff"
     tables_dir = output_root / "tables"
@@ -1090,8 +1162,13 @@ def _write_joint_outputs(
         handle.write(f"x_window {spec.x_window[0]:.10e} {spec.x_window[1]:.10e}\n")
         handle.write(f"spline_kind {spec.spline_kind}\n")
         handle.write(f"bT_knots_fm {' '.join(f'{v:.10e}' for v in bT_knots)}\n")
-        handle.write("correction_model analytic_two_parameter_multiplicative\n")
-        handle.write(f"x_fit_points {' '.join(f'{v:.10e}' for v in x_fit_order)}\n")
+        handle.write("correction_model analytic_two_parameter_gamma_multiplicative\n")
+        handle.write(f"correction_a0_fm {CORRECTION_A0_FM:.10e}\n")
+        handle.write(f"correction_b0_fm {CORRECTION_B0_FM:.10e}\n")
+        handle.write(f"correction_p0_GeV {CORRECTION_P0_GEV:.10e}\n")
+        handle.write(f"x_fit_points {' '.join(f'{v:.10e}' for v in x_output_order)}\n")
+        handle.write(f"x_reflection_symmetry {str(x_reflection_symmetry).lower()}\n")
+        handle.write(f"x_independent_fit_points {' '.join(f'{v:.10e}' for v in x_independent_fit_order)}\n")
         handle.write(f"fit_a2_correction {str(spec.fit_a2_correction).lower()}\n")
         handle.write(f"fit_fv_correction {str(spec.fit_fv_correction).lower()}\n")
         handle.write(f"fit_pz2_correction {str(spec.fit_pz2_correction).lower()}\n")
@@ -1103,13 +1180,15 @@ def _write_joint_outputs(
         handle.write(f"n_gamma_knots {bT_knots.size}\n")
         if per_x_results:
             handle.write(f"n_correction_params {per_x_results[0].n_correction_params}\n")
+        handle.write(f"n_output_x_points {len(per_x_results)}\n")
+        handle.write(f"n_independent_x_fits {len(independent_results)}\n")
         handle.write(f"plot {str(spec.make_plots).lower()}\n")
         handle.write(f"progress {str(spec.show_progress).lower()}\n")
         if spec.progress_every is not None:
             handle.write(f"progress_every {spec.progress_every}\n")
         handle.write(f"n_ensembles {len(spec.ensembles)}\n")
-        total_obs = sum(r.n_observations for r in per_x_results)
-        total_groups = sum(r.n_groups for r in per_x_results)
+        total_obs = sum(r.n_observations for r in independent_results)
+        total_groups = sum(r.n_groups for r in independent_results)
         handle.write(f"n_observations_total {total_obs}\n")
         handle.write(f"n_nuisance_groups_total {total_groups}\n")
         for ensemble in spec.ensembles:
@@ -1175,6 +1254,7 @@ def run_tmdwf_cs_kernel_joint_workflow(
     ensemble_datasets, reference_x, sample_count = _preload_datasets(spec)
     x_knots = _resolve_x_knots(spec.x_knots, reference_x, spec.x_window)
     x_indices = _find_x_indices(x_knots, reference_x)
+    x_plan = _plan_x_reflection(x_indices)
 
     bT_fm_values: list[float] = []
     for ensemble, _ in ensemble_datasets:
@@ -1184,20 +1264,22 @@ def run_tmdwf_cs_kernel_joint_workflow(
 
     if spec.show_progress:
         print(
-            f"joint CS fit: {len(x_knots)} x-points, "
+            f"joint CS fit: {len(x_plan.fit_entries)} independent x-fits "
+            f"for {len(x_plan.output_entries)} output x-points, "
             f"{bT_knots_fm.size} bT-knots, "
             f"{len(spec.ensembles)} ensembles, "
             f"{sample_count} bootstrap samples",
             flush=True,
         )
 
-    per_x_results: list[PerXFitResult] = []
-    x_fit_order: list[float] = []
+    independent_results: list[PerXFitResult] = []
+    x_independent_fit_order: list[float] = []
+    results_by_fit_key: dict[tuple[int, float], PerXFitResult] = {}
     diagnostic_plot_paths: list[Path] = []
-    for xi, (x_idx, x_actual) in enumerate(x_indices):
+    for xi, (x_idx, x_actual) in enumerate(x_plan.fit_entries):
         if spec.show_progress:
             print(
-                f"x [{xi + 1}/{len(x_indices)}] x_actual={x_actual:.6f}",
+                f"x [{xi + 1}/{len(x_plan.fit_entries)}] x_actual={x_actual:.6f}",
                 flush=True,
             )
         observations = _build_observations_at_x(
@@ -1232,8 +1314,9 @@ def run_tmdwf_cs_kernel_joint_workflow(
             pz2_correction_prior_width=spec.pz2_correction_prior_width,
             apz2_correction_prior_width=spec.apz2_correction_prior_width,
         )
-        per_x_results.append(result)
-        x_fit_order.append(x_actual)
+        independent_results.append(result)
+        x_independent_fit_order.append(x_actual)
+        results_by_fit_key[(x_idx, round(x_actual, 12))] = result
 
         # -- diagnostic pz-fit plots per (ensemble, bT) group --
         if spec.make_plots:
@@ -1263,10 +1346,25 @@ def run_tmdwf_cs_kernel_joint_workflow(
                 )
             )
 
-    if not per_x_results:
+    if not independent_results:
         raise ValueError("no x-points produced valid observations; check x_knots vs x_window")
 
-    outputs = _write_joint_outputs(spec, x_fit_order, per_x_results)
+    per_x_results: list[PerXFitResult] = []
+    x_output_order: list[float] = []
+    for key, (_, x_actual) in zip(x_plan.output_fit_keys, x_plan.output_entries, strict=True):
+        if key not in results_by_fit_key:
+            continue
+        per_x_results.append(replace(results_by_fit_key[key], x_actual=x_actual))
+        x_output_order.append(x_actual)
+
+    outputs = _write_joint_outputs(
+        spec,
+        x_output_order,
+        per_x_results,
+        x_independent_fit_order,
+        independent_results,
+        x_plan.uses_reflection,
+    )
     outputs.extend(diagnostic_plot_paths)
 
     # -- diagnostics notebook (reproducible plots from saved outputs) --
