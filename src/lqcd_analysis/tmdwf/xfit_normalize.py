@@ -10,7 +10,6 @@ from .fit_nstate import sanitize_token
 from .fourier import DEFAULT_INTERPOLATION_KIND, DEFAULT_ZSTEP_FM, compute_tmdwf_cosine_transform
 from .io import expand_template
 from .normalize import (
-    _central_complex_reference,
     _compute_mode3_normalized_sample,
     _compute_normalized_sample,
     _load_dataset_rows_and_samples,
@@ -203,21 +202,6 @@ def _old_fourier_samples_from_bare_matrix_outputs(
             spec.nstates,
         )
 
-    mode3_central_extra_factor: complex | None = None
-    if spec.normalization_mode == "mode3":
-        assert mode1_samples is not None and mode3_samples is not None
-        central_ref_same_pz_bt0 = _central_complex_reference(mode1_samples, bz=0)
-        central_ref_pz0_bt0 = _central_complex_reference(mode3_samples, bz=0)
-        if (
-            not np.isfinite(central_ref_same_pz_bt0)
-            or central_ref_same_pz_bt0 == 0.0
-            or not np.isfinite(central_ref_pz0_bt0)
-        ):
-            raise ValueError(
-                f"no finite mode3 central factor for title={title}, gm={gm}, eta={eta}, bT={bT}"
-            )
-        mode3_central_extra_factor = central_ref_pz0_bt0 / central_ref_same_pz_bt0
-
     sample_ids = sorted(target_samples)
     raw_rows: list[list[float]] = []
     normalized_rows: list[list[float]] = []
@@ -231,8 +215,8 @@ def _old_fourier_samples_from_bare_matrix_outputs(
             if target_entry is None or target_entry[0] != 1 or not np.isfinite(target_entry[1]):
                 valid = False
                 break
-            ref1 = ref2 = None
-            if mode1_samples is not None and spec.normalization_mode != "mode3":
+            ref1 = ref2 = ref3 = None
+            if mode1_samples is not None:
                 ref_entry = mode1_samples.get(sample_id, {}).get(0)
                 if ref_entry is None or ref_entry[0] != 1 or not np.isfinite(ref_entry[1]) or ref_entry[1] == 0.0:
                     valid = False
@@ -244,9 +228,15 @@ def _old_fourier_samples_from_bare_matrix_outputs(
                     valid = False
                     break
                 ref2 = ref_entry[1]
+            if mode3_samples is not None:
+                ref_entry = mode3_samples.get(sample_id, {}).get(0)
+                if ref_entry is None or ref_entry[0] != 1 or not np.isfinite(ref_entry[1]):
+                    valid = False
+                    break
+                ref3 = ref_entry[1]
             if spec.normalization_mode == "mode3":
-                assert ref2 is not None and mode3_central_extra_factor is not None
-                normalized = _compute_mode3_normalized_sample(target_entry[1], ref2, mode3_central_extra_factor)
+                assert ref1 is not None and ref2 is not None and ref3 is not None
+                normalized = _compute_mode3_normalized_sample(target_entry[1], ref1, ref2, ref3)
             else:
                 normalized = _compute_normalized_sample(spec.normalization_mode, target_entry[1], ref1, ref2)
             raw_by_bz.append(float(target_entry[1].real if spec.component == "real" else target_entry[1].imag))

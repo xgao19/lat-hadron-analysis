@@ -337,10 +337,13 @@ TMDWF_CS_KERNEL_JOINT_KEYS = {
     "results_dir",
     "fit_a2_correction",
     "fit_fv_correction",
+    "fit_pz1_correction",
     "fit_pz2_correction",
     "fit_apz2_correction",
+    "use_correction_priors",
     "a2_correction_prior_width",
     "fv_correction_prior_width",
+    "pz1_correction_prior_width",
     "pz2_correction_prior_width",
     "apz2_correction_prior_width",
 }
@@ -1153,13 +1156,18 @@ def render_tmdwf_cs_kernel_joint_input_text(config: dict[str, Any]) -> str:
         lines.append(f"fit_a2_correction {_as_scalar_string(config['fit_a2_correction'])}")
     if "fit_fv_correction" in config and config["fit_fv_correction"] is not None:
         lines.append(f"fit_fv_correction {_as_scalar_string(config['fit_fv_correction'])}")
+    if "fit_pz1_correction" in config and config["fit_pz1_correction"] is not None:
+        lines.append(f"fit_pz1_correction {_as_scalar_string(config['fit_pz1_correction'])}")
     if "fit_pz2_correction" in config and config["fit_pz2_correction"] is not None:
         lines.append(f"fit_pz2_correction {_as_scalar_string(config['fit_pz2_correction'])}")
     if "fit_apz2_correction" in config and config["fit_apz2_correction"] is not None:
         lines.append(f"fit_apz2_correction {_as_scalar_string(config['fit_apz2_correction'])}")
+    if "use_correction_priors" in config and config["use_correction_priors"] is not None:
+        lines.append(f"use_correction_priors {_as_scalar_string(config['use_correction_priors'])}")
     for key in (
         "a2_correction_prior_width",
         "fv_correction_prior_width",
+        "pz1_correction_prior_width",
         "pz2_correction_prior_width",
         "apz2_correction_prior_width",
     ):

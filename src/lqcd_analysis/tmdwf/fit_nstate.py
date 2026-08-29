@@ -341,6 +341,53 @@ def fit_tmdwf_component(
     )
 
 
+def fit_tmdwf_mean_component(
+    ratio_samples: np.ndarray,
+    amplitudes: np.ndarray,
+    energies: np.ndarray,
+    nt: int,
+    pz: int,
+    ns: int,
+    gm: str,
+    tmin: int,
+    tmax: int,
+    component: str,
+) -> TMDWFFitResult:
+    prepared = _prepare_fit_data(ratio_samples, tmin=tmin, tmax=tmax, component=component)
+    fit_amplitudes = np.asarray(amplitudes, dtype=float)
+    fit_energies = np.asarray(energies, dtype=float)
+    if fit_amplitudes.ndim == 2:
+        fit_amplitudes = np.nanmean(fit_amplitudes, axis=0)
+    if fit_energies.ndim == 2:
+        fit_energies = np.nanmean(fit_energies, axis=0)
+    theta0 = np.zeros(fit_amplitudes.shape[-1], dtype=float)
+
+    def residuals(params: np.ndarray) -> np.ndarray:
+        model_values = evaluate_tmdwf_ratio(
+            prepared.times,
+            fit_amplitudes,
+            fit_energies,
+            params,
+            nt,
+            gm=gm,
+            pz=pz,
+            ns=ns,
+        )
+        return (model_values - prepared.mean_data) / prepared.sigma
+
+    result = least_squares(residuals, theta0, max_nfev=5000)
+    chi2_value = float(np.dot(result.fun, result.fun)) if result.success else float("nan")
+    dof = max(len(prepared.times) - len(theta0), 1)
+    return TMDWFFitResult(
+        params=np.asarray(result.x if result.success else np.full_like(theta0, np.nan), dtype=float),
+        chi2=chi2_value,
+        chi2_dof=chi2_value / dof if result.success else float("nan"),
+        pvalue=float(1.0 - chi2.cdf(chi2_value, dof)) if result.success else float("nan"),
+        success=bool(result.success),
+        message=str(result.message),
+    )
+
+
 def summarize_parameter_samples(samples: np.ndarray) -> tuple[tuple[float, ...], tuple[float, ...]]:
     means: list[float] = []
     errors: list[float] = []

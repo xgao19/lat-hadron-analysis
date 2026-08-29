@@ -1,6 +1,8 @@
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import numpy as np
 
@@ -12,6 +14,7 @@ from lqcd_analysis.tmdwf.cs_kernel_joint import (
     JointCSObservation,
     _evaluate_correction_shape,
     _evaluate_evolution_factor,
+    _evaluate_momentum_correction_scale,
     fit_gamma_eff_at_x,
     parse_tmdwf_cs_kernel_joint_input,
     run_tmdwf_cs_kernel_joint_workflow,
@@ -82,6 +85,7 @@ class TMDWFCSKernelJointTests(unittest.TestCase):
                         "kernel_label LO",
                         "reference_p1_gev 1.0",
                         "spline_kind cubic",
+                        "use_correction_priors false",
                         "a2_correction_prior_width 0.5",
                         "plot false",
                         "progress false",
@@ -99,6 +103,9 @@ class TMDWFCSKernelJointTests(unittest.TestCase):
         self.assertEqual(parsed.spline_kind, "cubic")
         self.assertEqual(parsed.a2_correction_prior_width, 0.5)
         self.assertEqual(parsed.fv_correction_prior_width, 1.0)
+        self.assertEqual(parsed.pz1_correction_prior_width, 10.0)
+        self.assertFalse(parsed.fit_pz1_correction)
+        self.assertFalse(parsed.use_correction_priors)
         self.assertFalse(parsed.make_plots)
         self.assertFalse(parsed.show_progress)
 
@@ -138,6 +145,54 @@ class TMDWFCSKernelJointTests(unittest.TestCase):
                 a2_correction_prior_width=0.0,
             )
 
+    def test_no_prior_omits_correction_residuals(self) -> None:
+        observations = [
+            JointCSObservation(
+                group_id=0,
+                sample_id=0,
+                x=0.4,
+                bT_fm=0.1,
+                pz_gev=pz_gev,
+                value=1.0 + 0.02 * pz_gev,
+                sigma=0.05,
+                ensemble_label="ens",
+                a_fm=0.06,
+                fv_prefactor=0.01,
+                fv_exp_m_pi_bT=1.0,
+                spatial_extent_fm=3.0,
+            )
+            for pz_gev in (1.2, 1.8, 2.4)
+        ]
+        residual_sizes = []
+
+        def fake_least_squares(residuals, initial, method):
+            values = residuals(initial)
+            residual_sizes.append(values.size)
+            return SimpleNamespace(x=initial, fun=values)
+
+        common = {
+            "sample_count": 1,
+            "x_value": 0.4,
+            "bT_knots_fm": np.asarray([0.1]),
+            "spline_kind": "linear",
+            "reference_p1_gev": 1.0,
+            "scheme": "CG",
+            "kernel_label": "LO",
+            "mu": 2.0,
+            "component": "real",
+            "show_progress": False,
+            "progress_every": None,
+            "fit_a2_correction": True,
+        }
+        with patch(
+            "lqcd_analysis.tmdwf.cs_kernel_joint.least_squares",
+            side_effect=fake_least_squares,
+        ):
+            fit_gamma_eff_at_x(observations, use_correction_priors=True, **common)
+            fit_gamma_eff_at_x(observations, use_correction_priors=False, **common)
+
+        self.assertEqual(residual_sizes, [len(observations) + 2, len(observations)])
+
     def test_analytic_corrections_use_two_parameters_per_enabled_channel(self) -> None:
         observations = []
         for sample_id in range(2):
@@ -175,17 +230,52 @@ class TMDWFCSKernelJointTests(unittest.TestCase):
             progress_every=None,
             fit_a2_correction=True,
             fit_fv_correction=True,
+            fit_pz1_correction=True,
             fit_pz2_correction=True,
             fit_apz2_correction=True,
         )
 
         self.assertEqual(result.n_gamma_knots, 2)
-        self.assertEqual(result.n_correction_params, 7)
-        self.assertEqual(result.coeff_samples.shape, (2, 9))
+        self.assertEqual(result.n_correction_params, 9)
+        self.assertEqual(result.coeff_samples.shape, (2, 11))
         self.assertEqual(result.alpha_samples.shape, (2, 2))
         self.assertEqual(result.beta_samples.shape, (2, 2))
+        self.assertEqual(result.pz1_samples.shape, (2, 2))
         self.assertEqual(result.kappa_samples.shape, (2, 2))
         self.assertEqual(result.lambda_samples.shape, (2, 1))
+
+        pz2_default = fit_gamma_eff_at_x(
+            observations,
+            sample_count=2,
+            x_value=0.4,
+            bT_knots_fm=np.asarray([0.1, 0.2]),
+            spline_kind="linear",
+            reference_p1_gev=1.0,
+            scheme="CG",
+            kernel_label="LO",
+            mu=2.0,
+            component="real",
+            show_progress=False,
+            progress_every=None,
+            fit_pz2_correction=True,
+        )
+        pz2_explicit = fit_gamma_eff_at_x(
+            observations,
+            sample_count=2,
+            x_value=0.4,
+            bT_knots_fm=np.asarray([0.1, 0.2]),
+            spline_kind="linear",
+            reference_p1_gev=1.0,
+            scheme="CG",
+            kernel_label="LO",
+            mu=2.0,
+            component="real",
+            show_progress=False,
+            progress_every=None,
+            fit_pz1_correction=False,
+            fit_pz2_correction=True,
+        )
+        np.testing.assert_allclose(pz2_default.coeff_samples, pz2_explicit.coeff_samples)
 
     def test_inverse_bT_corrections_reject_zero_bT(self) -> None:
         observations = [
@@ -219,7 +309,7 @@ class TMDWFCSKernelJointTests(unittest.TestCase):
                 component="real",
                 show_progress=False,
                 progress_every=None,
-                fit_a2_correction=True,
+                fit_pz1_correction=True,
             )
 
     def test_inverse_bT_correction_shape_uses_dimensionless_reference_bT(self) -> None:
@@ -229,13 +319,24 @@ class TMDWFCSKernelJointTests(unittest.TestCase):
         expected = np.asarray([5.0, 2.75], dtype=float)
         np.testing.assert_allclose(values, expected)
 
-    def test_correction_factor_multiplies_gamma_inside_exponent(self) -> None:
+    def test_pz1_and_pz2_scales_use_symmetric_partonic_powers(self) -> None:
+        pz = np.asarray([1.0, 2.0], dtype=float)
+        pz1 = _evaluate_momentum_correction_scale("pz1", 0.4, pz)
+        pz2 = _evaluate_momentum_correction_scale("pz2", 0.4, pz)
+        np.testing.assert_allclose(pz1, (1.0 / 0.4 + 1.0 / 0.6) / pz)
+        np.testing.assert_allclose(pz2, (1.0 / 0.4 ** 2 + 1.0 / 0.6 ** 2) / pz ** 2)
+        np.testing.assert_allclose(
+            pz1,
+            _evaluate_momentum_correction_scale("pz1", 0.6, pz),
+        )
+
+    def test_correction_shift_adds_to_gamma_inside_exponent(self) -> None:
         log_p = np.asarray([0.7], dtype=float)
         gamma = np.asarray([2.0], dtype=float)
         delta_m = np.asarray([5.0], dtype=float)
-        correction_factor = np.asarray([3.0], dtype=float)
-        value = _evaluate_evolution_factor(log_p, gamma, delta_m, correction_factor)
-        np.testing.assert_allclose(value, np.exp(0.7 * (2.0 * 3.0 - 5.0)))
+        correction_shift = np.asarray([3.0], dtype=float)
+        value = _evaluate_evolution_factor(log_p, gamma, delta_m, correction_shift)
+        np.testing.assert_allclose(value, np.exp(0.7 * (2.0 + 3.0 - 5.0)))
 
     def test_fv_shape_uses_exp_mpi_bT_and_increases_with_bT(self) -> None:
         coeffs = np.asarray([0.2, 0.4], dtype=float)
@@ -440,6 +541,63 @@ class TMDWFCSKernelJointTests(unittest.TestCase):
                 coeff_data[(0.25, 0)][2],
                 gamma_sample_0,
                 places=10,
+            )
+
+            pz1_input_path = tmp / "joint_input_pz1.txt"
+            pz1_input_path.write_text(
+                input_path.read_text(encoding="utf-8").replace(
+                    "plot false",
+                    "fit_pz1_correction true\npz1_correction_prior_width 10\nplot false",
+                ),
+                encoding="utf-8",
+            )
+            pz1_outputs = run_tmdwf_cs_kernel_joint_workflow(
+                pz1_input_path,
+                results_dir=tmp / "results_pz1",
+            )
+            pz1_stem = "joint_T5_eta0_mode3_real_2state_CG_LO_gamma_eff"
+            pz1_summary_path = (
+                tmp / "results_pz1" / "joint_gamma_eff" / f"{pz1_stem}_summary.txt"
+            )
+            pz1_summary = pz1_summary_path.read_text(encoding="utf-8")
+            self.assertIn("fit_pz1_correction true", pz1_summary)
+            self.assertIn("pz1_correction_prior_width 1.0000000000e+01", pz1_summary)
+            self.assertIn(
+                tmp
+                / "results_pz1"
+                / "joint_gamma_eff"
+                / "samples"
+                / f"{pz1_stem}_coefficients_pz1.txt",
+                pz1_outputs,
+            )
+
+            no_prior_input_path = tmp / "joint_input_pz1_no_prior.txt"
+            no_prior_input_path.write_text(
+                pz1_input_path.read_text(encoding="utf-8").replace(
+                    "plot false",
+                    "use_correction_priors false\nplot false",
+                ),
+                encoding="utf-8",
+            )
+            run_tmdwf_cs_kernel_joint_workflow(
+                no_prior_input_path,
+                results_dir=tmp / "results_pz1_no_prior",
+            )
+            no_prior_summary = (
+                tmp
+                / "results_pz1_no_prior"
+                / "joint_gamma_eff"
+                / f"{pz1_stem}_summary.txt"
+            ).read_text(encoding="utf-8")
+            self.assertIn("use_correction_priors false", no_prior_summary)
+            self.assertNotIn("pz1_correction_prior_width", no_prior_summary)
+            self.assertIn(
+                tmp
+                / "results_pz1"
+                / "joint_gamma_eff"
+                / "tables"
+                / f"{pz1_stem}_surface_pz1.txt",
+                pz1_outputs,
             )
 
     def test_joint_workflow_mirrors_reflected_x_outputs(self) -> None:

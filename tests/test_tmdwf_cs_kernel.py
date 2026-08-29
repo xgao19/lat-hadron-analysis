@@ -159,7 +159,8 @@ class TMDWFCSKernelTests(unittest.TestCase):
         self.assertEqual(parsed.pair_mode, "all")
 
     def test_build_cs_kernel_pair_jobs_supports_all_and_adjacent(self) -> None:
-        self.assertEqual(build_cs_kernel_pair_jobs((5, 6, 7, 8), "all"), [(5, [6, 7, 8], "5-8")])
+        self.assertEqual(build_cs_kernel_pair_jobs((5, 6, 7, 8), "all"), [(5, [6, 7, 8], "5_cmp6-8")])
+        self.assertEqual(build_cs_kernel_pair_jobs((5, 6, 7), "all", reference_p1=6), [(6, [5, 7], "6_cmp5-7")])
         self.assertEqual(
             build_cs_kernel_pair_jobs((5, 6, 7, 8), "adjacent"),
             [(5, [6], "5-6"), (6, [7], "6-7"), (7, [8], "7-8")],
@@ -238,9 +239,9 @@ class TMDWFCSKernelTests(unittest.TestCase):
 
             self.assertEqual(len(outputs), 8)
             output_title = "demo_pzmultiPz"
-            band_path = tmp / "results" / output_title / "tables" / f"{output_title}_T5_eta0_raw_real_1state_CG_LO_bT0_refpz2-4_type2_band.txt"
-            diagnostics_path = tmp / "results" / output_title / "diagnostics" / f"{output_title}_T5_eta0_raw_real_1state_CG_LO_bT0_refpz2-4_type2_diagnostics.txt"
-            sample_path = tmp / "results" / output_title / "samples" / f"{output_title}_T5_eta0_raw_real_1state_CG_LO_bT0_refpz2-4_type2_samples.txt"
+            band_path = tmp / "results" / output_title / "tables" / f"{output_title}_T5_eta0_raw_real_1state_CG_LO_bT0_refpz2_cmp3-4_type2_band.txt"
+            diagnostics_path = tmp / "results" / output_title / "diagnostics" / f"{output_title}_T5_eta0_raw_real_1state_CG_LO_bT0_refpz2_cmp3-4_type2_diagnostics.txt"
+            sample_path = tmp / "results" / output_title / "samples" / f"{output_title}_T5_eta0_raw_real_1state_CG_LO_bT0_refpz2_cmp3-4_type2_samples.txt"
             self.assertTrue(band_path.exists())
             self.assertTrue(diagnostics_path.exists())
             self.assertTrue(sample_path.exists())
@@ -261,10 +262,10 @@ class TMDWFCSKernelTests(unittest.TestCase):
             self.assertEqual(first_sample[1], "0")
             self.assertAlmostEqual(float(first_sample[3]), 0.2, places=8)
 
-            summary_path = tmp / "results" / output_title / f"{output_title}_T5_eta0_raw_real_1state_CG_LO_bT0_refpz2-4_type2_summary.txt"
+            summary_path = tmp / "results" / output_title / f"{output_title}_T5_eta0_raw_real_1state_CG_LO_bT0_refpz2_cmp3-4_type2_summary.txt"
             summary_text = summary_path.read_text(encoding="utf-8")
             self.assertIn("pair_mode all", summary_text)
-            self.assertIn("reference_pz_label 2-4", summary_text)
+            self.assertIn("reference_pz_label 2_cmp3-4", summary_text)
 
     def test_run_tmdwf_cs_kernel_workflow_supports_adjacent_pair_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

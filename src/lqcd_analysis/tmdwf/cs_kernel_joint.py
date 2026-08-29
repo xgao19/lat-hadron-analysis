@@ -65,10 +65,13 @@ class TMDWFCSKernelJointInput:
     results_dir: Path
     fit_a2_correction: bool = False
     fit_fv_correction: bool = False
+    fit_pz1_correction: bool = False
     fit_pz2_correction: bool = False
     fit_apz2_correction: bool = False
+    use_correction_priors: bool = True
     a2_correction_prior_width: float = 1.0
     fv_correction_prior_width: float = 1.0
+    pz1_correction_prior_width: float = 10.0
     pz2_correction_prior_width: float = 1.0
     apz2_correction_prior_width: float = 1.0
 
@@ -93,7 +96,7 @@ class JointCSObservation:
 class PerXFitResult:
     x_actual: float
     bT_knots_fm: np.ndarray
-    coeff_samples: np.ndarray  # (n_samples, n_total_coeffs): [gamma, alpha?, beta?, kappa?, lambda?]
+    coeff_samples: np.ndarray  # [gamma, alpha?, beta?, pz1?, kappa?, lambda?]
     chi2_dof: np.ndarray
     n_observations: int
     n_groups: int
@@ -101,6 +104,7 @@ class PerXFitResult:
     n_correction_params: int
     fit_a2_correction: bool = False
     fit_fv_correction: bool = False
+    fit_pz1_correction: bool = False
     fit_pz2_correction: bool = False
     fit_apz2_correction: bool = False
 
@@ -108,46 +112,52 @@ class PerXFitResult:
     def gamma_samples(self) -> np.ndarray:
         return self.coeff_samples[:, :self.n_gamma_knots]
 
-    def _block_size(self, block_index: int) -> int:
-        return 1 if block_index == 3 else 2
-
-    def _block_slice(self, block_index: int) -> slice:
-        """Return slice for correction block 0=alpha, 1=beta, 2=kappa, 3=lambda (skipping disabled blocks)."""
+    def _block_slice(self, block_name: str) -> slice:
+        """Return the coefficient slice for one enabled correction block."""
         offset = self.n_gamma_knots
         blocks = [
-            self.fit_a2_correction,
-            self.fit_fv_correction,
-            self.fit_pz2_correction,
-            self.fit_apz2_correction,
+            ("a2", self.fit_a2_correction, 2),
+            ("fv", self.fit_fv_correction, 2),
+            ("pz1", self.fit_pz1_correction, 2),
+            ("pz2", self.fit_pz2_correction, 2),
+            ("apz2", self.fit_apz2_correction, 1),
         ]
-        for i in range(block_index):
-            if blocks[i]:
-                offset += self._block_size(i)
-        return slice(offset, offset + self._block_size(block_index))
+        for name, enabled, size in blocks:
+            if name == block_name:
+                return slice(offset, offset + size)
+            if enabled:
+                offset += size
+        raise ValueError(f"unknown correction block: {block_name}")
 
     @property
     def alpha_samples(self) -> np.ndarray | None:
         if not self.fit_a2_correction:
             return None
-        return self.coeff_samples[:, self._block_slice(0)]
+        return self.coeff_samples[:, self._block_slice("a2")]
 
     @property
     def beta_samples(self) -> np.ndarray | None:
         if not self.fit_fv_correction:
             return None
-        return self.coeff_samples[:, self._block_slice(1)]
+        return self.coeff_samples[:, self._block_slice("fv")]
+
+    @property
+    def pz1_samples(self) -> np.ndarray | None:
+        if not self.fit_pz1_correction:
+            return None
+        return self.coeff_samples[:, self._block_slice("pz1")]
 
     @property
     def kappa_samples(self) -> np.ndarray | None:
         if not self.fit_pz2_correction:
             return None
-        return self.coeff_samples[:, self._block_slice(2)]
+        return self.coeff_samples[:, self._block_slice("pz2")]
 
     @property
     def lambda_samples(self) -> np.ndarray | None:
         if not self.fit_apz2_correction:
             return None
-        return self.coeff_samples[:, self._block_slice(3)]
+        return self.coeff_samples[:, self._block_slice("apz2")]
 
 
 @dataclass(frozen=True)
@@ -325,10 +335,13 @@ def parse_tmdwf_cs_kernel_joint_input(
         results_dir=output_root,
         fit_a2_correction=_parse_bool(entries, "fit_a2_correction"),
         fit_fv_correction=_parse_bool(entries, "fit_fv_correction"),
+        fit_pz1_correction=_parse_bool(entries, "fit_pz1_correction"),
         fit_pz2_correction=_parse_bool(entries, "fit_pz2_correction"),
         fit_apz2_correction=_parse_bool(entries, "fit_apz2_correction"),
+        use_correction_priors=_parse_bool(entries, "use_correction_priors", True),
         a2_correction_prior_width=_parse_positive_float(entries, "a2_correction_prior_width", "1.0"),
         fv_correction_prior_width=_parse_positive_float(entries, "fv_correction_prior_width", "1.0"),
+        pz1_correction_prior_width=_parse_positive_float(entries, "pz1_correction_prior_width", "10.0"),
         pz2_correction_prior_width=_parse_positive_float(entries, "pz2_correction_prior_width", "1.0"),
         apz2_correction_prior_width=_parse_positive_float(entries, "apz2_correction_prior_width", "1.0"),
     )
@@ -544,25 +557,28 @@ def _default_bT_knots(
 def _requires_inverse_bT(
     *,
     fit_a2_correction: bool,
+    fit_pz1_correction: bool,
     fit_pz2_correction: bool,
 ) -> bool:
-    return fit_a2_correction or fit_pz2_correction
+    return fit_a2_correction or fit_pz1_correction or fit_pz2_correction
 
 
 def _check_nonzero_bT_for_inverse_corrections(
     bT_values_fm: np.ndarray,
     *,
     fit_a2_correction: bool,
+    fit_pz1_correction: bool,
     fit_pz2_correction: bool,
 ) -> None:
     if _requires_inverse_bT(
         fit_a2_correction=fit_a2_correction,
+        fit_pz1_correction=fit_pz1_correction,
         fit_pz2_correction=fit_pz2_correction,
     ) and np.any(np.asarray(bT_values_fm, dtype=float) <= 0.0):
         raise ValueError(
             "analytic CS-kernel systematic corrections with 1/bT^2 require "
             "strictly positive bT values; remove bT=0 from the joint fit or "
-            "disable a2 and pz2 corrections"
+            "disable a2, pz1, and pz2 corrections"
         )
 
 
@@ -604,13 +620,30 @@ def _evaluate_correction_shape(
     return np.expand_dims(c0, axis=-1) + np.expand_dims(c1, axis=-1) * (CORRECTION_B0_FM / bT) ** 2
 
 
+def _evaluate_momentum_correction_scale(
+    name: str,
+    x: float,
+    pz_gev: np.ndarray | float,
+) -> np.ndarray:
+    pz = np.asarray(pz_gev, dtype=float)
+    if not 0.0 < x < 1.0:
+        raise ValueError("momentum corrections require 0 < x < 1")
+    if np.any(pz <= 0.0):
+        raise ValueError("momentum corrections require Pz > 0")
+    if name == "pz1":
+        return (1.0 / x + 1.0 / (1.0 - x)) * (CORRECTION_P0_GEV / pz)
+    if name == "pz2":
+        return (1.0 / x ** 2 + 1.0 / (1.0 - x) ** 2) * (CORRECTION_P0_GEV / pz) ** 2
+    raise ValueError(f"unknown momentum correction: {name}")
+
+
 def _evaluate_evolution_factor(
     log_p: np.ndarray,
     gamma: np.ndarray,
     delta_m: np.ndarray,
-    correction_factor: np.ndarray,
+    correction_shift: np.ndarray,
 ) -> np.ndarray:
-    return np.exp(log_p * (gamma * correction_factor - delta_m))
+    return np.exp(log_p * (gamma + correction_shift - delta_m))
 
 
 def fit_gamma_eff_at_x(
@@ -629,26 +662,32 @@ def fit_gamma_eff_at_x(
     progress_every: int | None,
     fit_a2_correction: bool = False,
     fit_fv_correction: bool = False,
+    fit_pz1_correction: bool = False,
     fit_pz2_correction: bool = False,
     fit_apz2_correction: bool = False,
+    use_correction_priors: bool = True,
     a2_correction_prior_width: float = 1.0,
     fv_correction_prior_width: float = 1.0,
+    pz1_correction_prior_width: float = 10.0,
     pz2_correction_prior_width: float = 1.0,
     apz2_correction_prior_width: float = 1.0,
 ) -> PerXFitResult:
     prior_widths = {
         "a2": float(a2_correction_prior_width),
         "fv": float(fv_correction_prior_width),
+        "pz1": float(pz1_correction_prior_width),
         "pz2": float(pz2_correction_prior_width),
         "apz2": float(apz2_correction_prior_width),
     }
-    for name, width in prior_widths.items():
-        if width <= 0.0:
-            raise ValueError(f"{name}_correction_prior_width must be positive")
+    if use_correction_priors:
+        for name, width in prior_widths.items():
+            if width <= 0.0:
+                raise ValueError(f"{name}_correction_prior_width must be positive")
     obs_bT = np.asarray([obs.bT_fm for obs in observations], dtype=float)
     _check_nonzero_bT_for_inverse_corrections(
         obs_bT,
         fit_a2_correction=fit_a2_correction,
+        fit_pz1_correction=fit_pz1_correction,
         fit_pz2_correction=fit_pz2_correction,
     )
     if fit_fv_correction:
@@ -680,10 +719,16 @@ def fit_gamma_eff_at_x(
     a2_vals = np.asarray([(obs.a_fm / CORRECTION_A0_FM) ** 2 for obs in observations], dtype=float)
     fv_prefactor_vals = np.asarray([obs.fv_prefactor for obs in observations], dtype=float)
     fv_exp_m_pi_bT_vals = np.asarray([obs.fv_exp_m_pi_bT for obs in observations], dtype=float)
+    inv_pz1_vals = np.asarray(
+        [
+            _evaluate_momentum_correction_scale("pz1", obs.x, obs.pz_gev)
+            for obs in observations
+        ],
+        dtype=float,
+    )
     inv_pz2_vals = np.asarray(
         [
-            (1.0 / obs.x ** 2 + 1.0 / (1.0 - obs.x) ** 2)
-            * (CORRECTION_P0_GEV / obs.pz_gev) ** 2
+            _evaluate_momentum_correction_scale("pz2", obs.x, obs.pz_gev)
             for obs in observations
         ],
         dtype=float,
@@ -699,14 +744,16 @@ def fit_gamma_eff_at_x(
         correction_blocks.append(("a2", a2_vals))
     if fit_fv_correction:
         correction_blocks.append(("fv", fv_prefactor_vals))
+    if fit_pz1_correction:
+        correction_blocks.append(("pz1", inv_pz1_vals))
     if fit_pz2_correction:
         correction_blocks.append(("pz2", inv_pz2_vals))
     if fit_apz2_correction:
         correction_blocks.append(("apz2", apz2_vals))
-    n_corr_blocks = len(correction_blocks)
     n_correction_params = (
         2 * int(fit_a2_correction)
         + 2 * int(fit_fv_correction)
+        + 2 * int(fit_pz1_correction)
         + 2 * int(fit_pz2_correction)
         + int(fit_apz2_correction)
     )
@@ -717,15 +764,20 @@ def fit_gamma_eff_at_x(
     previous = np.zeros(n_total_coeffs, dtype=float)
     progress_every = progress_every or max(1, sample_count // 20)
     prior_slices: list[tuple[slice, float]] = []
-    prior_offset = n_knots
-    for name, _scale in correction_blocks:
-        size = 1 if name == "apz2" else 2
-        prior_slices.append((slice(prior_offset, prior_offset + size), prior_widths[name]))
-        prior_offset += size
+    if use_correction_priors:
+        prior_offset = n_knots
+        for name, _scale in correction_blocks:
+            size = 1 if name == "apz2" else 2
+            prior_slices.append((slice(prior_offset, prior_offset + size), prior_widths[name]))
+            prior_offset += size
 
     if show_progress:
         corr_desc = ", ".join(b[0] for b in correction_blocks) if correction_blocks else "none"
-        prior_desc = ", ".join(f"{name}:0+/-{prior_widths[name]:.3g}" for name, _ in correction_blocks)
+        prior_desc = (
+            ", ".join(f"{name}:0+/-{prior_widths[name]:.3g}" for name, _ in correction_blocks)
+            if use_correction_priors
+            else "none"
+        )
         print(
             f"    bootstrap fit: {sample_count} samples, {len(observations)} observations, "
             f"{n_groups} nuisance groups, {n_knots} gamma bT-knots, "
@@ -751,18 +803,19 @@ def fit_gamma_eff_at_x(
         local_a2 = a2_vals[mask]
         local_fv_prefactor = fv_prefactor_vals[mask]
         local_fv_exp_m_pi_bT = fv_exp_m_pi_bT_vals[mask]
+        local_inv_pz1 = inv_pz1_vals[mask]
         local_inv_pz2 = inv_pz2_vals[mask]
         local_apz2 = apz2_vals[mask]
 
         def residuals(coeffs: np.ndarray) -> np.ndarray:
             # gamma_MSbar(bT) from first n_knots coefficients
             gamma = local_design @ coeffs[:n_knots]
-            # Multiplicative correction factor on gamma_MSbar inside the exponent.
-            corr_factor = np.ones(len(gamma), dtype=float)
+            # Additive correction to gamma_MSbar inside the exponent.
+            corr_shift = np.zeros(len(gamma), dtype=float)
             block_offset = n_knots
             if fit_a2_correction:
                 alpha = _evaluate_correction_shape("a2", coeffs[block_offset:block_offset + 2], local_bT)
-                corr_factor += local_a2 * alpha
+                corr_shift += local_a2 * alpha
                 block_offset += 2
             if fit_fv_correction:
                 beta = _evaluate_correction_shape(
@@ -771,17 +824,23 @@ def fit_gamma_eff_at_x(
                     local_bT,
                     fv_exp_m_pi_bT=local_fv_exp_m_pi_bT,
                 )
-                corr_factor += local_fv_prefactor * beta
+                corr_shift += local_fv_prefactor * beta
+                block_offset += 2
+            if fit_pz1_correction:
+                pz1 = _evaluate_correction_shape(
+                    "pz1", coeffs[block_offset:block_offset + 2], local_bT
+                )
+                corr_shift += local_inv_pz1 * pz1
                 block_offset += 2
             if fit_pz2_correction:
                 kappa = _evaluate_correction_shape("pz2", coeffs[block_offset:block_offset + 2], local_bT)
-                corr_factor += local_inv_pz2 * kappa
+                corr_shift += local_inv_pz2 * kappa
                 block_offset += 2
             if fit_apz2_correction:
                 lam = _evaluate_correction_shape("apz2", coeffs[block_offset:block_offset + 1], local_bT)
-                corr_factor += local_apz2 * lam
+                corr_shift += local_apz2 * lam
                 block_offset += 1
-            evolution = _evaluate_evolution_factor(local_log_p, gamma, local_delta_m, corr_factor)
+            evolution = _evaluate_evolution_factor(local_log_p, gamma, local_delta_m, corr_shift)
             amplitudes = np.zeros(n_groups, dtype=float)
             for g in np.unique(local_groups):
                 g_mask = local_groups == g
@@ -824,6 +883,7 @@ def fit_gamma_eff_at_x(
         n_correction_params=n_correction_params,
         fit_a2_correction=fit_a2_correction,
         fit_fv_correction=fit_fv_correction,
+        fit_pz1_correction=fit_pz1_correction,
         fit_pz2_correction=fit_pz2_correction,
         fit_apz2_correction=fit_apz2_correction,
     )
@@ -905,41 +965,51 @@ def _build_diagnostic_groups(
         )
 
         for sample_id in range(sample_count):
-            # Build per-pz correction factor on gamma_MSbar inside the exponent.
-            pz_corr = np.ones(len(pz_set), dtype=float)
+            # Build the per-pz additive correction to gamma_MSbar inside the exponent.
+            pz_shift = np.zeros(len(pz_set), dtype=float)
             if per_x_result.fit_a2_correction and per_x_result.alpha_samples is not None:
-                pz_corr += (a_fm / CORRECTION_A0_FM) ** 2 * _evaluate_correction_shape(
+                pz_shift += (a_fm / CORRECTION_A0_FM) ** 2 * _evaluate_correction_shape(
                     "a2",
                     per_x_result.alpha_samples[sample_id],
                     np.asarray([bT_fm]),
                 )[0]
             if per_x_result.fit_fv_correction and per_x_result.beta_samples is not None:
-                pz_corr += fv_prefactor * _evaluate_correction_shape(
+                pz_shift += fv_prefactor * _evaluate_correction_shape(
                     "fv",
                     per_x_result.beta_samples[sample_id],
                     np.asarray([bT_fm]),
                     fv_exp_m_pi_bT=np.asarray([fv_exp_m_pi_bT]),
                 )[0]
+            if per_x_result.fit_pz1_correction and per_x_result.pz1_samples is not None:
+                pz1_val = _evaluate_correction_shape(
+                    "pz1",
+                    per_x_result.pz1_samples[sample_id],
+                    np.asarray([bT_fm]),
+                )[0]
+                pz_shift += _evaluate_momentum_correction_scale(
+                    "pz1", per_x_result.x_actual, pz_arr
+                ) * pz1_val
             if per_x_result.fit_pz2_correction and per_x_result.kappa_samples is not None:
                 kappa_val = _evaluate_correction_shape(
                     "pz2",
                     per_x_result.kappa_samples[sample_id],
                     np.asarray([bT_fm]),
                 )[0]
-                x_weight = 1.0 / per_x_result.x_actual ** 2 + 1.0 / (1.0 - per_x_result.x_actual) ** 2
-                pz_corr += x_weight * (CORRECTION_P0_GEV / pz_arr) ** 2 * kappa_val
+                pz_shift += _evaluate_momentum_correction_scale(
+                    "pz2", per_x_result.x_actual, pz_arr
+                ) * kappa_val
             if per_x_result.fit_apz2_correction and per_x_result.lambda_samples is not None:
                 lam_val = _evaluate_correction_shape(
                     "apz2",
                     per_x_result.lambda_samples[sample_id],
                     np.asarray([bT_fm]),
                 )[0]
-                pz_corr += (a_fm * pz_arr / HBAR_C_GEV_FM) ** 2 * lam_val
+                pz_shift += (a_fm * pz_arr / HBAR_C_GEV_FM) ** 2 * lam_val
             evolution = _evaluate_evolution_factor(
                 log_p,
                 gamma_per_sample[sample_id] + np.zeros_like(pz_arr, dtype=float),
                 corrections,
-                pz_corr,
+                pz_shift,
             )
             weights = 1.0 / sigma_by_pz ** 2
             o_sample = np.asarray(
@@ -1071,6 +1141,8 @@ def _write_joint_outputs(
         correction_stems.append(("a2", "alpha"))
     if per_x_results[0].fit_fv_correction:
         correction_stems.append(("fv", "beta"))
+    if per_x_results[0].fit_pz1_correction:
+        correction_stems.append(("pz1", "pz1"))
     if per_x_results[0].fit_pz2_correction:
         correction_stems.append(("pz2", "kappa"))
     if per_x_results[0].fit_apz2_correction:
@@ -1087,6 +1159,8 @@ def _write_joint_outputs(
                     samples = result.alpha_samples
                 elif short_name == "fv":
                     samples = result.beta_samples
+                elif short_name == "pz1":
+                    samples = result.pz1_samples
                 elif short_name == "pz2":
                     samples = result.kappa_samples
                 else:
@@ -1107,6 +1181,8 @@ def _write_joint_outputs(
                     samples = result.alpha_samples
                 elif short_name == "fv":
                     samples = result.beta_samples
+                elif short_name == "pz1":
+                    samples = result.pz1_samples
                 elif short_name == "pz2":
                     samples = result.kappa_samples
                 else:
@@ -1114,7 +1190,7 @@ def _write_joint_outputs(
                 if samples is None:
                     continue
                 bT_values = result.bT_knots_fm
-                if short_name in {"a2", "pz2"}:
+                if short_name in {"a2", "pz1", "pz2"}:
                     bT_values = bT_values[bT_values > 0.0]
                 fv_exp_values = None
                 if short_name == "fv":
@@ -1162,7 +1238,7 @@ def _write_joint_outputs(
         handle.write(f"x_window {spec.x_window[0]:.10e} {spec.x_window[1]:.10e}\n")
         handle.write(f"spline_kind {spec.spline_kind}\n")
         handle.write(f"bT_knots_fm {' '.join(f'{v:.10e}' for v in bT_knots)}\n")
-        handle.write("correction_model analytic_two_parameter_gamma_multiplicative\n")
+        handle.write("correction_model analytic_two_parameter_gamma_additive\n")
         handle.write(f"correction_a0_fm {CORRECTION_A0_FM:.10e}\n")
         handle.write(f"correction_b0_fm {CORRECTION_B0_FM:.10e}\n")
         handle.write(f"correction_p0_GeV {CORRECTION_P0_GEV:.10e}\n")
@@ -1171,12 +1247,16 @@ def _write_joint_outputs(
         handle.write(f"x_independent_fit_points {' '.join(f'{v:.10e}' for v in x_independent_fit_order)}\n")
         handle.write(f"fit_a2_correction {str(spec.fit_a2_correction).lower()}\n")
         handle.write(f"fit_fv_correction {str(spec.fit_fv_correction).lower()}\n")
+        handle.write(f"fit_pz1_correction {str(spec.fit_pz1_correction).lower()}\n")
         handle.write(f"fit_pz2_correction {str(spec.fit_pz2_correction).lower()}\n")
         handle.write(f"fit_apz2_correction {str(spec.fit_apz2_correction).lower()}\n")
-        handle.write(f"a2_correction_prior_width {spec.a2_correction_prior_width:.10e}\n")
-        handle.write(f"fv_correction_prior_width {spec.fv_correction_prior_width:.10e}\n")
-        handle.write(f"pz2_correction_prior_width {spec.pz2_correction_prior_width:.10e}\n")
-        handle.write(f"apz2_correction_prior_width {spec.apz2_correction_prior_width:.10e}\n")
+        handle.write(f"use_correction_priors {str(spec.use_correction_priors).lower()}\n")
+        if spec.use_correction_priors:
+            handle.write(f"a2_correction_prior_width {spec.a2_correction_prior_width:.10e}\n")
+            handle.write(f"fv_correction_prior_width {spec.fv_correction_prior_width:.10e}\n")
+            handle.write(f"pz1_correction_prior_width {spec.pz1_correction_prior_width:.10e}\n")
+            handle.write(f"pz2_correction_prior_width {spec.pz2_correction_prior_width:.10e}\n")
+            handle.write(f"apz2_correction_prior_width {spec.apz2_correction_prior_width:.10e}\n")
         handle.write(f"n_gamma_knots {bT_knots.size}\n")
         if per_x_results:
             handle.write(f"n_correction_params {per_x_results[0].n_correction_params}\n")
@@ -1307,10 +1387,13 @@ def run_tmdwf_cs_kernel_joint_workflow(
             progress_every=spec.progress_every,
             fit_a2_correction=spec.fit_a2_correction,
             fit_fv_correction=spec.fit_fv_correction,
+            fit_pz1_correction=spec.fit_pz1_correction,
             fit_pz2_correction=spec.fit_pz2_correction,
             fit_apz2_correction=spec.fit_apz2_correction,
+            use_correction_priors=spec.use_correction_priors,
             a2_correction_prior_width=spec.a2_correction_prior_width,
             fv_correction_prior_width=spec.fv_correction_prior_width,
+            pz1_correction_prior_width=spec.pz1_correction_prior_width,
             pz2_correction_prior_width=spec.pz2_correction_prior_width,
             apz2_correction_prior_width=spec.apz2_correction_prior_width,
         )
@@ -1443,10 +1526,13 @@ def parse_joint_summary(summary_path: str | Path) -> dict:
         "x_fit_points": np.asarray([float(v) for v in entries["x_fit_points"]], dtype=float),
         "fit_a2_correction": entries.get("fit_a2_correction", ["false"])[0].lower() == "true",
         "fit_fv_correction": entries.get("fit_fv_correction", ["false"])[0].lower() == "true",
+        "fit_pz1_correction": entries.get("fit_pz1_correction", ["false"])[0].lower() == "true",
         "fit_pz2_correction": entries.get("fit_pz2_correction", ["false"])[0].lower() == "true",
         "fit_apz2_correction": entries.get("fit_apz2_correction", ["false"])[0].lower() == "true",
+        "use_correction_priors": entries.get("use_correction_priors", ["true"])[0].lower() == "true",
         "a2_correction_prior_width": float(entries.get("a2_correction_prior_width", ["1.0"])[0]),
         "fv_correction_prior_width": float(entries.get("fv_correction_prior_width", ["1.0"])[0]),
+        "pz1_correction_prior_width": float(entries.get("pz1_correction_prior_width", ["10.0"])[0]),
         "pz2_correction_prior_width": float(entries.get("pz2_correction_prior_width", ["1.0"])[0]),
         "apz2_correction_prior_width": float(entries.get("apz2_correction_prior_width", ["1.0"])[0]),
         "n_gamma_knots": int(entries["n_gamma_knots"][0]) if "n_gamma_knots" in entries else len(entries["bT_knots_fm"]),

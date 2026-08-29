@@ -701,6 +701,7 @@ class NotebookWorkflowTests(unittest.TestCase):
         text = render_tmdwf_cs_kernel_joint_input_text(
             {
                 **self.tmdwf_cs_kernel_joint_config,
+                "use_correction_priors": False,
                 "results_dir": "/tmp/tmdwf_cs_kernel_joint",
             }
         )
@@ -715,6 +716,7 @@ class NotebookWorkflowTests(unittest.TestCase):
         self.assertIn("plot true", text)
         self.assertIn("progress true", text)
         self.assertIn("progress_every 10", text)
+        self.assertIn("use_correction_priors false", text)
         self.assertIn("ensemble coarse /tmp/tmdwf_joint_coarse coarse_pz*", text)
         self.assertIn("pz=3,4,5 bT=0,1,2", text)
         self.assertIn("ensemble fine /tmp/tmdwf_joint_fine fine_pz*", text)

@@ -383,6 +383,10 @@ Supported normalization modes are:
 - `mode2`: `m0(pz, bT, bz) / m0(pz=0, bT, bz=0)`
 - `mode3`: `[m0(pz, bT, bz) / m0(pz, bT=0, bz=0)] / [m0(pz=0, bT, bz=0) / m0(pz=0, bT=0, bz=0)]`
 
+All factors in these ratios, including the four references in `mode3`, are
+taken from the matching bootstrap sample before the final percentile summary is
+built.
+
 Template inputs are provided in:
 
 - `templates/input_files/tmdwf/tmdwf_normalize_example.txt`
@@ -663,9 +667,12 @@ x_knots 0.2 0.3 0.4 0.5 0.6 0.7 0.8
 bT_knots_fm 0.05 0.10 0.15 0.20 0.25 0.30
 spline_kind linear
 fit_a2_correction true
+fit_pz1_correction false
 fit_pz2_correction true
+use_correction_priors true
 a2_correction_prior_width 1.0
 fv_correction_prior_width 1.0
+pz1_correction_prior_width 10.0
 pz2_correction_prior_width 1.0
 apz2_correction_prior_width 1.0
 plot true
@@ -702,21 +709,29 @@ Option guide:
 - `spline_kind`:
   interpolation kind for the gamma bT spline. Use `linear` for the
   piecewise-linear hat basis or `cubic` for a natural cubic spline basis.
-- `fit_a2_correction`, `fit_pz2_correction`:
-  recommended central multiplicative correction model. Each enabled channel
-  adds two analytic parameters rather than a bT spline. The a2 and pz2 terms
+- `fit_a2_correction`, `fit_pz1_correction`, `fit_pz2_correction`:
+  recommended central additive correction model. Each enabled channel adds two
+  analytic parameters to `gamma_MSbar` inside the evolution exponent rather
+  than adding a bT spline. The pz1 and pz2 momentum factors are respectively
+  `(1/x + 1/(1-x)) p0/Pz` and
+  `(1/x^2 + 1/(1-x)^2) (p0/Pz)^2`. The a2, pz1, and pz2 coefficient functions
   use short-distance-enhanced forms `c0 + c1 / bT^2`, so selected data must
-  exclude `bT=0` when either is enabled.
+  exclude `bT=0` when any of them is enabled. Enabling both momentum channels
+  adds both shifts to `gamma_MSbar`.
 - `fit_fv_correction`, `fit_apz2_correction`:
   optional systematic variations. The finite-volume factor is
   `exp(-M_pi L) / sqrt(M_pi L)` multiplying
   `beta0 + beta1 exp(M_pi bT)`, with `M_pi bT` in the same units as
   `M_pi L`; the apz2 term uses a single `lambda0` coefficient.
 - `a2_correction_prior_width`, `fv_correction_prior_width`,
-  `pz2_correction_prior_width`, `apz2_correction_prior_width`:
+  `pz1_correction_prior_width`, `pz2_correction_prior_width`,
+  `apz2_correction_prior_width`:
   zero-centered Gaussian prior widths for the enabled correction parameters.
   Each prior is applied only to its own channel's nuisance coefficients and
   does not modify the main `gamma_MSbar` spline.
+- `use_correction_priors`:
+  set to `false` to omit all enabled correction-channel prior residuals from
+  both the objective and the chi2/dof count. The default is `true`.
 - `plot`:
   whether to write one `gamma_MSbar` vs x band plot for each `bT_knots_fm`
   value, per-x pz-diagnostics plots showing data vs fit for each

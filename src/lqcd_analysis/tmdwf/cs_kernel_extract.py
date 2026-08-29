@@ -366,7 +366,8 @@ def build_cs_kernel_pair_jobs(
         comparison_pz_list = [pz for pz in pzlist if pz != fixed_reference_p1]
         if not comparison_pz_list:
             raise ValueError("reference_p1 must leave at least one comparison pz value")
-        return [(fixed_reference_p1, comparison_pz_list, f"{fixed_reference_p1}-{comparison_pz_list[-1]}")]
+        comparison_range = f"{comparison_pz_list[0]}-{comparison_pz_list[-1]}"
+        return [(fixed_reference_p1, comparison_pz_list, f"{fixed_reference_p1}_cmp{comparison_range}")]
     if pair_mode == "adjacent":
         return [(pz1, [pz2], f"{pz1}-{pz2}") for pz1, pz2 in zip(pzlist[:-1], pzlist[1:])]
     if pair_mode == "fixed_p1":

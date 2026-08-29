@@ -2153,12 +2153,14 @@ class TMDWFFitTests(unittest.TestCase):
         self.assertIn("4.0000000000e+00", fit_mode1)
         self.assertIn("3.5000000000e+00", fit_mode2)
         self.assertIn("7.0000000000e+00", fit_mode2)
-        self.assertIn("1.0500000000e+00", fit_mode3)
-        self.assertIn("2.1000000000e+00", fit_mode3)
+        self.assertIn("1.0000000000e+00", fit_mode3)
+        self.assertIn("2.0000000000e+00", fit_mode3)
         self.assertIn("0\t0\t1\t2.0000000000e+00", samples_mode1)
         self.assertIn("1\t1\t1\t6.0000000000e+00", samples_mode2)
-        self.assertIn("1\t0\t1\t2.4000000000e+00", samples_mode3)
-        self.assertIn("1\t1\t1\t1.8000000000e+00", samples_mode3)
+        self.assertIn("0\t0\t1\t1.0000000000e+00", samples_mode3)
+        self.assertIn("0\t1\t1\t1.0000000000e+00", samples_mode3)
+        self.assertIn("1\t0\t1\t2.0000000000e+00", samples_mode3)
+        self.assertIn("1\t1\t1\t2.0000000000e+00", samples_mode3)
 
     def test_tmdwf_normalization_uses_complex_samples_when_both_components_exist(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
