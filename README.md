@@ -714,10 +714,11 @@ Option guide:
   analytic parameters to `gamma_MSbar` inside the evolution exponent rather
   than adding a bT spline. The pz1 and pz2 momentum factors are respectively
   `(1/x + 1/(1-x)) p0/Pz` and
-  `(1/x^2 + 1/(1-x)^2) (p0/Pz)^2`. The a2, pz1, and pz2 coefficient functions
-  use short-distance-enhanced forms `c0 + c1 / bT^2`, so selected data must
-  exclude `bT=0` when any of them is enabled. Enabling both momentum channels
-  adds both shifts to `gamma_MSbar`.
+  `(1/x^2 + 1/(1-x)^2) (p0/Pz)^2`. The a2 and pz2 coefficient
+  functions use `c0 + c1 (b0/bT)^2`, whereas the leading pz1 channel uses
+  `c0 + c1 b0/bT`, yielding the expected `1/(Pz bT)` transverse-scale
+  correction. Selected data must exclude `bT=0` when any of these channels is
+  enabled. Enabling both momentum channels adds both shifts to `gamma_MSbar`.
 - `fit_fv_correction`, `fit_apz2_correction`:
   optional systematic variations. The finite-volume factor is
   `exp(-M_pi L) / sqrt(M_pi L)` multiplying

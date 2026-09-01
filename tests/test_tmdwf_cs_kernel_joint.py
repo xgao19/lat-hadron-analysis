@@ -312,12 +312,23 @@ class TMDWFCSKernelJointTests(unittest.TestCase):
                 fit_pz1_correction=True,
             )
 
-    def test_inverse_bT_correction_shape_uses_dimensionless_reference_bT(self) -> None:
+    def test_inverse_bT_correction_shapes_use_expected_powers(self) -> None:
         coeffs = np.asarray([2.0, 3.0], dtype=float)
         bT_values = np.asarray([CORRECTION_B0_FM, 2.0 * CORRECTION_B0_FM], dtype=float)
-        values = _evaluate_correction_shape("a2", coeffs, bT_values)
-        expected = np.asarray([5.0, 2.75], dtype=float)
-        np.testing.assert_allclose(values, expected)
+        inverse_square_expected = np.asarray([5.0, 2.75], dtype=float)
+        inverse_linear_expected = np.asarray([5.0, 3.5], dtype=float)
+        np.testing.assert_allclose(
+            _evaluate_correction_shape("a2", coeffs, bT_values),
+            inverse_square_expected,
+        )
+        np.testing.assert_allclose(
+            _evaluate_correction_shape("pz1", coeffs, bT_values),
+            inverse_linear_expected,
+        )
+        np.testing.assert_allclose(
+            _evaluate_correction_shape("pz2", coeffs, bT_values),
+            inverse_square_expected,
+        )
 
     def test_pz1_and_pz2_scales_use_symmetric_partonic_powers(self) -> None:
         pz = np.asarray([1.0, 2.0], dtype=float)

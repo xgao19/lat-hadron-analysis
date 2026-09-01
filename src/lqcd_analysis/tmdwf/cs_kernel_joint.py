@@ -576,9 +576,9 @@ def _check_nonzero_bT_for_inverse_corrections(
         fit_pz2_correction=fit_pz2_correction,
     ) and np.any(np.asarray(bT_values_fm, dtype=float) <= 0.0):
         raise ValueError(
-            "analytic CS-kernel systematic corrections with 1/bT^2 require "
-            "strictly positive bT values; remove bT=0 from the joint fit or "
-            "disable a2, pz1, and pz2 corrections"
+            "analytic CS-kernel systematic corrections with inverse powers of bT "
+            "require strictly positive bT values; remove bT=0 from the joint fit "
+            "or disable a2, pz1, and pz2 corrections"
         )
 
 
@@ -615,9 +615,21 @@ def _evaluate_correction_shape(
             raise ValueError("fv correction evaluation requires exp(M_pi bT)")
         fv_exp = np.asarray(fv_exp_m_pi_bT, dtype=float)
         return np.expand_dims(c0, axis=-1) + np.expand_dims(c1, axis=-1) * fv_exp
+    if name == "pz1":
+        inverse_bT_power = 1
+    elif name in {"a2", "pz2"}:
+        inverse_bT_power = 2
+    else:
+        raise ValueError(f"unknown correction shape: {name}")
     if np.any(bT <= 0.0):
-        raise ValueError(f"{name} correction uses 1/bT^2 and requires bT > 0")
-    return np.expand_dims(c0, axis=-1) + np.expand_dims(c1, axis=-1) * (CORRECTION_B0_FM / bT) ** 2
+        raise ValueError(
+            f"{name} correction uses 1/bT^{inverse_bT_power} and requires bT > 0"
+        )
+    return (
+        np.expand_dims(c0, axis=-1)
+        + np.expand_dims(c1, axis=-1)
+        * (CORRECTION_B0_FM / bT) ** inverse_bT_power
+    )
 
 
 def _evaluate_momentum_correction_scale(
